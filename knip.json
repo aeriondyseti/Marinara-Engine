@@ -40,6 +40,13 @@
     "src/engine/generation/tools-runtime.ts": ["exports"],
     "src/engine/mari/mari-entry.ts": ["types"],
     "src/features/catalog/characters/hooks/use-characters.ts": ["exports"],
-    "src/features/runtime/tracker/components/tracker-data-sidebar.constants.ts": ["duplicates"]
+    "src/features/runtime/tracker/components/tracker-data-sidebar.constants.ts": ["duplicates"],
+    "src/engine/agents-runtime/relationship-tracker/adapters.ts": ["exports", "types"],
+    "src/engine/agents-runtime/relationship-tracker/fold.ts": ["exports", "types"],
+    "src/engine/agents-runtime/relationship-tracker/hydration.ts": ["exports", "types"],
+    "src/engine/agents-runtime/relationship-tracker/rollup.ts": ["types"],
+    "src/engine/agents-runtime/relationship-tracker/writeback.ts": ["exports", "types"],
+    "src/engine/generation/agent-normalizers.ts": ["types"],
+    "src/engine/generation/sprite-expression-validation.ts": ["types"]
   }
 }

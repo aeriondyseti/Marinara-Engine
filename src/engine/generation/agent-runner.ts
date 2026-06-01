@@ -28,6 +28,10 @@ import { matchCustomAgentActivation, type ActivationScanMessage } from "../agent
 import { executeKnowledgeRetrieval } from "../agents-runtime/knowledge/knowledge-retrieval";
 import { executeKnowledgeRouter } from "../agents-runtime/knowledge/knowledge-router";
 import {
+  buildCurrentStateBlock,
+  getRelationshipForPersona,
+} from "../agents-runtime/relationship-tracker";
+import {
   createAgentPipeline,
   type AgentInjection,
   type ResolvedAgent,
@@ -1020,6 +1024,155 @@ function selectedSpriteOwners(value: unknown): {
   return { restrict: ownerKeys.size > 0, characterIds, personaIds };
 }
 
+// ──────────────────────────────────────────────
+// Relationship Tracker — read-side hydration
+// ──────────────────────────────────────────────
+
+interface PresentCharacterRelationshipEntry {
+  id: string;
+  name: string;
+  relationship: import("../contracts/types/character").CharacterRelationship | null;
+}
+
+interface RelationshipAnchors {
+  /** Stored-messages count as a turn proxy for fold time-decay math. */
+  currentTurn: number;
+  /**
+   * Reserved-for-future session anchor. fold.ts currently `void`s
+   * currentSession (see fold.ts:189) so the precise value doesn't affect
+   * derived metrics today. Hardcoded to 1 until per-event session decay
+   * gets wired up; the field is kept on the anchor so the API doesn't
+   * shift when that day comes.
+   */
+  currentSession: number;
+}
+
+/**
+ * Load each present character's relationship-edge for the active persona
+ * and stash them with the shared turn anchor on `context.memory`. The
+ * agent-executor's `buildAgentExtras` reads these to render the
+ * `<current_state>` block.
+ *
+ * Skips entirely when no persona is selected — the relationship edges are
+ * keyed by persona id, so without one there's nothing to look up.
+ */
+async function loadRelationshipTrackerContext(
+  storage: StorageGateway,
+  input: GenerationAgentRuntimeInput,
+  context: AgentContext,
+): Promise<void> {
+  const activePersonaId = readString(input.chat.personaId).trim();
+  if (!activePersonaId) return;
+
+  const characterIds = input.characters.map((character) => character.id).filter((id) => id.trim().length > 0);
+  if (characterIds.length === 0) return;
+
+  const rows = await Promise.all(
+    characterIds.map((id) =>
+      storage
+        .get<JsonRecord>("characters", id)
+        .then((row) => ({ id, row }))
+        .catch(() => ({ id, row: null as JsonRecord | null })),
+    ),
+  );
+
+  const characterById = new Map(input.characters.map((character) => [character.id, character]));
+  const entries: PresentCharacterRelationshipEntry[] = [];
+  for (const { id, row } of rows) {
+    if (!row) continue;
+    const character = characterById.get(id);
+    if (!character) continue;
+
+    // Production character rows store extensions nested under `data` —
+    // the canonical V2-card location used by prompt-assembly.ts,
+    // scene-service.ts, and connected-commands.ts.
+    const relationships = resolveRowRelationships(row);
+    const rel = getRelationshipForPersona({ relationships }, activePersonaId);
+    entries.push({ id, name: character.name, relationship: rel });
+  }
+
+  if (entries.length === 0) return;
+
+  context.memory._presentCharacterRelationships = entries;
+  const anchors: RelationshipAnchors = {
+    currentTurn: Array.isArray(input.storedMessages) ? input.storedMessages.length : 0,
+    currentSession: 1,
+  };
+  context.memory._relationshipAnchors = anchors;
+}
+
+/**
+ * Locate the relationships array on a character storage row. Reads from
+ * the canonical `row.data.extensions.relationships` (V2 card shape) used
+ * by every character writer in the engine. Handles both shapes the
+ * storage layer can return `row.data` as — a plain object (current
+ * convention) or a JSON-encoded string (from imported V2 cards) — so
+ * imported characters' relationships aren't silently ignored. Returns an
+ * empty array when absent or malformed.
+ */
+function resolveRowRelationships(
+  row: JsonRecord,
+): import("../contracts/types/character").CharacterRelationship[] {
+  const data = parseCharacterDataField(row.data);
+  const extensions = parseRecord(data.extensions);
+  if (Array.isArray(extensions.relationships)) {
+    return extensions.relationships as import("../contracts/types/character").CharacterRelationship[];
+  }
+  return [];
+}
+
+function parseCharacterDataField(value: unknown): JsonRecord {
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return parseRecord(parsed);
+    } catch {
+      return {};
+    }
+  }
+  return parseRecord(value);
+}
+
+function relationshipTrackerActive(input: GenerationAgentRuntimeInput): boolean {
+  if (input.agentTypes?.has("relationship-tracker")) return true;
+  return chatActiveAgentIds(input).has("relationship-tracker");
+}
+
+/**
+ * Synthesize the `<current_state>` text block from the relationship data
+ * already loaded into `context.memory` by `loadRelationshipTrackerContext`,
+ * and stash it in `agentData["relationship-tracker"]` so the second
+ * prompt-assembly pass can inject it into the main prompt via an
+ * `{{agent_data:relationship-tracker}}` template section.
+ *
+ * The block reflects state through the previous turn — events emitted by
+ * the agent on the current turn are applied asynchronously by the UI
+ * writeback path and surface in the next turn's main prompt. The same-turn
+ * gain from `pre_generation` is in the user being able to triage proposed
+ * events via the modal before the assistant streams, not in immediate
+ * state visibility.
+ */
+function populateRelationshipTrackerAgentData(
+  context: AgentContext,
+  agentData: Record<string, string>,
+): void {
+  const entries = context.memory._presentCharacterRelationships as
+    | Array<{
+        id: string;
+        name: string;
+        relationship: import("../contracts/types/character").CharacterRelationship | null;
+      }>
+    | undefined;
+  const anchors = context.memory._relationshipAnchors as
+    | { currentTurn: number; currentSession: number }
+    | undefined;
+  if (!entries || entries.length === 0 || !anchors) return;
+  agentData["relationship-tracker"] = buildCurrentStateBlock({
+    characters: entries,
+    context: anchors,
+  });
+}
+
 async function loadAgentAvailableSprites(
   visuals: VisualAssetGateway,
   input: GenerationAgentRuntimeInput,
@@ -1219,6 +1372,9 @@ async function buildAgentContext(
     signal: input.signal,
   };
   await populateAgentVisualContext(deps, input, context, chatMeta, agents);
+  if (relationshipTrackerActive(input)) {
+    await loadRelationshipTrackerContext(deps.storage, input, context);
+  }
   return context;
 }
 
@@ -1260,6 +1416,7 @@ export async function createGenerationAgentRuntime(
 
   const context = await buildAgentContext(deps, input, agents);
   const availableSprites = availableSpritesFromContext(context);
+  populateRelationshipTrackerAgentData(context, agentData);
   const pipelineAgents = agents.filter((agent) => !KNOWLEDGE_AGENT_TYPES.has(agent.type));
   const pipeline = createAgentPipeline(pipelineAgents, context, (result) => {
     const text = resultText(result);

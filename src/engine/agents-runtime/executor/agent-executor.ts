@@ -18,6 +18,8 @@ import {
 } from "../../contracts/types/agent";
 import { createAgentRuntimeDebug, type AgentRuntimeDebugEntry } from "../debug.js";
 import { stripAvatarPathsReplacer } from "../strip-avatar-paths";
+import { buildCurrentStateBlock } from "../relationship-tracker";
+import type { CharacterRelationship } from "../../contracts/types/character";
 
 const MAX_AGENT_CONTEXT_MESSAGES = 200;
 const EXPRESSION_AGENT_RECENT_CONTEXT_MESSAGES = 2;
@@ -1239,6 +1241,37 @@ function buildLoreBlock(context: AgentContext): string {
   return parts.join("\n");
 }
 
+/**
+ * Shapes the relationship-tracker hydration writes into `context.memory`
+ * for the executor to consume. Declared inline here because the
+ * runner-side producer types are internal to that module; if a third
+ * consumer appears these belong in the relationship-tracker barrel.
+ */
+interface RelationshipMemoryEntry {
+  id: string;
+  name: string;
+  relationship: CharacterRelationship | null;
+}
+interface RelationshipMemoryAnchors {
+  currentTurn: number;
+  currentSession: number;
+}
+
+/**
+ * Render the relationship-tracker `<current_state>` block from per-character
+ * relationships and shared turn anchors stashed on `context.memory` by
+ * `loadRelationshipTrackerContext` in agent-runner. Returns "" when no
+ * relationship data was loaded — the caller drops the empty string.
+ */
+function buildRelationshipCurrentStateBlock(context: AgentContext): string {
+  const entries = context.memory._presentCharacterRelationships as
+    | RelationshipMemoryEntry[]
+    | undefined;
+  const anchors = context.memory._relationshipAnchors as RelationshipMemoryAnchors | undefined;
+  if (!entries || entries.length === 0 || !anchors) return "";
+  return buildCurrentStateBlock({ characters: entries, context: anchors });
+}
+
 function buildAvailableSpritesBlock(context: AgentContext): string {
   if (!context.memory._availableSprites) return "";
 
@@ -1361,6 +1394,11 @@ function buildAgentExtras(context: AgentContext, agentTypes: string[] = []): str
     }
   }
 
+  if (agentTypes.includes("relationship-tracker")) {
+    const block = buildRelationshipCurrentStateBlock(context);
+    if (block) parts.push(block);
+  }
+
   if (context.chatSummary) {
     parts.push(`<chat_summary>`);
     parts.push(context.chatSummary);
@@ -1454,6 +1492,7 @@ const AGENT_RESULT_TYPE_MAP: Record<string, AgentResultType> = {
   haptic: "haptic_command",
   cyoa: "cyoa_choices",
   "secret-plot-driver": "secret_plot",
+  "relationship-tracker": "relationship_event",
 };
 
 const AGENT_RESULT_TYPES = new Set<AgentResultType>([
@@ -1482,6 +1521,7 @@ const AGENT_RESULT_TYPES = new Set<AgentResultType>([
   "party_action",
   "game_map_update",
   "game_state_transition",
+  "relationship_event",
 ]);
 
 const TEXT_RESULT_TYPES = new Set<AgentResultType>(["context_injection", "director_event"]);
@@ -1535,6 +1575,7 @@ const JSON_AGENTS = new Set([
   "haptic",
   "cyoa",
   "secret-plot-driver",
+  "relationship-tracker",
 ]);
 
 /**

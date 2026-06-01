@@ -32,6 +32,7 @@ const agentResultTypeSchema = z.enum([
   "party_action",
   "game_map_update",
   "game_state_transition",
+  "relationship_event",
 ]);
 
 export const createAgentConfigSchema = z.object({
