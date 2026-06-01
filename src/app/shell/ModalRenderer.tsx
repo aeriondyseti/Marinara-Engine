@@ -53,6 +53,9 @@ const CreatePersonaModal = lazy(() =>
 const CharacterCardUpdateModal = lazy(() =>
   import("../../features/catalog/characters/shell").then((module) => ({ default: module.CharacterCardUpdateModal })),
 );
+const RelationshipProposalModal = lazy(() =>
+  import("../../features/catalog/characters/shell").then((module) => ({ default: module.RelationshipProposalModal })),
+);
 
 export function ModalRenderer() {
   const modal = useUIStore((s) => s.modal);
@@ -110,6 +113,9 @@ export function ModalRenderer() {
       break;
     case "character-card-update":
       content = <CharacterCardUpdateModal open onClose={closeModal} />;
+      break;
+    case "relationship-proposal-review":
+      content = <RelationshipProposalModal open onClose={closeModal} />;
       break;
     default:
       content = null;

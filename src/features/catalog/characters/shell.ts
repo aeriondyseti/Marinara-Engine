@@ -1,4 +1,5 @@
 export * from "./components/CharacterCardUpdateModal";
+export * from "./components/RelationshipProposalModal";
 export * from "./components/CharacterEditor";
 export * from "./components/CharacterLibraryView";
 export * from "./components/CharacterMakerModal";

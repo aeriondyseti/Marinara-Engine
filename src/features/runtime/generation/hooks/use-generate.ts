@@ -37,7 +37,7 @@ import {
   sanitizeTimelineMessageRecord,
   timelineMessageProjection,
 } from "../../../catalog/chats/index";
-import { characterKeys } from "../../../catalog/characters/index";
+import { buildPendingRelationshipDecisions, characterKeys } from "../../../catalog/characters/index";
 import {
   applyLorebookKeeperUpdate,
   buildPendingLorebookUpdates,
@@ -885,6 +885,22 @@ async function applyAgentResultEffects(
     const pending = await buildPendingCardUpdates(queryClient, chatId, agentName, result.data);
     for (const entry of pending) agentStore.enqueuePendingCardUpdate(entry);
     if (pending.length) useUIStore.getState().openModal("character-card-update");
+  }
+
+  if (result.type === "relationship_event") {
+    const { queued, appliedCount } = await buildPendingRelationshipDecisions(
+      queryClient,
+      chatId,
+      agentName,
+      result.data,
+    );
+    for (const entry of queued) agentStore.enqueuePendingRelationshipProposal(entry);
+    if (queued.length > 0) useUIStore.getState().openModal("relationship-proposal-review");
+    if (appliedCount > 0) {
+      toast.success(
+        `${agentName} recorded ${appliedCount} relationship ${appliedCount === 1 ? "event" : "events"}.`,
+      );
+    }
   }
 
   if (result.type === "lorebook_update" || result.agentType === "lorebook-keeper") {

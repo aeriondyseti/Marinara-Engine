@@ -37,7 +37,8 @@ export type AgentResultType =
   | "game_master_narration"
   | "party_action"
   | "game_map_update"
-  | "game_state_transition";
+  | "game_state_transition"
+  | "relationship_event";
 
 export const DEFAULT_AGENT_CREDIT = "Marinara Dev Team";
 
@@ -214,6 +215,7 @@ export const BUILT_IN_AGENT_IDS = {
   HAPTIC: "haptic",
   CYOA: "cyoa",
   SECRET_PLOT_DRIVER: "secret-plot-driver",
+  RELATIONSHIP_TRACKER: "relationship-tracker",
 } as const;
 
 export type AgentCategory = "writer" | "tracker" | "misc";
@@ -489,6 +491,16 @@ const BUILT_IN_AGENT_DEFINITIONS: Array<Omit<BuiltInAgentMeta, "credit">> = [
     defaultInjectAsSection: true,
     category: "writer",
   },
+  {
+    id: "relationship-tracker",
+    name: "Relationship Tracker",
+    description:
+      "Tracks how each NPC currently feels toward the player persona by classifying each turn's interactions into events (magnitude, valence, initiator). Stores events as an append-only ledger on the character card; derives dimensional metrics in code. Surfaces state to the main generation as direction for character behavior.",
+    phase: "post_processing",
+    enabledByDefault: false,
+    defaultInjectAsSection: true,
+    category: "tracker",
+  },
 ];
 
 export const BUILT_IN_AGENTS: BuiltInAgentMeta[] = BUILT_IN_AGENT_DEFINITIONS.map((agent) => ({
@@ -502,6 +514,7 @@ export const BUILT_IN_AGENT_RUN_INTERVAL_DEFAULTS: Readonly<Record<string, numbe
   "lorebook-keeper": 8,
   "card-evolution-auditor": 8,
   "chat-summary": 5,
+  "relationship-tracker": 5,
 };
 
 export const DEFAULT_AGENT_CONTEXT_SIZE = 5;
@@ -628,6 +641,66 @@ export interface CharacterCardFieldUpdate {
   newText: string;
   /** Why the agent thinks this edit is warranted (shown to the user). */
   reason: string;
+}
+
+// ──────────────────────────────────────────────
+// Relationship Tracker types — see docs/agents/relationship-tracker.md
+// ──────────────────────────────────────────────
+
+/** Intensity of a relationship event from the subject character's perspective. */
+export type RelationshipMagnitude = "minor" | "moderate" | "major";
+
+/** Affective direction of a relationship event from the subject's perspective. */
+export type RelationshipValence = "positive" | "negative" | "neutral";
+
+/** Who started the exchange that produced this event. */
+export type RelationshipInitiator = "persona" | "character" | "mutual" | "external";
+
+/** Model's confidence in this classification. */
+export type RelationshipConfidence = "low" | "medium" | "high";
+
+/**
+ * A single classified relationship event, recording how an NPC experienced
+ * what the persona did (or didn't do) during one turn. Stored on the NPC's
+ * `CharacterExtensions.relationships[].events` array (tier 1) or moved to
+ * higher tiers per the rollup rules (see docs §13).
+ */
+export interface RelationshipEvent {
+  /** ISO timestamp; set by the writeback layer, not the model. */
+  at: string;
+  /** Chat where this event was emitted. */
+  chatId: string;
+  magnitude: RelationshipMagnitude;
+  valence: RelationshipValence;
+  initiator: RelationshipInitiator;
+  confidence: RelationshipConfidence;
+  /**
+   * One past-tense sentence describing what the OTHER party did, as the
+   * subject character felt it. The subject character does not appear as
+   * the actor in this string.
+   */
+  description: string;
+}
+
+/**
+ * Proposed event emitted by the Relationship Tracker for a single character.
+ * Carries the routing-relevant context (characterId, personaId) alongside
+ * the event payload. The writeback layer assigns `at` and `chatId` after
+ * the proposal is approved or auto-applied.
+ */
+export interface RelationshipEventProposal {
+  characterId: string;
+  personaId: string;
+  magnitude: RelationshipMagnitude;
+  valence: RelationshipValence;
+  initiator: RelationshipInitiator;
+  confidence: RelationshipConfidence;
+  description: string;
+}
+
+/** Data shape for a relationship_event agent result. */
+export interface RelationshipUpdateResult {
+  events: RelationshipEventProposal[];
 }
 
 /** Data shape for a character_card_update agent result. */

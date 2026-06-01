@@ -51,3 +51,7 @@ src-tauri/gen/android/**/*.keystore
 *.njsproj
 *.sln
 *.sw?
+
+# Local-only state and overrides
+.claude/
+docker-compose.override.yml

@@ -51,7 +51,114 @@ export interface CharacterExtensions {
   rpgStats?: RPGStatsConfig;
   /** Marinara Engine: Conversation-mode availability status */
   conversationStatus?: "online" | "idle" | "dnd" | "offline";
+  /**
+   * Marinara Engine: per-persona outgoing relationship edges populated by
+   * the Relationship Tracker agent. Each entry is this character's tiered
+   * event ledger toward one persona. See docs/agents/relationship-tracker.md.
+   */
+  relationships?: CharacterRelationship[];
   [key: string]: unknown;
+}
+
+// ──────────────────────────────────────────────
+// Relationship Tracker storage — see docs/agents/relationship-tracker.md §13
+// ──────────────────────────────────────────────
+
+/**
+ * One outgoing edge from this character toward one persona. The event ledger
+ * is tiered: hot events at full fidelity, session summaries for older
+ * sessions, a rolling lifetime aggregate for very old history, and milestone-
+ * triggering events preserved verbatim regardless of age. All derived
+ * metrics (affinity, trust, familiarity, etc.) are folds over these four
+ * structures combined; nothing is stored as a numeric scalar.
+ */
+export interface CharacterRelationship {
+  /** The persona this edge concerns. */
+  personaId: string;
+  /** Tier 1 — hot events, individual records, full fidelity. */
+  events: RelationshipEventRecord[];
+  /** Tier 2 — per-session summaries for sessions past the hot window. */
+  sessionSummaries: RelationshipSessionSummary[];
+  /** Tier 3 — single rolling lifetime aggregate. */
+  lifetime: RelationshipLifetimeAggregate;
+  /** Events that triggered a milestone latch; bypass rollup permanently. */
+  preservedEvents: RelationshipEventRecord[];
+  /** Most recent chat in which an event was appended. */
+  lastChatId: string;
+  /** Wall-clock timestamp of the most recent event. */
+  updatedAt: string;
+}
+
+/**
+ * A stored relationship event with timestamping populated by the writeback
+ * layer. Mirrors `RelationshipEvent` from agent.ts; redeclared here so this
+ * type module has no inbound dependency on the agent module.
+ */
+export interface RelationshipEventRecord {
+  at: string;
+  chatId: string;
+  magnitude: "minor" | "moderate" | "major";
+  valence: "positive" | "negative" | "neutral";
+  initiator: "persona" | "character" | "mutual" | "external";
+  confidence: "low" | "medium" | "high";
+  description: string;
+}
+
+/**
+ * Compressed record of one chat session's events, produced when events past
+ * the hot window roll up at session boundaries. Counts are lossless; verbatim
+ * descriptions are kept only for `highlights`.
+ */
+export interface RelationshipSessionSummary {
+  sessionId: string;
+  startedAt: string;
+  endedAt: string;
+  eventCount: number;
+  /** Tally by magnitude × valence — every combination counted. */
+  tally: {
+    minor: { positive: number; negative: number; neutral: number };
+    moderate: { positive: number; negative: number; neutral: number };
+    major: { positive: number; negative: number; neutral: number };
+  };
+  initiatorTally: {
+    persona: number;
+    character: number;
+    mutual: number;
+    external: number;
+  };
+  /** 1-3 highest-magnitude descriptions preserved verbatim. */
+  highlights: string[];
+  /** Weighted valence sum for trajectory comparison. */
+  netValence: number;
+}
+
+/**
+ * Rolling aggregate across all sessions older than `sessionHistoryWindow`.
+ * Single fixed-size structure regardless of total history length.
+ */
+export interface RelationshipLifetimeAggregate {
+  totalEventCount: number;
+  tally: {
+    minor: { positive: number; negative: number; neutral: number };
+    moderate: { positive: number; negative: number; neutral: number };
+    major: { positive: number; negative: number; neutral: number };
+  };
+  initiatorTally: {
+    persona: number;
+    character: number;
+    mutual: number;
+    external: number;
+  };
+  firstEventAt: string;
+  /** Latched milestones with the triggering event preserved verbatim. */
+  latchedMilestones: Record<
+    string,
+    {
+      triggeredAt: string;
+      sessionId: string;
+      description: string;
+    }
+  >;
 }
 
 /** RPG stats configuration attached to a character card. */

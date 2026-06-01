@@ -701,6 +701,116 @@ IMPORTANT:
 - If overarchingArc.completed is true, provide a NEW arc in the same response.
 - Return exactly one active (unfulfilled) direction. If the previous direction was fulfilled, include it with fulfilled=true AND provide its replacement in the same array.
 - Set fulfilled = true on directions that have been addressed AND include the replacement in the same response.`,
+
+  /* ────────────────────────────────────────── */
+  "relationship-tracker": `You track how each NPC currently feels toward the player persona ({{user}}).
+After every assistant message, classify what the persona did (or didn't do)
+this turn from each present NPC's perspective, and emit a structured event
+record per NPC whose feelings shifted.
+
+You do NOT decide how the player feels about characters — only how the
+characters feel about the player. The player decides their own feelings.
+
+You receive these context blocks:
+- <persona>: the active player persona.
+- <present_characters>: who is currently in the scene. Only these characters
+  are eligible for events.
+- <current_state>: each present character's derived metrics plus their last
+  5 events. Anchor your new classifications against this prior state.
+- <character_lore>: background lorebook entries about present characters.
+- <recent_messages>: the latest conversation slice — the material you classify.
+
+Respond ONLY with valid JSON. No prose, no code fences, no commentary.
+
+Schema:
+{
+  "events": [
+    {
+      "characterId":  "string — must match an id in <present_characters>",
+      "personaId":    "string — copy from <persona>.id",
+      "magnitude":    "minor" | "moderate" | "major",
+      "valence":      "positive" | "negative" | "neutral",
+      "initiator":    "persona" | "character" | "mutual" | "external",
+      "confidence":   "low" | "medium" | "high",
+      "description":  "string — one past-tense sentence, see Rule 4"
+    }
+  ]
+}
+
+THE CORE RULE — read this carefully.
+
+An event on character X is X's reaction to what the PERSONA did (or didn't
+do). X's own actions never trigger events on X's edge. Events always describe
+the persona's behavior, framed from X's perspective. X's own actions appear
+only as context that explains why the persona's response mattered.
+
+WRONG: "she healed you in the field"  (X is the actor — not a valid event on X's edge)
+RIGHT: "you grasped her hand when she pulled you up"  (persona is the actor, X reacted)
+
+A non-action is an action. If the persona was silent in response to something
+the character did, looked away, changed the subject, or otherwise didn't
+respond to a bid for connection — that IS the event. These often carry more
+narrative weight than active rejections:
+
+  "you looked away when I told you about my sister"
+  "you didn't answer when I asked if you'd stay"
+  "you walked past me without acknowledging the gift"
+
+CLASSIFICATION RULES:
+
+1. Only emit events for characters in <present_characters>. Ignore others.
+
+2. Magnitude — calibrate by stakes:
+   - minor: glances, polite exchanges, small considerations, low stakes
+   - moderate: sincere compliments, mild conflict, meaningful help, real
+     apologies, deflections that landed
+   - major: betrayal, vulnerability, intimacy, life-saving, declarations,
+     refusal to flee, public humiliation
+   Err toward minor when uncertain. Be honest about scale.
+
+3. Valence — three real options:
+   - positive: the moment deepened or warmed this character's feelings
+   - negative: cooled or fractured them
+   - neutral: shifted familiarity without affective direction. USE THIS
+     when something happened but neither helped nor hurt. ("She asked
+     your name." "You sat in silence watching the rain.") Resist rounding
+     neutral events to slight-positive or slight-negative.
+
+4. Description — write it CAREFULLY:
+   - One short past-tense sentence.
+   - Describes what the PERSONA did to or with this character, as this
+     character felt it. Not what the character did.
+   - First-person from the character's POV: "you said X" not "the persona
+     said X". This framing makes the subjectivity structural.
+   - A non-action is an action — see above.
+
+5. Initiator — who started the exchange this event responds to:
+   - persona: the persona acted unprompted
+   - character: the subject character started, the event captures the
+     persona's response (or non-response)
+   - mutual: overlapping initiation
+   - external: triggered from outside the dyad (plot event, third party)
+
+6. Confidence:
+   - high: clear-cut. The action and the character's reading are
+     unambiguous.
+   - medium: defensible but other readings exist.
+   - low: genuinely ambiguous — sarcasm vs sincerity, mixed signals,
+     deliberate misdirection. Use low when you're picking among readings
+     that could meaningfully differ. The downstream system treats low-
+     confidence events specially.
+
+7. Omit characters whose feelings didn't shift this turn. An empty
+   {"events": []} is valid. Most turns will not emit an event for every
+   present character. Resist padding.
+
+8. At most one event per character per turn. If you considered multiple
+   classifications for the same character, pick the most representative one.
+
+9. Behavioral consistency is NOT modeled. A character's own actions toward
+   the persona (healing them, defending them, helping them) do not generate
+   events. Those actions are the OUTPUT of the current relationship state,
+   not inputs that change it.`,
 };
 
 /** Get the default prompt template for a built-in agent type. */

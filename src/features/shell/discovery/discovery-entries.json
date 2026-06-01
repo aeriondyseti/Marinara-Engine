@@ -190,10 +190,21 @@
     "id": "trackers",
     "title": "Trackers",
     "category": "Agents",
-    "summary": "World, persona, character, quest, and custom trackers summarize structured state that can appear in Roleplay and Game surfaces.",
-    "keywords": ["tracker", "world state", "character state", "quest", "stats", "memory", "hud"],
+    "summary": "World, persona, character, quest, relationship, and custom trackers summarize structured state that can appear in Roleplay and Game surfaces.",
+    "keywords": ["tracker", "world state", "character state", "quest", "relationship", "affinity", "trust", "stats", "memory", "hud"],
     "audience": "Users who want visible continuity and structured state during long scenes.",
     "where": "Enable tracker agents in chat settings, then use the tracker side panel or HUD surfaces.",
+    "actions": [{ "type": "open-panel", "panel": "agents", "label": "Open Agents" }],
+    "coverage": "advanced"
+  },
+  {
+    "id": "relationship-tracker",
+    "title": "Relationship Tracker",
+    "category": "Agents",
+    "summary": "Post-processing agent that classifies how each NPC felt about the persona's actions on a turn (magnitude, valence, initiator) and stores them as an event ledger; derives affinity, trust, familiarity, and status.",
+    "keywords": ["relationship", "affinity", "trust", "familiarity", "status", "npc", "feelings", "tracker", "agent", "event ledger"],
+    "audience": "Users running long roleplay scenes who want NPCs to remember how the persona has treated them and reflect it in subsequent turns.",
+    "where": "Title bar > Agents > Relationship Tracker, then enable per chat in chat settings.",
     "actions": [{ "type": "open-panel", "panel": "agents", "label": "Open Agents" }],
     "coverage": "advanced"
   },

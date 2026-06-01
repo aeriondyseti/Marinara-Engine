@@ -2,7 +2,13 @@
 // Zustand Store: Agent Slice
 // ──────────────────────────────────────────────
 import { create } from "zustand";
-import type { AgentDebugEntry, AgentResult, CharacterCardFieldUpdate } from "../../engine/contracts/types/agent";
+import type {
+  AgentDebugEntry,
+  AgentResult,
+  CharacterCardFieldUpdate,
+  RelationshipEventProposal,
+} from "../../engine/contracts/types/agent";
+import type { QueueReason } from "../../engine/agents-runtime/relationship-tracker";
 import type { AgentFailure } from "../lib/agent-failures";
 
 const MAX_DEBUG_STRING_LENGTH = 1_500;
@@ -93,6 +99,31 @@ export interface PendingLorebookUpdate {
   timestamp: number;
 }
 
+/**
+ * A relationship_event proposal awaiting user confirmation.
+ *
+ * The Relationship Tracker post-processing agent classifies how an NPC
+ * felt about the persona's actions on a given turn. Per docs §7, some
+ * proposals always queue for review (low confidence, first-event-in-chat,
+ * or in "manual" / "significant" approval modes); others auto-apply.
+ * Queued proposals land here keyed by id; the modal pops them one at a
+ * time.
+ */
+export interface PendingRelationshipProposal {
+  /** Client-generated id, used as the dismissal key. */
+  id: string;
+  chatId: string;
+  characterId: string;
+  characterName: string;
+  personaId: string;
+  agentName: string;
+  proposal: RelationshipEventProposal;
+  /** Why routing sent this proposal to the queue (see docs §7 routing). */
+  queueReason: QueueReason;
+  /** ms since epoch — stable ordering. */
+  timestamp: number;
+}
+
 interface AgentState {
   activeAgents: string[];
   lastResults: Map<string, AgentResult>;
@@ -126,6 +157,7 @@ interface AgentState {
   cyoaChoicesChatId: string | null;
   pendingCardUpdates: PendingCardUpdate[];
   pendingLorebookUpdates: PendingLorebookUpdate[];
+  pendingRelationshipProposals: PendingRelationshipProposal[];
 
   // Actions
   setActiveAgents: (agents: string[]) => void;
@@ -155,6 +187,9 @@ interface AgentState {
   enqueuePendingLorebookUpdate: (entry: PendingLorebookUpdate) => void;
   dismissPendingLorebookUpdate: (id: string) => void;
   clearPendingLorebookUpdates: () => void;
+  enqueuePendingRelationshipProposal: (entry: PendingRelationshipProposal) => void;
+  dismissPendingRelationshipProposal: (id: string) => void;
+  clearPendingRelationshipProposals: () => void;
   reset: () => void;
 }
 
@@ -174,6 +209,7 @@ export const useAgentStore = create<AgentState>((set) => ({
   cyoaChoicesChatId: null,
   pendingCardUpdates: [],
   pendingLorebookUpdates: [],
+  pendingRelationshipProposals: [],
 
   setActiveAgents: (agents) => set({ activeAgents: agents }),
   setProcessing: (processing) => set({ isProcessing: processing }),
@@ -267,6 +303,12 @@ export const useAgentStore = create<AgentState>((set) => ({
     set((s) => ({ pendingLorebookUpdates: s.pendingLorebookUpdates.filter((e) => e.id !== id) })),
   clearPendingLorebookUpdates: () => set({ pendingLorebookUpdates: [] }),
 
+  enqueuePendingRelationshipProposal: (entry) =>
+    set((s) => ({ pendingRelationshipProposals: [...s.pendingRelationshipProposals, entry].slice(-50) })),
+  dismissPendingRelationshipProposal: (id) =>
+    set((s) => ({ pendingRelationshipProposals: s.pendingRelationshipProposals.filter((e) => e.id !== id) })),
+  clearPendingRelationshipProposals: () => set({ pendingRelationshipProposals: [] }),
+
   reset: () =>
     set({
       activeAgents: [],
@@ -284,5 +326,6 @@ export const useAgentStore = create<AgentState>((set) => ({
       cyoaChoicesChatId: null,
       pendingCardUpdates: [],
       pendingLorebookUpdates: [],
+      pendingRelationshipProposals: [],
     }),
 }));
