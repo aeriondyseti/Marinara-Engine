@@ -7,8 +7,6 @@
  *
  * Triggered by the writeback layer at chat session start for the previous
  * session — atomic, idempotent, never mid-chat.
- *
- * See docs/agents/relationship-tracker.md §13 for the full contract.
  */
 
 import type {

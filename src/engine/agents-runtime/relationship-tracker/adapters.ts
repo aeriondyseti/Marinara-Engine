@@ -4,10 +4,8 @@
  * Helpers for reading and writing relationship state on character-card
  * extensions. Pure functions; no storage I/O. The integration layer
  * (agent-runner.ts, prompt-assembly.ts, writeback wiring) composes these
- * with the actual persistence adapters.
- *
- * See docs/agents/relationship-tracker.md §2 (Storage location) — relationships
- * live on `CharacterExtensions.relationships` keyed by `personaId`.
+ * with the actual persistence adapters. Relationships live on
+ * `CharacterExtensions.relationships` keyed by `personaId`.
  */
 
 import type {

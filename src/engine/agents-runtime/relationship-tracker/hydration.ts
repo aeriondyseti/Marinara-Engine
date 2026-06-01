@@ -4,9 +4,6 @@
  * Pure functions for building the agent's context blocks and gating
  * whether the agent should run at all on a given turn. Wired into the
  * production agent pipeline by `agent-runner.ts`.
- *
- * See docs/agents/relationship-tracker.md §5 (Inputs), §10 (Pipeline), and
- * §12 (Lore Prioritization Scheme).
  */
 
 import type { CharacterRelationship } from "../../contracts/types/character";

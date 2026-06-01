@@ -8,8 +8,6 @@
  * for those directly. The barrel is intentionally narrow so knip can
  * catch genuinely-unused exports as the API surface evolves.
  *
- * - docs/agents/relationship-tracker.md — the canonical spec (v2.0).
- *
  * The agent prompt template lives in
  * `src/engine/contracts/constants/agent-prompts.ts` under the
  * `"relationship-tracker"` key, and the result-normalizer for the

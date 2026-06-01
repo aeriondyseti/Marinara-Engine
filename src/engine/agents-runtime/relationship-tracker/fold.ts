@@ -5,9 +5,6 @@
  * stored `CharacterRelationship` (tier 1 hot events + tier 2 session summaries
  * + tier 3 lifetime aggregate + preserved milestone events). The agent never
  * computes numbers; the fold does, here.
- *
- * See docs/agents/relationship-tracker.md §4 and §13 for the contracts these
- * functions implement.
  */
 
 import type {
@@ -466,9 +463,10 @@ export function turnsSinceLastEvent(
   now: number = Date.now(),
 ): number {
   void currentTurn;
-  if (rel.events.length === 0) return Number.POSITIVE_INFINITY;
+  const allEvents = allEventRecords(rel);
+  if (allEvents.length === 0) return Number.POSITIVE_INFINITY;
 
-  const events = sortedEvents(rel.events);
+  const events = sortedEvents(allEvents);
   const lastEvent = events[events.length - 1];
   if (!lastEvent) return Number.POSITIVE_INFINITY;
 

@@ -28,9 +28,7 @@ export function normalizeStringArray(raw: unknown): string[] {
 // Relationship Tracker normalization
 //
 // Validates and coerces the raw `relationship_event` agent output into a
-// list of `RelationshipEventProposal`s ready for the writeback layer. See
-// docs/agents/relationship-tracker.md §6 (Output Schema) and §11 (Failure
-// Modes) for the contract this implements.
+// list of `RelationshipEventProposal`s ready for the writeback layer.
 // ──────────────────────────────────────────────
 
 import type {

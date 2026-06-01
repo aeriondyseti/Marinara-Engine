@@ -27,7 +27,10 @@ import type {
 import { matchCustomAgentActivation, type ActivationScanMessage } from "../agents-runtime/activation";
 import { executeKnowledgeRetrieval } from "../agents-runtime/knowledge/knowledge-retrieval";
 import { executeKnowledgeRouter } from "../agents-runtime/knowledge/knowledge-router";
-import { getRelationshipForPersona } from "../agents-runtime/relationship-tracker";
+import {
+  buildCurrentStateBlock,
+  getRelationshipForPersona,
+} from "../agents-runtime/relationship-tracker";
 import {
   createAgentPipeline,
   type AgentInjection,
@@ -1135,6 +1138,41 @@ function relationshipTrackerActive(input: GenerationAgentRuntimeInput): boolean 
   return chatActiveAgentIds(input).has("relationship-tracker");
 }
 
+/**
+ * Synthesize the `<current_state>` text block from the relationship data
+ * already loaded into `context.memory` by `loadRelationshipTrackerContext`,
+ * and stash it in `agentData["relationship-tracker"]` so the second
+ * prompt-assembly pass can inject it into the main prompt via an
+ * `{{agent_data:relationship-tracker}}` template section.
+ *
+ * The block reflects state through the previous turn — events emitted by
+ * the agent on the current turn are applied asynchronously by the UI
+ * writeback path and surface in the next turn's main prompt. The same-turn
+ * gain from `pre_generation` is in the user being able to triage proposed
+ * events via the modal before the assistant streams, not in immediate
+ * state visibility.
+ */
+function populateRelationshipTrackerAgentData(
+  context: AgentContext,
+  agentData: Record<string, string>,
+): void {
+  const entries = context.memory._presentCharacterRelationships as
+    | Array<{
+        id: string;
+        name: string;
+        relationship: import("../contracts/types/character").CharacterRelationship | null;
+      }>
+    | undefined;
+  const anchors = context.memory._relationshipAnchors as
+    | { currentTurn: number; currentSession: number }
+    | undefined;
+  if (!entries || entries.length === 0 || !anchors) return;
+  agentData["relationship-tracker"] = buildCurrentStateBlock({
+    characters: entries,
+    context: anchors,
+  });
+}
+
 async function loadAgentAvailableSprites(
   visuals: VisualAssetGateway,
   input: GenerationAgentRuntimeInput,
@@ -1378,6 +1416,7 @@ export async function createGenerationAgentRuntime(
 
   const context = await buildAgentContext(deps, input, agents);
   const availableSprites = availableSpritesFromContext(context);
+  populateRelationshipTrackerAgentData(context, agentData);
   const pipelineAgents = agents.filter((agent) => !KNOWLEDGE_AGENT_TYPES.has(agent.type));
   const pipeline = createAgentPipeline(pipelineAgents, context, (result) => {
     const text = resultText(result);

@@ -102,7 +102,7 @@ export interface PendingLorebookUpdate {
 /**
  * A relationship_event proposal awaiting user confirmation.
  *
- * The Relationship Tracker post-processing agent classifies how an NPC
+ * The Relationship Tracker pre-generation agent classifies how an NPC
  * felt about the persona's actions on a given turn. Per docs §7, some
  * proposals always queue for review (low confidence, first-event-in-chat,
  * or in "manual" / "significant" approval modes); others auto-apply.

@@ -2,7 +2,7 @@
 // Modal: Review queued relationship_event proposals
 // ──────────────────────────────────────────────
 //
-// The Relationship Tracker post-processing agent classifies each turn's
+// The Relationship Tracker pre-generation agent classifies each turn's
 // interactions into events (magnitude × valence × initiator) per character.
 // Some proposals always queue for the user — low confidence, first-event-
 // in-chat, or when the agent is set to "manual" / "significant" mode (see

@@ -6,9 +6,6 @@
  * session-boundary rollup. All functions are pure — they take the current
  * state and return the next state without touching storage. The integration
  * layer is responsible for persisting the returned shapes.
- *
- * See docs/agents/relationship-tracker.md §7 (Settings — approvalMode),
- * §10 (Pipeline Lifecycle — routing + apply + rollup), §13 (Storage & Rollup).
  */
 
 import type {

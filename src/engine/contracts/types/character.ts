@@ -54,14 +54,14 @@ export interface CharacterExtensions {
   /**
    * Marinara Engine: per-persona outgoing relationship edges populated by
    * the Relationship Tracker agent. Each entry is this character's tiered
-   * event ledger toward one persona. See docs/agents/relationship-tracker.md.
+   * event ledger toward one persona.
    */
   relationships?: CharacterRelationship[];
   [key: string]: unknown;
 }
 
 // ──────────────────────────────────────────────
-// Relationship Tracker storage — see docs/agents/relationship-tracker.md §13
+// Relationship Tracker storage
 // ──────────────────────────────────────────────
 
 /**

@@ -495,8 +495,8 @@ const BUILT_IN_AGENT_DEFINITIONS: Array<Omit<BuiltInAgentMeta, "credit">> = [
     id: "relationship-tracker",
     name: "Relationship Tracker",
     description:
-      "Tracks how each NPC currently feels toward the player persona by classifying each turn's interactions into events (magnitude, valence, initiator). Stores events as an append-only ledger on the character card; derives dimensional metrics in code. Surfaces state to the main generation as direction for character behavior.",
-    phase: "post_processing",
+      "Tracks how each NPC currently feels toward the player persona by classifying each turn's interactions into events (magnitude, valence, initiator). Stores events as an append-only ledger on the character card; derives dimensional metrics in code. Runs pre-generation so users can triage proposed events before the assistant reacts.",
+    phase: "pre_generation",
     enabledByDefault: false,
     defaultInjectAsSection: true,
     category: "tracker",
@@ -644,7 +644,7 @@ export interface CharacterCardFieldUpdate {
 }
 
 // ──────────────────────────────────────────────
-// Relationship Tracker types — see docs/agents/relationship-tracker.md
+// Relationship Tracker types
 // ──────────────────────────────────────────────
 
 /** Intensity of a relationship event from the subject character's perspective. */
