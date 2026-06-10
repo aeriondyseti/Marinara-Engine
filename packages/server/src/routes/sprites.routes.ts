@@ -193,7 +193,71 @@ function isOpenAIGptImage2Model(model?: string): boolean {
   return !!model && /^gpt-image-2(?:$|-)/i.test(model.trim());
 }
 
-function resolveSpriteSheetCanvas({
+type SpriteCanvas = {
+  sheetWidth: number;
+  sheetHeight: number;
+  cellWidth: number;
+  cellHeight: number;
+};
+
+/**
+ * How the generation canvas is sized for a sprite request:
+ * - "diffusion-native": local SD-class models; scale the canvas up to the
+ *   model's native working resolution.
+ * - "exact-request": models that render arbitrary sizes well (gpt-image-2
+ *   portraits); use the requested cell grid as-is.
+ * - "fixed-canvas": models restricted to a fixed set of output sizes
+ *   (gpt-image-1 family); snap to the nearest supported canvas.
+ */
+function resolveCanvasPolicy(spriteType?: string, model?: string): "diffusion-native" | "exact-request" | "fixed-canvas" {
+  if (!isOpenAIGptImageModel(model)) return "diffusion-native";
+  if (spriteType !== "full-body" && isOpenAIGptImage2Model(model)) return "exact-request";
+  return "fixed-canvas";
+}
+
+// SDXL-class local models degrade into noise below ~1024px on the short side
+// (a 1x1 "sheet" used to render at 512x512). Scale the canvas up so the short
+// side reaches 1024, capped at 1536 on the long side, never shrinking. Cells
+// stay latent-friendly (multiples of 8), and the sheet stays an exact
+// cols/rows multiple of the cell size.
+function diffusionNativeCanvas(cols: number, rows: number, cellWidth: number, cellHeight: number): SpriteCanvas {
+  const sheetWidth = cols * cellWidth;
+  const sheetHeight = rows * cellHeight;
+  const minSide = Math.min(sheetWidth, sheetHeight);
+  const maxSide = Math.max(sheetWidth, sheetHeight);
+  const scale = Math.max(1, Math.min(1024 / minSide, 1536 / maxSide));
+  const scaledCellWidth = Math.round((cellWidth * scale) / 8) * 8;
+  const scaledCellHeight = Math.round((cellHeight * scale) / 8) * 8;
+  return {
+    sheetWidth: cols * scaledCellWidth,
+    sheetHeight: rows * scaledCellHeight,
+    cellWidth: scaledCellWidth,
+    cellHeight: scaledCellHeight,
+  };
+}
+
+function exactRequestCanvas(cols: number, rows: number, cellWidth: number, cellHeight: number): SpriteCanvas {
+  return {
+    sheetWidth: cols * cellWidth,
+    sheetHeight: rows * cellHeight,
+    cellWidth,
+    cellHeight,
+  };
+}
+
+function fixedCanvas(cols: number, rows: number, cellWidth: number, cellHeight: number): SpriteCanvas {
+  const ratio = (cols * cellWidth) / Math.max(1, rows * cellHeight);
+  const sheetWidth = ratio > 1.12 ? 1536 : 1024;
+  const sheetHeight = ratio > 1.12 ? 1024 : ratio < 0.88 ? 1536 : 1024;
+  return {
+    sheetWidth,
+    sheetHeight,
+    cellWidth: Math.floor(sheetWidth / cols),
+    cellHeight: Math.floor(sheetHeight / rows),
+  };
+}
+
+export function resolveSpriteSheetCanvas({
   cols,
   rows,
   spriteType,
@@ -203,31 +267,18 @@ function resolveSpriteSheetCanvas({
   rows: number;
   spriteType?: string;
   model?: string;
-}) {
-  const preferredCellWidth = 512;
-  const preferredCellHeight = spriteType === "full-body" ? 768 : 512;
-  const requestedSheetWidth = cols * preferredCellWidth;
-  const requestedSheetHeight = rows * preferredCellHeight;
+}): SpriteCanvas {
+  const cellWidth = 512;
+  const cellHeight = spriteType === "full-body" ? 768 : 512;
 
-  if (!isOpenAIGptImageModel(model) || (spriteType !== "full-body" && isOpenAIGptImage2Model(model))) {
-    return {
-      sheetWidth: requestedSheetWidth,
-      sheetHeight: requestedSheetHeight,
-      cellWidth: preferredCellWidth,
-      cellHeight: preferredCellHeight,
-    };
+  switch (resolveCanvasPolicy(spriteType, model)) {
+    case "diffusion-native":
+      return diffusionNativeCanvas(cols, rows, cellWidth, cellHeight);
+    case "exact-request":
+      return exactRequestCanvas(cols, rows, cellWidth, cellHeight);
+    case "fixed-canvas":
+      return fixedCanvas(cols, rows, cellWidth, cellHeight);
   }
-
-  const ratio = requestedSheetWidth / Math.max(1, requestedSheetHeight);
-  const sheetWidth = ratio > 1.12 ? 1536 : 1024;
-  const sheetHeight = ratio > 1.12 ? 1024 : ratio < 0.88 ? 1536 : 1024;
-
-  return {
-    sheetWidth,
-    sheetHeight,
-    cellWidth: Math.floor(sheetWidth / cols),
-    cellHeight: Math.floor(sheetHeight / rows),
-  };
 }
 
 const NATIVE_TRANSPARENT_PNG_PROMPT = "no background, png format";
