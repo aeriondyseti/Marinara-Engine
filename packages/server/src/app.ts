@@ -154,7 +154,16 @@ export async function buildApp(https?: { cert: Buffer; key: Buffer }) {
   // ── Serve client build in production ──
   const __dirname = dirname(fileURLToPath(import.meta.url));
   const clientDist = resolve(__dirname, "..", "..", "client", "dist");
-  if (existsSync(clientDist)) {
+  const hasClientBuild = existsSync(clientDist);
+  if (!hasClientBuild) {
+    // The gallery and character-image routes serve files via `reply.sendFile`,
+    // which only exists once @fastify/static is registered. Without this,
+    // every image-serving endpoint 500s in dev runs (client served by Vite)
+    // or whenever the client build is missing at boot. `serve: false`
+    // registers just the decorator; all callers pass an explicit root.
+    await app.register(fastifyStatic, { root: __dirname, serve: false });
+  }
+  if (hasClientBuild) {
     await app.register(fastifyStatic, {
       root: clientDist,
       prefix: "/",
