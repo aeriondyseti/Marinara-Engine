@@ -6,7 +6,7 @@
 // all assembled from committed snapshots, no LLM.
 // ──────────────────────────────────────────────
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { X, MapPin, Swords, ScrollText, Package, Users, PenLine, BookOpen, Trash2, Loader2, Wand2 } from "lucide-react";
+import { X, MapPin, Swords, ScrollText, Package, Users, PenLine, BookOpen, Trash2, Loader2, Wand2, Sparkles } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { api } from "../../lib/api-client";
 import { applyInlineMarkdown, renderMarkdownBlocks } from "../../lib/markdown";
@@ -55,8 +55,8 @@ interface GameJournalProps {
   generatingNpcPortraitNames?: Set<string>;
   onNpcRemove?: (npcName: string) => Promise<void> | void;
   embedded?: boolean;
+  onNpcPromote?: (npc: GameNpc) => void;
 }
-
 type TabId = "all" | "npcs" | "locations" | "inventory" | "library" | "notes";
 
 const TABS: Array<{ id: TabId; label: string; icon: typeof ScrollText }> = [
@@ -173,6 +173,7 @@ export function GameJournal({
   generatingNpcPortraitNames,
   onNpcRemove,
   embedded = false,
+  onNpcPromote,
 }: GameJournalProps) {
   const [journal, setJournal] = useState<Journal | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("all");
@@ -329,6 +330,7 @@ export function GameJournal({
             generatingNpcPortraitNames={generatingNpcPortraitNames}
             onNpcRemove={onNpcRemove ? handleRemoveNpc : undefined}
             removingNpcName={removingNpcName}
+            onNpcPromote={onNpcPromote}
           />
         )}
         {activeTab === "locations" && <LocationsView locations={journal.locations} />}
@@ -381,6 +383,7 @@ function NpcsView({
   npcPortraitGenerationEnabled,
   generatingNpcPortraitNames,
   onNpcRemove,
+  onNpcPromote,
   removingNpcName,
 }: {
   npcLog: Array<{ npcName: string; interactions: string[] }>;
@@ -390,6 +393,7 @@ function NpcsView({
   npcPortraitGenerationEnabled?: boolean;
   generatingNpcPortraitNames?: Set<string>;
   onNpcRemove?: (npcName: string) => void;
+  onNpcPromote?: (npc: GameNpc) => void;
   removingNpcName?: string | null;
 }) {
   const trackedNpcs = npcs ?? [];
@@ -506,6 +510,16 @@ function NpcsView({
                 {name}
               </span>
               {showReputation && <span className={cn("text-[10px] font-medium", rep.color)}>{rep.text}</span>}
+              {onNpcPromote && (
+                <button
+                  type="button"
+                  onClick={() => onNpcPromote(entry.npc)}
+                  title="Create a character card from this NPC"
+                  className="rounded p-1 text-white/35 transition-colors hover:bg-violet-500/15 hover:text-violet-300"
+                >
+                  <Sparkles size={11} />
+                </button>
+              )}
               {onNpcRemove && (
                 <button
                   type="button"

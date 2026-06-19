@@ -133,6 +133,7 @@ import { GameWidgetPanel, GameWidgetSessionPrepModal, MobileWidgetPanel } from "
 import { WeatherEffects } from "../chat/WeatherEffects";
 import { GameInventory } from "./GameInventory";
 import { GameReadableDisplay } from "./GameReadableDisplay";
+import { PromoteNpcToCharacterModal } from "../modals/PromoteNpcToCharacterModal";
 import {
   buildMissingSceneAssetGenerationPayload,
   normalizeSceneAssetNameForGeneration,
@@ -2068,6 +2069,8 @@ export function GameSurface({
 
   const [sessionPanelOpen, setSessionPanelOpen] = useState(false);
   const [sessionPanelTab, setSessionPanelTab] = useState<"history" | "journal">("history");
+  const [promoteNpcModalOpen, setPromoteNpcModalOpen] = useState(false);
+  const [selectedNpcToPromote, setSelectedNpcToPromote] = useState<GameNpc | null>(null);
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [galleryAnchor, setGalleryAnchor] = useState<{ right: number; top: number } | null>(null);
   const [combatLogsOpen, setCombatLogsOpen] = useState(false);
@@ -5361,6 +5364,13 @@ export function GameSurface({
     },
     [activeChatId, chatMeta.gameJournal, updateChatMetadata],
   );
+  const handlePromoteNpc = useCallback(
+    (npc: GameNpc) => {
+      setSelectedNpcToPromote(npc);
+      setPromoteNpcModalOpen(true);
+    },
+    [],
+  );
 
   const handleAddInventoryItem = useCallback(async () => {
     if (!activeChatId) return null;
@@ -8476,6 +8486,7 @@ export function GameSurface({
             }
             generatingNpcPortraitNames={generatingNpcPortraitNames}
             onNpcRemove={handleRemoveNpcFromJournal}
+            onNpcPromote={handlePromoteNpc}
             embedded
           />
         </div>
@@ -9677,6 +9688,12 @@ export function GameSurface({
         request={jsonRepairRequest}
         onClose={() => setJsonRepairRequest(null)}
         onApplied={handleJsonRepairApplied}
+      />
+      <PromoteNpcToCharacterModal
+        open={promoteNpcModalOpen}
+        onClose={() => setPromoteNpcModalOpen(false)}
+        npc={selectedNpcToPromote}
+        chatMessages={messages}
       />
     </div>
   );
