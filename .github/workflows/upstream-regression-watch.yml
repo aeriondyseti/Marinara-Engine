@@ -1,0 +1,78 @@
+name: upstream-regression-watch
+
+# Personal "shadow CI": keep this fork's regression-watch branch synced to
+# upstream/staging and run the test suite against it, so upstream changes that
+# break covered code surface here. Lives on the fork only.
+
+on:
+  schedule:
+    - cron: "17 * * * *" # hourly, off the top of the hour
+  workflow_dispatch: {} # manual "run now"
+
+permissions:
+  contents: write # push the synced branch back to origin
+
+concurrency:
+  group: regression-watch
+  cancel-in-progress: false
+
+jobs:
+  sync-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: regression-watch
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "regression-watch"
+          git config user.email "actions@users.noreply.github.com"
+
+      - name: Merge latest upstream/staging
+        run: |
+          git remote add upstream https://github.com/Pasta-Devs/Marinara-Engine.git
+          git fetch upstream staging
+          if ! git merge --no-edit upstream/staging; then
+            git merge --abort
+            echo "::error::Conflict merging upstream/staging into regression-watch — resolve locally."
+            exit 1
+          fi
+
+      - name: Sync branches back to origin
+        run: |
+          git push origin HEAD:regression-watch
+          # keep the clean mirror current so feature branches cut from it are fresh
+          git push origin "refs/remotes/upstream/staging:refs/heads/staging" || true
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # server tests import from @marinara-engine/shared, so build it first
+      - run: pnpm --filter @marinara-engine/shared build
+
+      - name: Run regression tests
+        working-directory: packages/server
+        env:
+          LOG_LEVEL: silent
+        run: |
+          files=$(find src -name '*.test.ts' | sort)
+          if [ -z "$files" ]; then
+            echo "No test files found." && exit 0
+          fi
+          echo "Running:"; echo "$files"
+          pnpm exec tsx --test $files
+
+      # Optional: ping Discord on failure. Add a DISCORD_WEBHOOK repo secret to enable.
+      # - name: Notify Discord on failure
+      #   if: failure() && secrets.DISCORD_WEBHOOK != ''
+      #   run: |
+      #     curl -fsSL -H "Content-Type: application/json" \
+      #       -d "{\"content\":\"⚠️ regression-watch failed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID\"}" \
+      #       "${{ secrets.DISCORD_WEBHOOK }}"
