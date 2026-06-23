@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { extensionFromImageMime, isAllowedImageBuffer, parseBoolean, safeBasename } from "../security.js";
+import {
+  extensionFromImageMime,
+  isAllowedImageBuffer,
+  normalizeLoopbackUrl,
+  parseBoolean,
+  safeBasename,
+  safeCompareString,
+  sanitizePathFilename,
+} from "../security.js";
 
 test("parseBoolean accepts the common truthy strings (case-insensitive, trimmed)", () => {
   for (const v of ["1", "true", "TRUE", "Yes", "on", " on "]) assert.equal(parseBoolean(v), true, JSON.stringify(v));
@@ -49,4 +57,23 @@ test("isAllowedImageBuffer sniffs magic bytes and rejects unknown or too-short c
 
   assert.equal(isAllowedImageBuffer(Buffer.from("not an image at all", "ascii")), null);
   assert.equal(isAllowedImageBuffer(Buffer.from([0x89, 0x50])), null, "too short to match any signature");
+});
+
+test("sanitizePathFilename reduces to a basename and enforces an extension allowlist", () => {
+  assert.equal(sanitizePathFilename("../../etc/passwd"), "passwd");
+  assert.equal(sanitizePathFilename("nested/dir/img.PNG", new Set([".png"])), "img.PNG", "ext check is lowercased");
+  assert.throws(() => sanitizePathFilename("evil.exe", new Set([".png", ".jpg"])), /Unsupported file type/);
+});
+
+test("safeCompareString is a length-aware constant-time equality", () => {
+  assert.equal(safeCompareString("token-abc", "token-abc"), true);
+  assert.equal(safeCompareString("token-abc", "token-abd"), false);
+  assert.equal(safeCompareString("short", "longer-value"), false, "different lengths are unequal");
+  assert.equal(safeCompareString("", ""), true);
+});
+
+test("normalizeLoopbackUrl rewrites localhost hostnames to 127.0.0.1 and leaves others alone", () => {
+  assert.equal(normalizeLoopbackUrl("http://localhost:8080/path?q=1"), "http://127.0.0.1:8080/path?q=1");
+  assert.equal(normalizeLoopbackUrl("http://LOCALHOST/"), "http://127.0.0.1/");
+  assert.equal(normalizeLoopbackUrl("https://example.com/x"), "https://example.com/x");
 });
