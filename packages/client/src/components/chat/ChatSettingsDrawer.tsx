@@ -6993,6 +6993,7 @@ export function ChatSettingsDrawer({
         presetId={choiceModalPresetId}
         chatId={chat.id}
         existingChoices={metadata.presetChoices ?? {}}
+        chatFloatingPanel
       />
 
       {/* Automatic summarization editor */}

@@ -689,6 +689,8 @@ function appendContinuationMessageContent(existingContent: unknown, continuation
   return `${existing}${continuation}`;
 }
 
+const CONTINUE_ASSISTANT_MESSAGE_PROMPT = "Your last message got cut off! Please, continue!";
+
 function isAutomaticRoleplaySummaryEnabled(chatMetadata: Record<string, unknown>): boolean {
   if (chatMetadata.automaticSummaryEnabled === false) return false;
   if (chatMetadata.automaticSummaryEnabled === true) return true;
@@ -4367,6 +4369,14 @@ export async function generateRoutes(app: FastifyInstance) {
           logger.debug(
             "[generate/roleplay] Injected DM command reminder (%d chars) into last user message",
             dmCommandReminder.length,
+          );
+        }
+
+        if (input.continueMessageId) {
+          finalMessages.push({ role: "user" as const, content: CONTINUE_ASSISTANT_MESSAGE_PROMPT });
+          logger.debug(
+            "[generate] Injected continuation prompt for assistant message %s",
+            input.continueMessageId,
           );
         }
 
