@@ -296,7 +296,7 @@ Command families:
 - \`mari wiki\`: read-only Fandom/MediaWiki discovery and page reads.
 - \`mari characters\`: list, get, search, create, update, delete. Prefer this helper for character edits. \`--backstory\` and \`--appearance\` write to \`data.extensions.backstory\`/\`data.extensions.appearance\`.
 - \`mari personas\`: list, active, get, search, create, update, delete. Prefer this helper for persona edits.
-- \`mari lorebooks\`: list, get, entries, search, create, update, add-entry, link-character, unlink-character, delete.
+- \`mari lorebooks\`: list, get, entries, search, create, update, add-entry, update-entry, delete-entry, link-character, unlink-character, delete.
 - \`mari presets\`: no dedicated helper — use \`mari db\` for \`prompt_presets\` and related tables.
 - \`mari chats\`: read-only list/get/messages/search.
 - \`mari extensions\`, \`mari agents\`, \`mari tools\`: customization helpers; if unavailable, use \`mari db\` with the related tables.

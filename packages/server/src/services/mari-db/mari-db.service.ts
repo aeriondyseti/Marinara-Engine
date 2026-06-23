@@ -880,6 +880,12 @@ function buildMinimalCharacterData(
     const val = flagString(flags, flagName);
     if (val !== undefined) extensions[fieldName] = val;
   }
+  const tagsVal = flagString(flags, "tags");
+  if (tagsVal !== undefined) {
+    data.tags = tagsVal
+      ? tagsVal.split(/[,|]/).map((t: string) => t.trim()).filter(Boolean)
+      : [];
+  }
   return data;
 }
 
@@ -1489,7 +1495,10 @@ export class MariDbService {
       }
       case "update": {
         const id = parsed.positionals[0];
-        if (!id) throw new Error("Usage: mari characters update <id> [--name <name>] [--description <text>] [--personality <text>] [--apply]");
+        if (!id)
+          throw new Error(
+            "Usage: mari characters update <id> [--name <name>] [--description <text>] [--personality <text>] [--scenario <text>] [--first-mes <text>] [--creator-notes <text>] [--backstory <text>] [--appearance <text>] [--tags <t1,t2,...>] [--comment <text>] [--json '<data_json>' | --json-file <path>] [--apply] [--reason <text>]",
+          );
         const existing = await this.getRawById(getMeta("characters"), id);
         if (!existing) throw new Error(`Character ${id} not found`);
         const existingDataRaw = tryParseJsonColumn(existing, "data");
@@ -1585,7 +1594,7 @@ export class MariDbService {
         const name = flagString(flags, "name")?.trim();
         if (!name) {
           throw new Error(
-            "Usage: mari personas create --name <name> [--description <text>] [--personality <text>] [--scenario <text>] [--backstory <text>] [--appearance <text>] [--comment <text>] [--apply]",
+            "Usage: mari personas create --name <name> [--description <text>] [--personality <text>] [--scenario <text>] [--backstory <text>] [--appearance <text>] [--comment <text>] [--creator <text>] [--creator-notes <text>] [--apply] [--reason <text>]",
           );
         }
         const timestamp = now();
@@ -1629,7 +1638,7 @@ export class MariDbService {
         const id = parsed.positionals[0];
         if (!id)
           throw new Error(
-            "Usage: mari personas update <id> [--name <name>] [--description <text>] [--personality <text>] [--scenario <text>] [--backstory <text>] [--appearance <text>] [--apply]",
+            "Usage: mari personas update <id> [--name <name>] [--description <text>] [--personality <text>] [--scenario <text>] [--backstory <text>] [--appearance <text>] [--tags <t1,t2,...>] [--comment <text>] [--creator <text>] [--creator-notes <text>] [--apply] [--reason <text>]",
           );
         const patch: Row = { updatedAt: now() };
         const fieldMap: Array<[string, string]> = [
@@ -1647,9 +1656,15 @@ export class MariDbService {
           const val = flagString(flags, flagName);
           if (val !== undefined) patch[fieldName] = val;
         }
+        const personaTagsRaw = flagString(flags, "tags");
+        if (personaTagsRaw !== undefined) {
+          patch.tags = personaTagsRaw
+            ? personaTagsRaw.split(/[,|]/).map((t) => t.trim()).filter(Boolean)
+            : [];
+        }
         if (Object.keys(patch).length <= 1) {
           throw new Error(
-            "Provide at least one field to update (--name, --description, --personality, --scenario, --backstory, --appearance)",
+            "Provide at least one field to update (--name, --description, --personality, --scenario, --backstory, --appearance, --tags, --comment, --creator, --creator-notes)",
           );
         }
         const request: ParsedMutationRequest = {
@@ -1785,7 +1800,7 @@ export class MariDbService {
         const id = parsed.positionals[0];
         if (!id)
           throw new Error(
-            "Usage: mari lorebooks update <id> [--name <name>] [--description <text>] [--category <text>] [--global] [--enable] [--disable] [--apply]",
+            "Usage: mari lorebooks update <id> [--name <name>] [--description <text>] [--category <text>] [--tags <t1,t2,...>] [--global] [--enable] [--disable] [--apply]",
           );
         const patch: Row = { updatedAt: now() };
         const fieldMap: Array<[string, string]> = [
@@ -1801,9 +1816,15 @@ export class MariDbService {
         if (hasFlag(flags, "no-global")) patch.isGlobal = "false";
         if (hasFlag(flags, "enable")) patch.enabled = "true";
         if (hasFlag(flags, "disable")) patch.enabled = "false";
+        const lorebookTagsRaw = flagString(flags, "tags");
+        if (lorebookTagsRaw !== undefined) {
+          patch.tags = lorebookTagsRaw
+            ? lorebookTagsRaw.split(/[,|]/).map((t) => t.trim()).filter(Boolean)
+            : [];
+        }
         if (Object.keys(patch).length <= 1) {
           throw new Error(
-            "Provide at least one field to update (--name, --description, --category, --global, --enable, --disable)",
+            "Provide at least one field to update (--name, --description, --category, --tags, --global, --enable, --disable)",
           );
         }
         const request: ParsedMutationRequest = {
@@ -1822,7 +1843,7 @@ export class MariDbService {
         const lorebookId = parsed.positionals[0];
         if (!lorebookId) {
           throw new Error(
-            "Usage: mari lorebooks add-entry <lorebook-id> --name <name> [--content <text>] [--keys <k1,k2,...>] [--apply]",
+            "Usage: mari lorebooks add-entry <lorebook-id> --name <name> [--content <text>] [--keys <k1,k2,...>] [--description <text>] [--apply] [--reason <text>]",
           );
         }
         const entryName = flagString(flags, "name")?.trim();
@@ -1887,6 +1908,72 @@ export class MariDbService {
           cwd: context.cwd,
         };
         return this.executeMutation(request, context.command, context.sessionId);
+      }
+      case "update-entry": {
+        const entryId = parsed.positionals[0];
+        if (!entryId) {
+          throw new Error(
+            "Usage: mari lorebooks update-entry <entry-id> [--name <name>] [--content <text>] [--keys <k1,k2,...>] [--description <text>] [--enable] [--disable] [--constant] [--no-constant] [--order <n>] [--apply] [--reason <text>]",
+          );
+        }
+        const entryExists = await this.getRawById(getMeta("lorebook_entries"), entryId);
+        if (!entryExists) throw new Error(`Lorebook entry ${entryId} not found`);
+        const entryPatch: Row = { updatedAt: now() };
+        const entryFieldMap: Array<[string, string]> = [
+          ["name", "name"],
+          ["content", "content"],
+          ["description", "description"],
+        ];
+        for (const [flagName, fieldName] of entryFieldMap) {
+          const val = flagString(flags, flagName);
+          if (val !== undefined) entryPatch[fieldName] = val;
+        }
+        const keysRaw = flagString(flags, "keys");
+        if (keysRaw !== undefined) {
+          entryPatch.keys = keysRaw
+            ? keysRaw.split(",").map((k) => k.trim()).filter(Boolean)
+            : [];
+        }
+        const orderVal = flagString(flags, "order");
+        if (orderVal !== undefined) {
+          const order = Number(orderVal);
+          if (!Number.isFinite(order)) throw new Error("--order must be a finite number");
+          entryPatch.order = order;
+        }
+        if (hasFlag(flags, "enable")) entryPatch.enabled = "true";
+        if (hasFlag(flags, "disable")) entryPatch.enabled = "false";
+        if (hasFlag(flags, "constant")) entryPatch.constant = "true";
+        if (hasFlag(flags, "no-constant")) entryPatch.constant = "false";
+        if (Object.keys(entryPatch).length <= 1) {
+          throw new Error(
+            "Provide at least one field to update (--name, --content, --keys, --description, --enable, --disable, --constant, --no-constant, --order)",
+          );
+        }
+        const updateEntryRequest: ParsedMutationRequest = {
+          kind: "patch",
+          table: "lorebook_entries",
+          id: entryId,
+          patch: entryPatch,
+          apply: hasFlag(flags, "apply"),
+          cascade: false,
+          reason: flagString(flags, "reason") ?? null,
+          cwd: context.cwd,
+        };
+        return this.executeMutation(updateEntryRequest, context.command, context.sessionId);
+      }
+      case "delete-entry": {
+        const entryId = parsed.positionals[0];
+        if (!entryId) throw new Error("Usage: mari lorebooks delete-entry <entry-id> [--apply] [--reason <text>]");
+        const deleteEntryRequest: ParsedMutationRequest = {
+          kind: "delete",
+          table: "lorebook_entries",
+          id: entryId,
+          apply: hasFlag(flags, "apply"),
+          cascade: false,
+          reason: flagString(flags, "reason") ?? null,
+          cwd: context.cwd,
+        };
+        return this.executeMutation(deleteEntryRequest, context.command, context.sessionId);
       }
       case "link-character": {
         const lorebookId = parsed.positionals[0];
@@ -2862,7 +2949,7 @@ export class MariDbService {
       "Images/media:        mari images connections|preview|generate|edit|assign|delete|list",
       "Creative data:       mari characters list|get|search|create|update|delete",
       "Creative data:       mari personas list|active|get|search|create|update|delete",
-      "Creative data:       mari lorebooks list|get|entries|search|create|update|add-entry|link-character|unlink-character|delete",
+      "Creative data:       mari lorebooks list|get|entries|search|create|update|add-entry|update-entry|delete-entry|link-character|unlink-character|delete",
       "Chats (read-only):   mari chats list|get|messages|search",
       "Fandom/wiki reads:   mari wiki find-wikis|search-all|search|get-page|sections|category|site-info",
       "Discovery:           mari <group> --help or mari <group> <command> --help",
@@ -2876,9 +2963,9 @@ export class MariDbService {
       "Read:  list [--limit <n>] [--search <text>]",
       "Read:  get <id>",
       "Read:  search <query> [--limit <n>]",
-      "Write: create (--name <name> [--description <text>] [--personality <text>] [--scenario <text>] [--first-mes <text>] [--creator-notes <text>] [--backstory <text>] [--appearance <text>] [--comment <text>] | --json '<data_json>' | --json-file <path>) [--apply] [--reason <text>]",
+      "Write: create (--name <name> [--description <text>] [--personality <text>] [--scenario <text>] [--first-mes <text>] [--creator-notes <text>] [--backstory <text>] [--appearance <text>] [--tags <t1,t2,...>] [--comment <text>] | --json '<data_json>' | --json-file <path>) [--apply] [--reason <text>]",
       "       --backstory and --appearance write to data.extensions.backstory / data.extensions.appearance",
-      "Write: update <id> [--name <name>] [--description <text>] [--personality <text>] [--scenario <text>] [--first-mes <text>] [--creator-notes <text>] [--backstory <text>] [--appearance <text>] [--comment <text>] [--json '<data_json>' | --json-file <path>] [--apply] [--reason <text>]",
+      "Write: update <id> [--name <name>] [--description <text>] [--personality <text>] [--scenario <text>] [--first-mes <text>] [--creator-notes <text>] [--backstory <text>] [--appearance <text>] [--tags <t1,t2,...>] [--comment <text>] [--json '<data_json>' | --json-file <path>] [--apply] [--reason <text>]",
       "Write: delete <id> [--apply] [--reason <text>]",
       "Writes dry-run by default; --apply requests browser approval.",
     ].join("\n");
@@ -2891,8 +2978,8 @@ export class MariDbService {
       "Read:  active",
       "Read:  get <id>",
       "Read:  search <query> [--limit <n>]",
-      "Write: create --name <name> [--description <text>] [--personality <text>] [--scenario <text>] [--backstory <text>] [--appearance <text>] [--comment <text>] [--apply] [--reason <text>]",
-      "Write: update <id> [--name <name>] [--description <text>] [--personality <text>] [--scenario <text>] [--backstory <text>] [--appearance <text>] [--apply] [--reason <text>]",
+      "Write: create --name <name> [--description <text>] [--personality <text>] [--scenario <text>] [--backstory <text>] [--appearance <text>] [--comment <text>] [--creator <text>] [--creator-notes <text>] [--apply] [--reason <text>]",
+      "Write: update <id> [--name <name>] [--description <text>] [--personality <text>] [--scenario <text>] [--backstory <text>] [--appearance <text>] [--tags <t1,t2,...>] [--comment <text>] [--creator <text>] [--creator-notes <text>] [--apply] [--reason <text>]",
       "Write: delete <id> [--apply] [--reason <text>]",
       "Writes dry-run by default; --apply requests browser approval.",
     ].join("\n");
@@ -2906,8 +2993,10 @@ export class MariDbService {
       "Read:  entries <lorebook-id> [--limit <n>]",
       "Read:  search <query> [--limit <n>]",
       "Write: create --name <name> [--description <text>] [--category <text>] [--global] [--apply] [--reason <text>]",
-      "Write: update <id> [--name <name>] [--description <text>] [--category <text>] [--global] [--enable] [--disable] [--apply] [--reason <text>]",
+      "Write: update <id> [--name <name>] [--description <text>] [--category <text>] [--tags <t1,t2,...>] [--global] [--enable] [--disable] [--apply] [--reason <text>]",
       "Write: add-entry <lorebook-id> --name <name> [--content <text>] [--keys <k1,k2,...>] [--description <text>] [--apply] [--reason <text>]",
+      "Write: update-entry <entry-id> [--name <name>] [--content <text>] [--keys <k1,k2,...>] [--description <text>] [--enable] [--disable] [--constant] [--no-constant] [--order <n>] [--apply] [--reason <text>]",
+      "Write: delete-entry <entry-id> [--apply] [--reason <text>]",
       "Write: link-character <lorebook-id> --character <character-id> [--apply] [--reason <text>]",
       "Write: unlink-character <lorebook-id> --character <character-id> [--apply] [--reason <text>]",
       "Write: delete <id> [--cascade] [--apply] [--reason <text>]",
