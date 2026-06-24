@@ -2240,6 +2240,32 @@ export async function chatsRoutes(app: FastifyInstance) {
     return storage.addSwipe(req.params.messageId, content, silent);
   });
 
+  // Add multiple swipes in one round trip. Used for alternate greetings during chat setup.
+  app.post<{ Params: { chatId: string; messageId: string } }>(
+    "/:chatId/messages/:messageId/swipes/bulk",
+    async (req, reply) => {
+      const { contents, silent } = req.body as { contents?: unknown; silent?: boolean };
+      if (!Array.isArray(contents)) {
+        return reply.status(400).send({ error: "contents must be a non-empty array of strings" });
+      }
+      const normalized = contents
+        .map((content) => (typeof content === "string" ? content.trim() : ""))
+        .filter((content) => content.length > 0);
+      if (normalized.length === 0) {
+        return reply.status(400).send({ error: "contents must include at least one non-empty string" });
+      }
+      const message = await storage.getMessage(req.params.messageId);
+      if (!message || message.chatId !== req.params.chatId) {
+        return reply.status(404).send({ error: "Message not found" });
+      }
+      const created: Array<{ id: string; index: number }> = [];
+      for (const content of normalized) {
+        created.push(await storage.addSwipe(req.params.messageId, content, silent ?? true));
+      }
+      return { swipes: created };
+    },
+  );
+
   // Delete a swipe without deleting the parent message
   app.delete<{ Params: { chatId: string; messageId: string; index: string } }>(
     "/:chatId/messages/:messageId/swipes/:index",
