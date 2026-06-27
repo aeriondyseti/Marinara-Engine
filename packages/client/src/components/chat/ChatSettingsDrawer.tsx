@@ -7037,6 +7037,7 @@ export function ChatSettingsDrawer({
         chatId={chat.id}
         open={showMemoriesModal}
         onClose={() => setShowMemoriesModal(false)}
+        chatFloatingPanel
       />
 
       <Modal
@@ -7384,7 +7385,17 @@ const MEMORY_CONTENT_CLASS =
 const MAX_MEMORY_RECALL_IMPORT_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_MEMORY_RECALL_IMPORT_FILE_LABEL = "25 MB";
 
-function MemoryRecallMemoriesModal({ chatId, open, onClose }: { chatId: string; open: boolean; onClose: () => void }) {
+function MemoryRecallMemoriesModal({
+  chatId,
+  open,
+  onClose,
+  chatFloatingPanel = false,
+}: {
+  chatId: string;
+  open: boolean;
+  onClose: () => void;
+  chatFloatingPanel?: boolean;
+}) {
   const memoriesQuery = useChatMemories(chatId, open);
   const deleteMemory = useDeleteChatMemory(chatId);
   const clearMemories = useClearChatMemories(chatId);
@@ -7460,7 +7471,13 @@ function MemoryRecallMemoriesModal({ chatId, open, onClose }: { chatId: string; 
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Memories for This Chat" width="max-w-3xl">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Memories for This Chat"
+      width="max-w-3xl"
+      chatFloatingPanel={chatFloatingPanel}
+    >
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-[var(--secondary)]/70 px-3 py-2 ring-1 ring-[var(--border)]">
           <div className="text-[0.6875rem] text-[var(--muted-foreground)]">
