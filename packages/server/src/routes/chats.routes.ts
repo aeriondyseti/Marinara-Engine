@@ -1273,7 +1273,18 @@ export async function chatsRoutes(app: FastifyInstance) {
       chatMetadata: chat.metadata,
       connectionId: chat.connectionId,
     });
-    const rebuilt = await rebuildMemoryChunks(app.db, req.params.id, { userName, characterNames }, { embeddingSource });
+    const chatMeta = parseExtra(chat.metadata) as Record<string, unknown>;
+    const contextMessageLimit = chatMeta.contextMessageLimit;
+    const rebuilt = await rebuildMemoryChunks(
+      app.db,
+      req.params.id,
+      { userName, characterNames },
+      {
+        embeddingSource,
+        readBehindMessageCount:
+          typeof contextMessageLimit === "number" && contextMessageLimit > 0 ? contextMessageLimit : undefined,
+      },
+    );
     return { rebuilt };
   });
 
@@ -2335,6 +2346,11 @@ export async function chatsRoutes(app: FastifyInstance) {
     }
   };
 
+  const getExportThinking = (extra: Record<string, unknown>): string | null => {
+    const value = extra.thinking ?? extra.reasoning ?? extra.reasoning_content;
+    return typeof value === "string" && value.trim().length > 0 ? value : null;
+  };
+
   const safeExportNamePart = (value: unknown, fallback: string): string => {
     const source = typeof value === "string" && value.trim() ? value.trim() : fallback;
     return (
@@ -2382,7 +2398,10 @@ export async function chatsRoutes(app: FastifyInstance) {
         .map((msg) => {
           const name = getDisplayName(msg);
           const ts = msg.createdAt ? new Date(msg.createdAt).toLocaleString() : "";
-          return `[${name}]${ts ? ` (${ts})` : ""}\n${msg.content}`;
+          const thinking = getExportThinking(parseExportMetadata(msg.extra));
+          const parts = [`[${name}]${ts ? ` (${ts})` : ""}`, msg.content];
+          if (thinking) parts.push(`[Thinking]\n${thinking}`);
+          return parts.join("\n");
         })
         .join("\n\n");
 
@@ -2410,6 +2429,7 @@ export async function chatsRoutes(app: FastifyInstance) {
 
     for (const msg of msgs) {
       const messageExtra = parseExportMetadata(msg.extra);
+      const thinking = getExportThinking(messageExtra);
       const swipes = await storage.getSwipes(msg.id);
       const exportSwipes =
         swipes.length > 0
@@ -2435,6 +2455,13 @@ export async function chatsRoutes(app: FastifyInstance) {
           role: msg.role,
           character_id: msg.characterId,
           mes: msg.content,
+          ...(thinking
+            ? {
+                thinking,
+                reasoning: thinking,
+                reasoning_content: thinking,
+              }
+            : {}),
           swipes: exportSwipes.map((swipe) => swipe.content),
           swipe_id: msg.activeSwipeIndex,
           send_date: msg.createdAt,

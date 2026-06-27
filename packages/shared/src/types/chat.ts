@@ -341,6 +341,8 @@ export interface ChatMetadata {
   impersonatePrompt?: string | null;
   /** Show a manual draft translation button beside the send control. */
   showInputTranslateButton?: boolean;
+  /** Optional per-chat AI translation system prompt override. Missing or blank uses the default prompt. */
+  translationPrompt?: string | null;
   /** Allow roleplay characters to create direct-message conversation chats with hidden [dm] commands. */
   roleplayDmCommandsEnabled?: boolean;
   /** Chat-scoped Intiface Central WebSocket URL for haptic manual and auto-connect. */

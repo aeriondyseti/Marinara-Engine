@@ -33,6 +33,9 @@ interface STChatMessage {
   character_id?: unknown;
   send_date?: string;
   mes?: unknown;
+  thinking?: unknown;
+  reasoning?: unknown;
+  reasoning_content?: unknown;
   swipes?: unknown;
   swipe_id?: unknown;
   extra?: STChatMessageExtra;
@@ -158,6 +161,10 @@ function normalizeImportedExtra(raw: unknown): Record<string, unknown> {
   return extra;
 }
 
+function normalizeImportedThinking(raw: unknown): string | null {
+  return typeof raw === "string" && raw.trim().length > 0 ? raw : null;
+}
+
 function normalizeSwipeContents(raw: unknown, fallbackContent: string): string[] {
   if (!Array.isArray(raw)) return [fallbackContent];
 
@@ -260,6 +267,13 @@ export async function importSTChat(jsonlContent: string, db: DB, opts?: ImportST
         (stMsg.is_user ? "user" : stMsg.is_system ? "system" : "assistant");
       const rawContent = typeof stMsg.mes === "string" ? stMsg.mes : "";
       const messageExtra = normalizeImportedExtra(stMsg.extra);
+      const exportedThinking =
+        normalizeImportedThinking(stMsg.thinking) ??
+        normalizeImportedThinking(stMsg.reasoning) ??
+        normalizeImportedThinking(stMsg.reasoning_content);
+      if (exportedThinking && typeof messageExtra.thinking !== "string") {
+        messageExtra.thinking = exportedThinking;
+      }
       const storedMessageExtra = Object.keys(messageExtra).length > 0 ? messageExtra : undefined;
       const swipeContents = normalizeSwipeContents(stMsg.swipes, rawContent);
       const activeSwipeIndex = normalizeSwipeIndex(stMsg.swipe_id, swipeContents.length);

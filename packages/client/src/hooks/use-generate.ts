@@ -2416,14 +2416,13 @@ export function useGenerate() {
         if (receivedContent) {
           try {
             const chatData = qc.getQueryData<Chat>(chatKeys.detail(params.chatId));
-            const meta =
-              chatData?.metadata != null
-                ? typeof chatData.metadata === "string"
-                  ? JSON.parse(chatData.metadata)
-                  : chatData.metadata
-                : {};
+            const meta = parseChatMetadata(chatData?.metadata);
             if (meta.autoTranslate) {
               const store = useTranslationStore.getState();
+              const chatSystemPrompt =
+                typeof meta.translationPrompt === "string" && meta.translationPrompt.trim().length > 0
+                  ? meta.translationPrompt
+                  : store.config.systemPrompt;
               for (const [id, msg] of persistedMessages) {
                 const textToTranslate =
                   chatData?.mode === "game" ? stripGmTagsKeepReadables(msg.content ?? "").trim() : (msg.content ?? "");
@@ -2440,6 +2439,7 @@ export function useGenerate() {
                       provider: store.config.provider,
                       targetLanguage: store.config.targetLanguage,
                       connectionId: store.config.connectionId,
+                      systemPrompt: chatSystemPrompt,
                       deeplApiKey: store.config.deeplApiKey,
                       deeplxUrl: store.config.deeplxUrl,
                     })

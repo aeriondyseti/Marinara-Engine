@@ -888,6 +888,7 @@ export function ChatArea() {
       provider: chatMeta.translationProvider ?? "google",
       targetLanguage: chatMeta.translationTargetLang ?? "en",
       connectionId: chatMeta.translationConnectionId,
+      systemPrompt: typeof chatMeta.translationPrompt === "string" ? chatMeta.translationPrompt : undefined,
       deeplApiKey: chatMeta.translationDeeplApiKey,
       deeplxUrl: chatMeta.translationDeeplxUrl,
     });
@@ -896,6 +897,7 @@ export function ChatArea() {
     chatMeta.translationProvider,
     chatMeta.translationTargetLang,
     chatMeta.translationConnectionId,
+    chatMeta.translationPrompt,
     chatMeta.translationDeeplApiKey,
     chatMeta.translationDeeplxUrl,
   ]);

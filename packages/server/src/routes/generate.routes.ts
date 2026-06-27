@@ -10976,7 +10976,11 @@ export async function generateRoutes(app: FastifyInstance) {
               app.db,
               input.chatId,
               { userName: personaName, characterNames: charNameMap },
-              { embeddingSource: memoryRecallEmbeddingSource },
+              {
+                embeddingSource: memoryRecallEmbeddingSource,
+                readBehindMessageCount:
+                  typeof contextMessageLimit === "number" && contextMessageLimit > 0 ? contextMessageLimit : undefined,
+              },
             ).catch((err) => logger.error(err, "[memory-recall] Background chunking failed"));
           }
         }
