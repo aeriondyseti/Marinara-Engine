@@ -1387,8 +1387,9 @@ export const ChatMessage = memo(function ChatMessage({
     if (!characterMap) return null;
     if (!chatCharacterIds) return characterMap;
     const allowedIds = new Set(chatCharacterIds);
+    if (message.characterId) allowedIds.add(message.characterId);
     return new Map(Array.from(characterMap).filter(([id]) => allowedIds.has(id)));
-  }, [characterMap, chatCharacterIds]);
+  }, [characterMap, chatCharacterIds, message.characterId]);
 
   // Resolve character info from characters that actually belong to this chat.
   const charInfo = message.characterId && scopedCharacterMap ? scopedCharacterMap.get(message.characterId) : null;

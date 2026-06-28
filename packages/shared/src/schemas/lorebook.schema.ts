@@ -79,7 +79,7 @@ export const createLorebookSchema = z.object({
     .default(LIMITS.LOREBOOK_ENTRY_LIMIT_DEFAULT),
   recursiveScanning: z.boolean().default(false),
   maxRecursionDepth: z.number().int().min(1).max(10).default(3),
-  excludeFromVectorization: z.boolean().default(false),
+  excludeFromVectorization: z.boolean().default(true),
   characterId: z.string().nullable().default(null),
   characterIds: z.array(z.string()).default([]),
   personaId: z.string().nullable().default(null),

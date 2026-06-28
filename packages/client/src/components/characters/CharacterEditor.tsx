@@ -44,7 +44,9 @@ import { ImageUploadDropzone } from "../ui/ImageUploadDropzone";
 import { CustomEmojiTagButton } from "../ui/CustomEmojiTagButton";
 import { CharacterRegexSection } from "./CharacterRegexSection";
 import {
+  ArrowDown,
   ArrowLeft,
+  ArrowUp,
   Save,
   User,
   IdCard,
@@ -815,12 +817,7 @@ export function CharacterEditor() {
       {/* ── Header ── */}
       <div className="mari-editor-header items-start">
         <div className="mari-editor-header-main max-md:min-w-full">
-          <button
-            type="button"
-            onClick={handleClose}
-            className="mari-editor-action inline-flex"
-            title="Back"
-          >
+          <button type="button" onClick={handleClose} className="mari-editor-action inline-flex" title="Back">
             <ArrowLeft size="1.125rem" />
           </button>
 
@@ -1187,6 +1184,29 @@ function MetadataTab({
         helpText={CHARACTER_METADATA_HELP}
       />
 
+      {characterId && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--secondary)]/70 px-3 py-2">
+          <span className="text-[0.625rem] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
+            Character ID
+          </span>
+          <code className="min-w-0 flex-1 break-all rounded-lg bg-[var(--background)] px-2 py-1 text-[0.6875rem] text-[var(--foreground)]">
+            {characterId}
+          </code>
+          <button
+            type="button"
+            onClick={() => {
+              void navigator.clipboard?.writeText(characterId);
+              toast.success("Character ID copied");
+            }}
+            className="mari-editor-action inline-flex h-8 px-2 text-[0.6875rem]"
+            title="Copy character ID"
+          >
+            <Copy size="0.75rem" />
+            Copy
+          </button>
+        </div>
+      )}
+
       {/* Avatar Crop */}
       {avatarPreview && (
         <AvatarCropWidget
@@ -1279,10 +1299,7 @@ function MetadataTab({
         </div>
         <div className="flex flex-wrap gap-1.5">
           {formData.tags.map((tag) => (
-            <span
-              key={tag}
-              className="mari-chrome-control mari-chrome-control--compact group/tag"
-            >
+            <span key={tag} className="mari-chrome-control mari-chrome-control--compact group/tag">
               <Tag size="0.625rem" />
               {tag}
               <button
@@ -1611,6 +1628,25 @@ function DialogueTab({
     );
   };
 
+  const moveGreeting = (i: number, offset: -1 | 1) => {
+    const nextIndex = i + offset;
+    if (nextIndex < 0 || nextIndex >= formData.alternate_greetings.length) return;
+
+    const nextGreetings = [...formData.alternate_greetings];
+    const [movedGreeting] = nextGreetings.splice(i, 1);
+    nextGreetings.splice(nextIndex, 0, movedGreeting ?? "");
+
+    const nextKeys = [...greetingKeysRef.current];
+    const [movedKey] = nextKeys.splice(i, 1);
+    nextKeys.splice(nextIndex, 0, movedKey ?? generateClientId());
+    greetingKeysRef.current = nextKeys;
+
+    updateField("alternate_greetings", nextGreetings);
+  };
+
+  const greetingActionButtonClassName =
+    "inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--secondary)] text-[var(--muted-foreground)] transition-all hover:border-[var(--primary)]/40 hover:text-[var(--foreground)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-[var(--border)] disabled:hover:text-[var(--muted-foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]";
+
   return (
     <div className="space-y-6">
       <SectionHeader
@@ -1651,27 +1687,56 @@ function DialogueTab({
           </button>
         </div>
         {formData.alternate_greetings.map((g, i) => (
-          <MacroTextarea
+          <div
             key={greetingKeysRef.current[i] ?? i}
-            value={g}
-            onChange={(value) => updateGreeting(i, value)}
-            rows={3}
-            title={`Alternate Greeting #${i + 1}`}
-            className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-3 text-sm outline-none placeholder:text-[var(--muted-foreground)]/40 focus:border-[var(--primary)]/40"
-            placeholder={`Greeting #${i + 1}…`}
-            controlPaddingClassName="pr-14"
-            toolbarExtra={
-              <button
-                type="button"
-                onClick={() => removeGreeting(i)}
-                className="rounded p-1 text-[var(--muted-foreground)] transition-colors hover:text-[var(--destructive)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
-                aria-label={`Remove alternate greeting ${i + 1}`}
-                title="Remove greeting"
-              >
-                <Trash2 size="0.75rem" />
-              </button>
-            }
-          />
+            className="space-y-2 rounded-xl border border-[var(--border)]/70 bg-[var(--background)]/35 p-2.5"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-medium text-[var(--muted-foreground)]">Greeting #{i + 1}</span>
+              <div className="flex shrink-0 items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => moveGreeting(i, -1)}
+                  disabled={i === 0}
+                  className={greetingActionButtonClassName}
+                  aria-label={`Move alternate greeting ${i + 1} up`}
+                  title="Move up"
+                >
+                  <ArrowUp size="0.75rem" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => moveGreeting(i, 1)}
+                  disabled={i === formData.alternate_greetings.length - 1}
+                  className={greetingActionButtonClassName}
+                  aria-label={`Move alternate greeting ${i + 1} down`}
+                  title="Move down"
+                >
+                  <ArrowDown size="0.75rem" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeGreeting(i)}
+                  className={cn(
+                    greetingActionButtonClassName,
+                    "hover:border-[var(--destructive)]/40 hover:text-[var(--destructive)]",
+                  )}
+                  aria-label={`Remove alternate greeting ${i + 1}`}
+                  title="Remove greeting"
+                >
+                  <Trash2 size="0.75rem" />
+                </button>
+              </div>
+            </div>
+            <MacroTextarea
+              value={g}
+              onChange={(value) => updateGreeting(i, value)}
+              rows={3}
+              title={`Alternate Greeting #${i + 1}`}
+              className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-3 text-sm outline-none placeholder:text-[var(--muted-foreground)]/40 focus:border-[var(--primary)]/40"
+              placeholder={`Greeting #${i + 1}...`}
+            />
+          </div>
         ))}
       </div>
 

@@ -39,8 +39,10 @@ export function compileImagePrompt(input: CompileImagePromptInput): CompiledImag
   const generatedStyle = input.generatedStyle?.trim() ?? "";
   const promptPrefix = imagePromptPrefixFromDefaults(input.imageDefaults);
   const negativePromptPrefix = imageNegativePromptPrefixFromDefaults(input.imageDefaults);
-  const preserveGeneratedPrompt = input.kind === "illustration" || input.kind === "background" || input.kind === "selfie";
-  const compactTags = !preserveGeneratedPrompt && (promptMode === "tagged" || promptMode === "danbooru");
+  const taggedPromptMode = promptMode === "tagged" || promptMode === "danbooru";
+  const preserveGeneratedPrompt =
+    !taggedPromptMode && (input.kind === "illustration" || input.kind === "background" || input.kind === "selfie");
+  const compactTags = taggedPromptMode;
   const compactVisualPrompt =
     profile.baseStyle !== "z_image_turbo" && ["avatar", "portrait", "sprite"].includes(input.kind);
   const compactPrompt = compactTags || compactVisualPrompt;

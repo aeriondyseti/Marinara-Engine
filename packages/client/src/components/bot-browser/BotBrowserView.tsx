@@ -705,21 +705,69 @@ const jannyProvider: ProviderConfig = {
     }
 
     const detailFromCharacter = (char: Record<string, unknown> | null | undefined): CardDetail | null => {
-      if (!char || !(char.personality || char.firstMessage)) return null;
+      if (!char) return null;
+      const definition =
+        char.definition && typeof char.definition === "object" && !Array.isArray(char.definition)
+          ? (char.definition as Record<string, unknown>)
+          : {};
+      const pickString = (...values: unknown[]) => values.find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim();
+      const description = pickString(
+        char.personality,
+        char.description,
+        char.definition_character_description,
+        definition.description,
+        definition.personality,
+      );
+      const personality = pickString(
+        char.tavern_personality,
+        char.definition_personality,
+        char.definition,
+        definition.tavern_personality,
+        definition.personality,
+      );
+      const scenario = pickString(char.scenario, char.definition_scenario, definition.scenario);
+      const firstMessage = pickString(
+        char.firstMessage,
+        char.first_message,
+        char.first_mes,
+        char.definition_first_message,
+        definition.firstMessage,
+        definition.first_message,
+        definition.first_mes,
+      );
+      const exampleDialogs = pickString(
+        char.exampleDialogs,
+        char.example_dialogs,
+        char.mes_example,
+        char.definition_example_messages,
+        definition.exampleDialogs,
+        definition.example_dialogs,
+        definition.mes_example,
+      );
+      const creatorNotes = pickString(char.creatorNotes, char.creator_notes, char.creatorNote, char.description_html)
+        ?.replace(/<[^>]*>/g, "")
+        .trim();
+      if (!(description || personality || scenario || firstMessage || exampleDialogs || creatorNotes)) return null;
       return {
-        description: (char.personality as string) || undefined,
-        scenario: (char.scenario as string) || undefined,
-        firstMessage: (char.firstMessage as string) || undefined,
-        exampleDialogs: (char.exampleDialogs as string) || undefined,
-        alternateGreetings: optionalStringArray(char.alternateGreetings ?? char.alternate_greetings),
-        creatorNotes: char.description
-          ? typeof char.description === "string"
-            ? char.description.replace(/<[^>]*>/g, "").trim()
-            : undefined
-          : undefined,
-        systemPrompt: optionalString(char.systemPrompt ?? char.system_prompt),
-        postHistoryInstructions: optionalString(char.postHistoryInstructions ?? char.post_history_instructions),
-        characterVersion: optionalString(char.characterVersion ?? char.character_version),
+        description,
+        personality: personality && personality !== description ? personality : undefined,
+        scenario,
+        firstMessage,
+        exampleDialogs,
+        alternateGreetings: optionalStringArray(
+          char.alternateGreetings ?? char.alternate_greetings ?? definition.alternateGreetings ?? definition.alternate_greetings,
+        ),
+        creatorNotes: creatorNotes && creatorNotes !== description ? creatorNotes : undefined,
+        systemPrompt: optionalString(char.systemPrompt ?? char.system_prompt ?? definition.systemPrompt ?? definition.system_prompt),
+        postHistoryInstructions: optionalString(
+          char.postHistoryInstructions ??
+            char.post_history_instructions ??
+            definition.postHistoryInstructions ??
+            definition.post_history_instructions,
+        ),
+        characterVersion: optionalString(
+          char.characterVersion ?? char.character_version ?? definition.characterVersion ?? definition.character_version,
+        ),
       };
     };
 
@@ -1337,6 +1385,7 @@ function getProvider(id: string): ProviderConfig {
 
 export function BotBrowserView() {
   const qc = useQueryClient();
+  const botBrowserOpen = useUIStore((s) => s.botBrowserOpen);
   const closeBotBrowser = useUIStore((s) => s.closeBotBrowser);
 
   const [sourceId, setSourceId] = useState("chub");
@@ -1384,6 +1433,10 @@ export function BotBrowserView() {
       window.removeEventListener("scroll", updateSourceMenuPosition, true);
     };
   }, [sourceOpen, updateSourceMenuPosition]);
+
+  useEffect(() => {
+    if (!botBrowserOpen) setSourceOpen(false);
+  }, [botBrowserOpen]);
 
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState(provider.defaultSort);
@@ -1921,7 +1974,7 @@ export function BotBrowserView() {
           sourceMenuPosition &&
           createPortal(
             <div
-              className="mari-chrome-token-scope mari-chrome-selection-bar fixed z-[9999] min-w-[180px] overflow-y-auto shadow-xl"
+              className="mari-chrome-token-scope mari-chrome-selection-bar mari-chrome-selection-bar--opaque fixed z-[9999] min-w-[180px] overflow-y-auto shadow-xl"
               style={{
                 left: sourceMenuPosition.left,
                 top: sourceMenuPosition.top,

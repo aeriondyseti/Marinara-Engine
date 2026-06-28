@@ -849,7 +849,7 @@ function AuthorNotesButton({
 
   useEffect(() => {
     if (!open || !renderPanel) return;
-    const handle = (e: MouseEvent) => {
+    const handle = (e: PointerEvent) => {
       const target = e.target as Node;
       if (ref.current?.contains(target) || panelRef.current?.contains(target)) return;
       // On mobile, the virtual keyboard opening can synthesise a pointer/mouse
@@ -863,8 +863,8 @@ function AuthorNotesButton({
       }
       onOpenChange(false);
     };
-    document.addEventListener("mousedown", handle);
-    return () => document.removeEventListener("mousedown", handle);
+    document.addEventListener("pointerdown", handle);
+    return () => document.removeEventListener("pointerdown", handle);
   }, [onOpenChange, open, renderPanel, useMobilePanel]);
 
   useLayoutEffect(() => {
@@ -954,6 +954,7 @@ function AuthorNotesButton({
                 maxHeight: mobileFrame.maxHeight,
               }}
               onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
               onTouchStart={(e) => e.stopPropagation()}
             >
               <Suspense
@@ -986,6 +987,7 @@ function AuthorNotesButton({
                 top: `${desktopAnchor.top}px`,
               }}
               onMouseDown={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
             >
               <Suspense
                 fallback={

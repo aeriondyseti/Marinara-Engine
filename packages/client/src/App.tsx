@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // App: Root component with layout
 // ──────────────────────────────────────────────
-import { lazy, Suspense, useEffect } from "react";
+import { Component, lazy, Suspense, useEffect, useMemo, type ErrorInfo, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { APP_VERSION } from "@marinara-engine/shared";
 import { AppShell } from "./components/layout/AppShell";
@@ -26,7 +26,8 @@ import {
   isCssGradient,
   RAINBOW_GRADIENT_PRESET,
 } from "./lib/css-colors";
-import { useLegacyThemeMigration } from "./hooks/use-themes";
+import { normalizeThemeCss } from "./lib/theme-css";
+import { useLegacyThemeMigration, useThemes } from "./hooks/use-themes";
 import { useLegacyExtensionMigration } from "./hooks/use-extensions";
 import { useSettingsSync } from "./hooks/use-settings-sync";
 
@@ -69,6 +70,81 @@ const ACCENT_RGB_SOLID_CYCLE_MS = 7_200;
 const ACCENT_RGB_GRADIENT_STOP_MS = 6_000;
 const TOAST_DURATION_MS = 6_000;
 const TOAST_VISIBLE_LIMIT = 3;
+const THEME_ACCENT_PULSE_VARIABLE = "--marinara-theme-accent-pulse";
+const THEME_ACCENT_PULSE_SOURCE_VARIABLE = "--marinara-theme-accent-pulse-source";
+const THEME_ACCENT_PULSE_ENABLED_VALUES = new Set(["1", "true", "yes", "on", "enabled", "enable", "pulse"]);
+const ACCENT_SOURCE_SELF_REFERENCE_RE =
+  /var\(\s*--(?:primary|ring|accent|sidebar-accent|sidebar-accent-foreground|marinara-app-accent-solid|marinara-app-accent-gradient|marinara-chat-chrome-accent|marinara-chat-chrome-accent-gradient)\b/i;
+
+function formatRecoveryError(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error) ?? "Unknown render error";
+  } catch {
+    return String(error);
+  }
+}
+
+export class AppRecoveryBoundary extends Component<{ children: ReactNode }, { error: unknown; hasError: boolean }> {
+  state: { error: unknown; hasError: boolean } = { error: null, hasError: false };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { error, hasError: true };
+  }
+
+  componentDidCatch(error: unknown, info: ErrorInfo) {
+    console.error("[AppRecoveryBoundary] Unhandled render error", error, info.componentStack);
+  }
+
+  private resetLocalUiState = () => {
+    try {
+      window.localStorage.removeItem("marinara-engine-ui");
+      window.localStorage.removeItem("marinara-active-chat-id");
+      window.localStorage.removeItem("marinara-input-drafts");
+      window.sessionStorage.removeItem("marinara-input-drafts");
+    } catch {
+      /* ignore storage reset errors */
+    }
+    window.location.reload();
+  };
+
+  render() {
+    if (!this.state.hasError) return this.props.children;
+    const errorMessage = formatRecoveryError(this.state.error);
+
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--background,#050312)] px-4 text-[var(--foreground,#f8fafc)]">
+        <div className="w-full max-w-lg rounded-xl border border-[var(--border,rgba(255,255,255,0.16))] bg-[var(--card,rgba(15,23,42,0.88))] p-5 shadow-2xl">
+          <h1 className="text-lg font-semibold">Marinara hit a recoverable UI error.</h1>
+          <p className="mt-2 text-sm text-[var(--muted-foreground,#cbd5e1)]">
+            The app shell crashed while rendering. Reload first; reset local UI state only if the same screen keeps
+            returning after restart.
+          </p>
+          <pre className="mt-3 max-h-32 overflow-auto rounded-lg bg-black/30 p-2 text-xs text-[var(--muted-foreground,#cbd5e1)]">
+            {errorMessage}
+          </pre>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="rounded-lg bg-[var(--primary,#d4acfb)] px-3 py-2 text-sm font-semibold text-[var(--primary-foreground,#120718)]"
+            >
+              Reload
+            </button>
+            <button
+              type="button"
+              onClick={this.resetLocalUiState}
+              className="rounded-lg border border-[var(--border,rgba(255,255,255,0.16))] px-3 py-2 text-sm font-semibold"
+            >
+              Reset local UI state
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+}
 
 function stripFontFamilyQuotes(family: string): string {
   const trimmed = family.trim();
@@ -112,6 +188,44 @@ function getAccentSurface(accent: string, theme: "dark" | "light") {
 
 function getAccentGlow(accent: string, theme: "dark" | "light") {
   return `color-mix(in srgb, ${accent} ${theme === "light" ? "12%" : "18%"}, transparent)`;
+}
+
+function stripCssComments(css: string) {
+  return css.replace(/\/\*[\s\S]*?\*\//g, "");
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function readCssCustomProperty(css: string, name: string) {
+  const match = css.match(new RegExp(`${escapeRegExp(name)}\\s*:\\s*([^;{}\\n\\r]+)`, "i"));
+  return match?.[1]?.trim() ?? "";
+}
+
+function isEnabledCssValue(value: string) {
+  return THEME_ACCENT_PULSE_ENABLED_VALUES.has(value.trim().toLowerCase());
+}
+
+function getFirstThemeAccentSource(css: string) {
+  const sourceCandidates = [
+    readCssCustomProperty(css, THEME_ACCENT_PULSE_SOURCE_VARIABLE),
+    readCssCustomProperty(css, "--marinara-app-accent-gradient"),
+    readCssCustomProperty(css, "--marinara-app-accent-solid"),
+    readCssCustomProperty(css, "--primary"),
+  ];
+
+  return sourceCandidates.find((value) => value && !ACCENT_SOURCE_SELF_REFERENCE_RE.test(value)) ?? "";
+}
+
+function getThemeAccentPulseConfig(css: string | null | undefined) {
+  const normalizedCss = stripCssComments(normalizeThemeCss(css ?? ""));
+  const enabled = isEnabledCssValue(readCssCustomProperty(normalizedCss, THEME_ACCENT_PULSE_VARIABLE));
+
+  return {
+    enabled,
+    source: enabled ? getFirstThemeAccentSource(normalizedCss) : "",
+  };
 }
 
 function applyAppAccentVariables({
@@ -166,12 +280,7 @@ function clearCustomAppAccentVariables(root: HTMLElement) {
 }
 
 function canRunAccentAnimation(reducedMotionQuery: MediaQueryList, forcePaused = false) {
-  return (
-    document.visibilityState === "visible" &&
-    document.hasFocus() &&
-    !reducedMotionQuery.matches &&
-    !forcePaused
-  );
+  return document.visibilityState === "visible" && document.hasFocus() && !reducedMotionQuery.matches && !forcePaused;
 }
 
 async function recoverFromVersionSkew(serverVersion: string) {
@@ -203,6 +312,12 @@ export function App() {
   const rightPanel = useUIStore((s) => s.rightPanel);
   const settingsTab = useUIStore((s) => s.settingsTab);
   const appearanceSettingsActive = rightPanelOpen && rightPanel === "settings" && settingsTab === "appearance";
+  const { data: syncedThemes = [] } = useThemes();
+  const activeCustomTheme = useMemo(() => syncedThemes.find((themeItem) => themeItem.isActive) ?? null, [syncedThemes]);
+  const themeAccentPulseConfig = useMemo(
+    () => getThemeAccentPulseConfig(activeCustomTheme?.css),
+    [activeCustomTheme?.css],
+  );
   useLegacyThemeMigration();
   useLegacyExtensionMigration();
   useSettingsSync();
@@ -307,7 +422,7 @@ export function App() {
     const reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
     const accent = appAccentColor.trim();
     const defaultAccent = getDefaultAppAccentColor(theme);
-    const accentSource = accent || defaultAccent;
+    const accentSource = themeAccentPulseConfig.source || accent || defaultAccent;
     const solidAccent = getCssColorFallback(accentSource, defaultAccent);
     const accentIsGradient = isCssGradient(accentSource);
     const animatedAccentSource = appAccentRgbMode ? RAINBOW_GRADIENT_PRESET : accentSource;
@@ -316,7 +431,7 @@ export function App() {
     const animatedGradientStops = animatedAccentIsGradient
       ? getCssGradientColorStops(animatedAccentSource, animatedSolidAccent)
       : [animatedSolidAccent];
-    const accentAnimationEnabled = appAccentRgbMode || appAccentPulseMode;
+    const accentAnimationEnabled = appAccentRgbMode || appAccentPulseMode || themeAccentPulseConfig.enabled;
 
     let accentAnimationTimer: ReturnType<typeof window.setTimeout> | null = null;
 
@@ -427,7 +542,15 @@ export function App() {
       }
       delete root.dataset.marinaraAccentAnimation;
     };
-  }, [appAccentColor, appAccentPulseMode, appAccentRgbMode, appearanceSettingsActive, theme]);
+  }, [
+    appAccentColor,
+    appAccentPulseMode,
+    appAccentRgbMode,
+    appearanceSettingsActive,
+    theme,
+    themeAccentPulseConfig.enabled,
+    themeAccentPulseConfig.source,
+  ]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -585,11 +708,7 @@ export function App() {
       <div
         onClickCapture={(event) => {
           if (!(event.target instanceof Element)) return;
-          if (
-            event.target.closest(
-              "[data-close-button],button[aria-label^='Close'],button[aria-label^='Dismiss']",
-            )
-          ) {
+          if (event.target.closest("[data-close-button],button[aria-label^='Close'],button[aria-label^='Dismiss']")) {
             toast.dismiss();
           }
         }}

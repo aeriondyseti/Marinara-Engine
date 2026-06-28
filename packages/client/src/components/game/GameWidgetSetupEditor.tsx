@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Game: HUD Widget Setup Editor
 // ──────────────────────────────────────────────
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, Plus, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -144,6 +144,14 @@ function buildInventoryGridContentsFromText(
         quantity: previous?.quantity ?? 1,
       };
     });
+}
+
+function parseListItemsDraft(value: string): string[] {
+  return value
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 5);
 }
 
 function defaultWidgetConfig(type: HudWidgetType): HudWidgetConfig {
@@ -347,7 +355,9 @@ export function GameWidgetFileControls({
     try {
       const importedWidgets = await importGameHudWidgetsFromFile(file);
       onImport(importedWidgets);
-      toast.success(importSuccessMessage?.(importedWidgets.length) ?? `Imported ${formatWidgetCount(importedWidgets.length)}.`);
+      toast.success(
+        importSuccessMessage?.(importedWidgets.length) ?? `Imported ${formatWidgetCount(importedWidgets.length)}.`,
+      );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to import game widgets.");
     } finally {
@@ -669,24 +679,7 @@ function WidgetConfigFields({
   if (widget.type === "list") {
     const items = Array.isArray(widget.config.items) ? widget.config.items : [];
     return (
-      <label className="mt-2 block space-y-1">
-        <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">Items</span>
-        <textarea
-          value={items.join("\n")}
-          disabled={disabled}
-          rows={3}
-          onChange={(event) =>
-            onConfigChange({
-              items: event.target.value
-                .split(/\r?\n/)
-                .map((item) => item.trim())
-                .filter(Boolean)
-                .slice(0, 5),
-            })
-          }
-          className="w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-2.5 py-2 text-xs text-[var(--foreground)]"
-        />
-      </label>
+      <ListItemsField items={items.map((item) => String(item))} disabled={disabled} onConfigChange={onConfigChange} />
     );
   }
 
@@ -747,5 +740,40 @@ function WidgetConfigFields({
         Running
       </label>
     </div>
+  );
+}
+
+function ListItemsField({
+  items,
+  disabled,
+  onConfigChange,
+}: {
+  items: string[];
+  disabled?: boolean;
+  onConfigChange: (patch: Partial<HudWidgetConfig>) => void;
+}) {
+  const externalValue = items.join("\n");
+  const [draft, setDraft] = useState(externalValue);
+
+  useEffect(() => {
+    setDraft(externalValue);
+  }, [externalValue]);
+
+  return (
+    <label className="mt-2 block space-y-1">
+      <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">Items</span>
+      <textarea
+        value={draft}
+        disabled={disabled}
+        rows={3}
+        onChange={(event) => {
+          const nextDraft = event.target.value;
+          const nextItems = parseListItemsDraft(nextDraft);
+          setDraft(nextDraft);
+          onConfigChange({ items: nextItems });
+        }}
+        className="w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-2.5 py-2 text-xs text-[var(--foreground)]"
+      />
+    </label>
   );
 }

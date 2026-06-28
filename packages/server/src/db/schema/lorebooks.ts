@@ -14,7 +14,7 @@ export const lorebooks = sqliteTable("lorebooks", {
   entryLimit: integer("entry_limit").notNull().default(100),
   recursiveScanning: text("recursive_scanning").notNull().default("false"),
   maxRecursionDepth: integer("max_recursion_depth").notNull().default(3),
-  excludeFromVectorization: text("exclude_from_vectorization").notNull().default("false"),
+  excludeFromVectorization: text("exclude_from_vectorization").notNull().default("true"),
   characterId: text("character_id"),
   personaId: text("persona_id"),
   chatId: text("chat_id"),

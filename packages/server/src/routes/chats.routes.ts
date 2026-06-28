@@ -198,6 +198,32 @@ function isHomeProfessorMariChat(chat: { metadata?: unknown }) {
   return parseChatMetadata(chat.metadata).internalAssistant === PROFESSOR_MARI_INTERNAL_CHAT_MARKER;
 }
 
+function isActiveHomeProfessorMariChat(chat: { metadata?: unknown }) {
+  const metadata = parseChatMetadata(chat.metadata);
+  return (
+    metadata.internalAssistant === PROFESSOR_MARI_INTERNAL_CHAT_MARKER &&
+    metadata.professorMariArchived !== true &&
+    metadata.professorMariActive !== false
+  );
+}
+
+function sortProfessorMariChats<T extends { updatedAt?: string | null; createdAt?: string | null }>(items: T[]) {
+  return [...items].sort((a, b) => {
+    const left = Date.parse(a.updatedAt ?? a.createdAt ?? "") || 0;
+    const right = Date.parse(b.updatedAt ?? b.createdAt ?? "") || 0;
+    return right - left;
+  });
+}
+
+function formatProfessorMariStashName(date = new Date()) {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  const hh = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  return `Chat from ${yyyy}-${mm}-${dd} ${hh}:${min}`;
+}
+
 function hasProfessorMariCharacter(chat: { characterIds?: unknown }) {
   return resolveChatCharacterIds(chat.characterIds).includes(PROFESSOR_MARI_ID);
 }
@@ -383,6 +409,34 @@ async function buildPersonaSnapshotForChat(app: FastifyInstance, chat: { persona
   };
 }
 
+async function buildCharacterDisplaySnapshot(app: FastifyInstance, characterId: string) {
+  const charactersStore = createCharactersStorage(app.db);
+  const row = await charactersStore.getById(characterId);
+  if (!row) return null;
+
+  let data: CharacterData;
+  try {
+    data = JSON.parse(row.data as string) as CharacterData;
+  } catch {
+    return null;
+  }
+  const extensions = (data.extensions ?? {}) as Record<string, unknown>;
+  return {
+    name: data.name ?? "Character",
+    description: data.description ?? "",
+    personality: data.personality ?? "",
+    scenario: data.scenario ?? "",
+    backstory: typeof extensions.backstory === "string" ? extensions.backstory : "",
+    appearance: typeof extensions.appearance === "string" ? extensions.appearance : "",
+    example: data.mes_example ?? "",
+    avatarUrl: row.avatarPath || null,
+    avatarCrop: extensions.avatarCrop ?? null,
+    nameColor: typeof extensions.nameColor === "string" ? extensions.nameColor : undefined,
+    dialogueColor: typeof extensions.dialogueColor === "string" ? extensions.dialogueColor : undefined,
+    boxColor: typeof extensions.boxColor === "string" ? extensions.boxColor : undefined,
+  };
+}
+
 function resolveEntryStateOverrides(value: unknown): EntryStateOverrides | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
 
@@ -440,24 +494,42 @@ export async function chatsRoutes(app: FastifyInstance) {
     return chats.filter((chat) => !shouldHideProfessorMariChat(chat)).map(sanitizeChatGameNpcAvatars);
   });
 
+  app.get("/internal/professor-mari/chats", async () => {
+    const allChats = sortProfessorMariChats((await storage.list()).filter(isHomeProfessorMariChat));
+    return Promise.all(
+      allChats.map(async (chat) => {
+        const metadata = parseChatMetadata(chat.metadata);
+        return sanitizeChatGameNpcAvatars({
+          ...chat,
+          metadata: JSON.stringify(metadata),
+          messageCount: await storage.countMessages(chat.id),
+        });
+      }),
+    );
+  });
+
   app.get<{ Querystring: { connectionId?: string; personaId?: string } }>("/internal/professor-mari", async (req) => {
-    const chats = await storage.list();
-    const existing = chats.find(isHomeProfessorMariChat);
+    const professorChats = sortProfessorMariChats((await storage.list()).filter(isHomeProfessorMariChat));
+    const existing = professorChats.find(isActiveHomeProfessorMariChat) ?? professorChats[0] ?? null;
     const hasConnectionOverride = "connectionId" in req.query;
+    const hasPersonaOverride = "personaId" in req.query;
     const connectionId =
       typeof req.query.connectionId === "string" && req.query.connectionId ? req.query.connectionId : null;
     const personaId = typeof req.query.personaId === "string" && req.query.personaId ? req.query.personaId : null;
 
     if (existing) {
       const nextConnectionId = hasConnectionOverride ? connectionId : (existing.connectionId ?? null);
+      const nextPersonaId = hasPersonaOverride ? personaId : (existing.personaId ?? null);
       await storage.update(existing.id, {
         characterIds: [PROFESSOR_MARI_ID],
         connectionId: nextConnectionId,
-        personaId,
+        personaId: nextPersonaId,
         promptPresetId: null,
       });
       const updated = await storage.patchMetadata(existing.id, {
         internalAssistant: PROFESSOR_MARI_INTERNAL_CHAT_MARKER,
+        professorMariActive: true,
+        professorMariArchived: false,
         enableAgents: false,
         autonomousMessages: false,
         characterExchanges: false,
@@ -478,12 +550,135 @@ export async function chatsRoutes(app: FastifyInstance) {
     if (!created) return created;
     const updated = await storage.patchMetadata(created.id, {
       internalAssistant: PROFESSOR_MARI_INTERNAL_CHAT_MARKER,
+      professorMariActive: true,
+      professorMariArchived: false,
       enableAgents: false,
       autonomousMessages: false,
       characterExchanges: false,
       tags: ["internal"],
     });
     return sanitizeChatGameNpcAvatars(updated ?? created);
+  });
+
+  app.post<{ Querystring: { connectionId?: string; personaId?: string } }>(
+    "/internal/professor-mari/restart",
+    async (req) => {
+      const professorChats = sortProfessorMariChats((await storage.list()).filter(isHomeProfessorMariChat));
+      const active = professorChats.find(isActiveHomeProfessorMariChat) ?? professorChats[0] ?? null;
+      const connectionId =
+        typeof req.query.connectionId === "string" && req.query.connectionId
+          ? req.query.connectionId
+          : (active?.connectionId ?? null);
+      const personaId =
+        typeof req.query.personaId === "string" && req.query.personaId
+          ? req.query.personaId
+          : (active?.personaId ?? null);
+
+      if (active && (await storage.countMessages(active.id)) > 0) {
+        const metadata = parseChatMetadata(active.metadata);
+        const currentName = typeof active.name === "string" && active.name.trim() ? active.name.trim() : "";
+        const shouldRename = currentName === "Professor Mari";
+        await storage.update(active.id, {
+          name: shouldRename ? formatProfessorMariStashName() : active.name,
+          characterIds: [PROFESSOR_MARI_ID],
+          connectionId: active.connectionId ?? null,
+          personaId: active.personaId ?? null,
+          promptPresetId: null,
+        });
+        await storage.patchMetadata(active.id, {
+          ...metadata,
+          internalAssistant: PROFESSOR_MARI_INTERNAL_CHAT_MARKER,
+          professorMariActive: false,
+          professorMariArchived: true,
+          enableAgents: false,
+          autonomousMessages: false,
+          characterExchanges: false,
+          tags: ["internal"],
+        });
+      } else if (active) {
+        await storage.patchMetadata(active.id, {
+          internalAssistant: PROFESSOR_MARI_INTERNAL_CHAT_MARKER,
+          professorMariActive: false,
+          professorMariArchived: true,
+        });
+      }
+
+      const created = await storage.create({
+        name: "Professor Mari",
+        mode: "conversation",
+        characterIds: [PROFESSOR_MARI_ID],
+        groupId: null,
+        personaId,
+        promptPresetId: null,
+        connectionId,
+      });
+      if (!created) return created;
+      const updated = await storage.patchMetadata(created.id, {
+        internalAssistant: PROFESSOR_MARI_INTERNAL_CHAT_MARKER,
+        professorMariActive: true,
+        professorMariArchived: false,
+        enableAgents: false,
+        autonomousMessages: false,
+        characterExchanges: false,
+        tags: ["internal"],
+      });
+      return sanitizeChatGameNpcAvatars(updated ?? created);
+    },
+  );
+
+  app.post<{ Params: { id: string } }>("/internal/professor-mari/chats/:id/activate", async (req, reply) => {
+    const professorChats = (await storage.list()).filter(isHomeProfessorMariChat);
+    const target = professorChats.find((chat) => chat.id === req.params.id);
+    if (!target) return reply.status(404).send({ error: "Professor Mari chat not found" });
+
+    for (const chat of professorChats) {
+      await storage.patchMetadata(chat.id, {
+        internalAssistant: PROFESSOR_MARI_INTERNAL_CHAT_MARKER,
+        professorMariActive: chat.id === target.id,
+        professorMariArchived: chat.id === target.id ? false : true,
+        enableAgents: false,
+        autonomousMessages: false,
+        characterExchanges: false,
+        tags: ["internal"],
+      });
+    }
+    const updated = await storage.update(target.id, {
+      characterIds: [PROFESSOR_MARI_ID],
+      promptPresetId: null,
+    });
+    return sanitizeChatGameNpcAvatars(updated ?? target);
+  });
+
+  app.patch<{ Params: { id: string }; Body: { name?: unknown } }>(
+    "/internal/professor-mari/chats/:id",
+    async (req, reply) => {
+      const target = (await storage.list()).find((chat) => chat.id === req.params.id && isHomeProfessorMariChat(chat));
+      if (!target) return reply.status(404).send({ error: "Professor Mari chat not found" });
+      const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+      if (!name) return reply.status(400).send({ error: "Name is required" });
+      const updated = await storage.update(target.id, { name });
+      return sanitizeChatGameNpcAvatars(updated ?? target);
+    },
+  );
+
+  app.delete<{ Params: { id: string } }>("/internal/professor-mari/chats/:id", async (req, reply) => {
+    const professorChats = (await storage.list()).filter(isHomeProfessorMariChat);
+    const target = professorChats.find((chat) => chat.id === req.params.id);
+    if (!target) return reply.status(404).send({ error: "Professor Mari chat not found" });
+    const wasActive = isActiveHomeProfessorMariChat(target);
+    await storage.remove(target.id);
+    if (wasActive) {
+      const remaining = sortProfessorMariChats((await storage.list()).filter(isHomeProfessorMariChat));
+      const next = remaining[0];
+      if (next) {
+        await storage.patchMetadata(next.id, {
+          internalAssistant: PROFESSOR_MARI_INTERNAL_CHAT_MARKER,
+          professorMariActive: true,
+          professorMariArchived: false,
+        });
+      }
+    }
+    return reply.status(204).send();
   });
 
   // List chats by group
@@ -529,6 +724,49 @@ export async function chatsRoutes(app: FastifyInstance) {
     }
     if (data.characterIds?.includes(PROFESSOR_MARI_ID) && !hasProfessorMariCharacter(existing)) {
       return reply.status(400).send({ error: "Professor Mari is only available from the Home screen." });
+    }
+    if (data.characterIds !== undefined) {
+      const previousIds = resolveChatCharacterIds(existing.characterIds);
+      const nextIds = data.characterIds;
+      const nextSet = new Set(nextIds);
+      const previousSet = new Set(previousIds);
+      const removedIds = previousIds.filter((id) => !nextSet.has(id));
+      const addedIds = nextIds.filter((id) => !previousSet.has(id));
+
+      if (removedIds.length > 0 || addedIds.length > 0) {
+        const snapshots: Record<string, unknown> = {};
+        const eventNames = new Map<string, string>();
+        for (const id of [...removedIds, ...addedIds]) {
+          const snapshot = await buildCharacterDisplaySnapshot(app, id);
+          if (!snapshot) continue;
+          snapshots[id] = snapshot;
+          eventNames.set(id, snapshot.name);
+        }
+        if (Object.keys(snapshots).length > 0) {
+          await storage.patchMetadata(req.params.id, (current) => ({
+            archivedCharacterSnapshots: {
+              ...(isRecord(current.archivedCharacterSnapshots) ? current.archivedCharacterSnapshots : {}),
+              ...snapshots,
+            },
+          }));
+        }
+        for (const id of addedIds) {
+          await storage.createMessage({
+            chatId: req.params.id,
+            role: "system",
+            characterId: null,
+            content: `${eventNames.get(id) ?? "A character"} has joined the chat.`,
+          });
+        }
+        for (const id of removedIds) {
+          await storage.createMessage({
+            chatId: req.params.id,
+            role: "system",
+            characterId: null,
+            content: `${eventNames.get(id) ?? "A character"} has left the chat.`,
+          });
+        }
+      }
     }
     return storage.update(req.params.id, data);
   });
@@ -585,6 +823,67 @@ export async function chatsRoutes(app: FastifyInstance) {
       await clearConversationScheduleState(chat);
       incoming.characterSchedules = undefined;
       incoming.scheduleWeekStart = undefined;
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(incoming, "hideSummarisedMessages") &&
+      typeof incoming.hideSummarisedMessages === "boolean"
+    ) {
+      return storage.patchMetadata(req.params.id, async (freshMeta) => {
+        const previousHideEnabled = freshMeta.hideSummarisedMessages === true;
+        if (previousHideEnabled === incoming.hideSummarisedMessages) {
+          return incoming;
+        }
+
+        const allMessages = await storage.listMessages(req.params.id);
+        const currentEntries = normalizeChatSummaryEntries(freshMeta.summaryEntries, {
+          legacySummary: typeof freshMeta.summary === "string" ? freshMeta.summary : null,
+        });
+        const now = new Date().toISOString();
+        let nextEntries = currentEntries;
+
+        if (incoming.hideSummarisedMessages) {
+          const tail = resolveRoleplaySummaryTail(freshMeta.summaryTailMessages);
+          nextEntries = [];
+          for (const entry of currentEntries) {
+            if (!entry.enabled || !entry.messageIds?.length) {
+              nextEntries.push(entry);
+              continue;
+            }
+
+            const eligibleToHide = computeSummaryHideIds({
+              messages: allMessages,
+              entryMessageIds: entry.messageIds,
+              tail,
+            });
+            const hiddenMessageIds =
+              eligibleToHide.length > 0 ? await storage.bulkSetHiddenFromAI(req.params.id, eligibleToHide, true) : [];
+            const ownedHiddenMessageIds = Array.from(new Set([...(entry.hiddenMessageIds ?? []), ...hiddenMessageIds]));
+            nextEntries.push(
+              ownedHiddenMessageIds.length > 0
+                ? { ...entry, hiddenMessageIds: ownedHiddenMessageIds, updatedAt: now }
+                : entry,
+            );
+          }
+        } else {
+          const summaryOwnedHiddenIds = Array.from(
+            new Set(currentEntries.flatMap((entry) => entry.hiddenMessageIds ?? [])),
+          );
+          if (summaryOwnedHiddenIds.length > 0) {
+            await storage.bulkSetHiddenFromAI(req.params.id, summaryOwnedHiddenIds, false);
+          }
+          nextEntries = currentEntries.map((entry) => {
+            if (!entry.hiddenMessageIds?.length) return entry;
+            const { hiddenMessageIds: _hiddenMessageIds, ...rest } = entry;
+            return { ...rest, updatedAt: now };
+          });
+        }
+
+        return {
+          ...incoming,
+          summaryEntries: nextEntries,
+          summary: compileChatSummaryEntries(nextEntries),
+        };
+      });
     }
     return storage.patchMetadata(req.params.id, incoming);
   });
@@ -1000,15 +1299,18 @@ export async function chatsRoutes(app: FastifyInstance) {
   });
 
   // Delete all chats in a group (all branches)
-  app.delete<{ Params: { groupId: string }; Querystring: { force?: string } }>("/group/:groupId", async (req, reply) => {
-    const force = req.query.force === "true" || req.query.force === "1";
-    const guard = await storage.canDeleteGroup(req.params.groupId, { force });
-    if (!guard.allowed) {
-      return reply.status(409).send({ error: guard.reason });
-    }
-    await storage.removeGroup(req.params.groupId);
-    return reply.status(204).send();
-  });
+  app.delete<{ Params: { groupId: string }; Querystring: { force?: string } }>(
+    "/group/:groupId",
+    async (req, reply) => {
+      const force = req.query.force === "true" || req.query.force === "1";
+      const guard = await storage.canDeleteGroup(req.params.groupId, { force });
+      if (!guard.allowed) {
+        return reply.status(409).send({ error: guard.reason });
+      }
+      await storage.removeGroup(req.params.groupId);
+      return reply.status(204).send();
+    },
+  );
 
   // Delete chat
   app.delete<{ Params: { id: string }; Querystring: { force?: string } }>("/:id", async (req, reply) => {
@@ -1032,9 +1334,11 @@ export async function chatsRoutes(app: FastifyInstance) {
         }
       }
     }
-    const activeGenerations = (app as unknown as {
-      activeGenerations?: Map<string, { abortController?: AbortController }>;
-    }).activeGenerations;
+    const activeGenerations = (
+      app as unknown as {
+        activeGenerations?: Map<string, { abortController?: AbortController }>;
+      }
+    ).activeGenerations;
     activeGenerations?.get(req.params.id)?.abortController?.abort();
     activeGenerations?.delete(req.params.id);
     clearChatActivity(req.params.id);
@@ -2351,6 +2655,34 @@ export async function chatsRoutes(app: FastifyInstance) {
     return typeof value === "string" && value.trim().length > 0 ? value : null;
   };
 
+  const INTERNAL_EXPORT_EXTRA_KEYS = new Set([
+    "cachedPrompt",
+    "chatCompletionsReasoning",
+    "chatSummaryFingerprint",
+    "contextInjections",
+    "conversationCommandContent",
+    "encryptedReasoning",
+    "geminiParts",
+    "generationInfo",
+    "generationReplay",
+    "lorebookScan",
+  ]);
+
+  const sanitizeExportExtra = (extra: Record<string, unknown>): Record<string, unknown> => {
+    const sanitized = { ...extra };
+    for (const key of INTERNAL_EXPORT_EXTRA_KEYS) {
+      delete sanitized[key];
+    }
+    return sanitized;
+  };
+
+  const sanitizeBranchedMessageExtra = (extra: Record<string, unknown>): Record<string, unknown> => {
+    const sanitized = sanitizeExportExtra(extra);
+    delete sanitized.summaryCandidate;
+    delete sanitized.summaryDebug;
+    return sanitized;
+  };
+
   const safeExportNamePart = (value: unknown, fallback: string): string => {
     const source = typeof value === "string" && value.trim() ? value.trim() : fallback;
     return (
@@ -2383,6 +2715,31 @@ export async function chatsRoutes(app: FastifyInstance) {
       }
     }
     const primaryCharName = (charIds[0] && charNameMap.get(charIds[0])) ?? chat.name;
+    const persona = await buildPersonaSnapshotForChat(app, chat);
+    const { buildPromptMacroContext, resolvePromptMessageMacros } = await import("../services/prompt/index.js");
+    const exportCharacterIds = resolveActiveCharacterIds(charIds, metadata, {
+      mode: (chat.mode as string | undefined) ?? "roleplay",
+      allowEmpty: true,
+    });
+    const promptMacroContext = await buildPromptMacroContext({
+      db: app.db,
+      characterIds: exportCharacterIds,
+      personaName: persona?.name ?? "User",
+      personaDescription: cardPromptText(persona?.description),
+      personaFields: {
+        personality: cardPromptText(persona?.personality),
+        scenario: cardPromptText(persona?.scenario),
+        backstory: cardPromptText(persona?.backstory),
+        appearance: cardPromptText(persona?.appearance),
+      },
+      groupScenarioOverrideText:
+        typeof metadata.groupScenarioText === "string" && metadata.groupScenarioText.trim()
+          ? metadata.groupScenarioText.trim()
+          : null,
+      lastInput: [...msgs].reverse().find((msg) => msg.role === "user")?.content,
+      chatId: chat.id,
+      lastGenerationType: "export",
+    });
 
     const getDisplayName = (msg: { role: string; characterId?: string | null }) => {
       if (msg.role === "user") return "User";
@@ -2391,6 +2748,9 @@ export async function chatsRoutes(app: FastifyInstance) {
       if (msg.characterId && charNameMap.has(msg.characterId)) return charNameMap.get(msg.characterId)!;
       return primaryCharName;
     };
+    const resolveExportMessageContent = (msg: { content: string; characterId?: string | null }) =>
+      resolvePromptMessageMacros([{ content: msg.content, characterId: msg.characterId }], promptMacroContext)[0]!
+        .content;
 
     if (format === "text") {
       const header = `Chat: ${chat.name}\nDate: ${chat.createdAt}\n${"─".repeat(50)}\n`;
@@ -2399,7 +2759,7 @@ export async function chatsRoutes(app: FastifyInstance) {
           const name = getDisplayName(msg);
           const ts = msg.createdAt ? new Date(msg.createdAt).toLocaleString() : "";
           const thinking = getExportThinking(parseExportMetadata(msg.extra));
-          const parts = [`[${name}]${ts ? ` (${ts})` : ""}`, msg.content];
+          const parts = [`[${name}]${ts ? ` (${ts})` : ""}`, resolveExportMessageContent(msg)];
           if (thinking) parts.push(`[Thinking]\n${thinking}`);
           return parts.join("\n");
         })
@@ -2416,33 +2776,45 @@ export async function chatsRoutes(app: FastifyInstance) {
 
     const lines: string[] = [
       JSON.stringify({
-        user_name: "User",
+        user_name: persona?.name ?? "User",
         character_name: primaryCharName,
         create_date: chat.createdAt,
         chat_metadata: {
+          mode: chat.mode,
           ...metadata,
           branchName,
-          marinara_metadata: metadata,
+          marinara_metadata: {
+            ...metadata,
+            mode: chat.mode,
+          },
         },
       }),
     ];
 
     for (const msg of msgs) {
-      const messageExtra = parseExportMetadata(msg.extra);
-      const thinking = getExportThinking(messageExtra);
+      const rawMessageExtra = parseExportMetadata(msg.extra);
+      const messageExtra = sanitizeExportExtra(rawMessageExtra);
+      const thinking = getExportThinking(rawMessageExtra);
       const swipes = await storage.getSwipes(msg.id);
+      const activeContent = resolveExportMessageContent(msg);
       const exportSwipes =
         swipes.length > 0
           ? swipes.map((swipe: { index: number; content: string; extra?: unknown; createdAt?: string }) => ({
               index: swipe.index,
-              content: swipe.index === msg.activeSwipeIndex ? msg.content : swipe.content,
-              extra: swipe.index === msg.activeSwipeIndex ? messageExtra : parseExportMetadata(swipe.extra),
+              content:
+                swipe.index === msg.activeSwipeIndex
+                  ? activeContent
+                  : resolveExportMessageContent({ content: swipe.content, characterId: msg.characterId }),
+              extra:
+                swipe.index === msg.activeSwipeIndex
+                  ? messageExtra
+                  : sanitizeExportExtra(parseExportMetadata(swipe.extra)),
               createdAt: swipe.createdAt,
             }))
           : [
               {
                 index: 0,
-                content: msg.content,
+                content: activeContent,
                 extra: messageExtra,
                 createdAt: msg.createdAt,
               },
@@ -2454,7 +2826,7 @@ export async function chatsRoutes(app: FastifyInstance) {
           is_system: msg.role === "system",
           role: msg.role,
           character_id: msg.characterId,
-          mes: msg.content,
+          mes: activeContent,
           ...(thinking
             ? {
                 thinking,
@@ -2647,6 +3019,7 @@ export async function chatsRoutes(app: FastifyInstance) {
     // display times remain identical to the source chat.
     const msgs = await storage.listMessages(req.params.id);
     const sourceToBranchedMessageId = new Map<string, string>();
+    const copiedSourceMessages: typeof msgs = [];
 
     for (const msg of msgs) {
       // Resolve the content from the active swipe (may differ from msg.content
@@ -2670,15 +3043,16 @@ export async function chatsRoutes(app: FastifyInstance) {
 
       if (created) {
         sourceToBranchedMessageId.set(msg.id, created.id);
+        copiedSourceMessages.push(msg);
 
-        // Preserve per-message metadata (displayText, generationInfo, etc.)
+        // Preserve display metadata but drop bulky prompt/debug payloads.
         try {
           const extraObj = typeof msg.extra === "string" ? JSON.parse(msg.extra) : (msg.extra ?? {});
           if (extraObj && typeof extraObj === "object") {
-            const branchSafeExtra = { ...(extraObj as Record<string, unknown>) };
-            delete branchSafeExtra.cachedPrompt;
-            delete branchSafeExtra.chatSummaryFingerprint;
-            await storage.updateMessageExtra(created.id, branchSafeExtra);
+            await storage.updateMessageExtra(
+              created.id,
+              sanitizeBranchedMessageExtra(extraObj as Record<string, unknown>),
+            );
           }
         } catch {
           // Ignore malformed extra payloads rather than failing the branch.
@@ -2703,7 +3077,7 @@ export async function chatsRoutes(app: FastifyInstance) {
     // them to the new branch's message IDs. Copying all snapshots (not just the latest)
     // ensures that branching a branch at an earlier point finds the correct tracker state
     // for that specific message, not just the latest snapshot in the source chat.
-    if (sourceToBranchedMessageId.size > 0) {
+    if (sourceToBranchedMessageId.size > 0 && sourceChat.mode === "game") {
       const { createGameStateStorage } = await import("../services/storage/game-state.storage.js");
       const gameStateStore = createGameStateStorage(app.db);
 
@@ -2740,11 +3114,10 @@ export async function chatsRoutes(app: FastifyInstance) {
         }
       };
 
-      for (const [srcMsgId, branchedMsgId] of sourceToBranchedMessageId) {
-        const srcMsg = msgs.find((m) => m.id === srcMsgId);
-        if (!srcMsg) continue;
-
-        const snapshot = await gameStateStore.getByMessage(srcMsgId, srcMsg.activeSwipeIndex);
+      for (const srcMsg of copiedSourceMessages) {
+        const branchedMsgId = sourceToBranchedMessageId.get(srcMsg.id);
+        if (!branchedMsgId) continue;
+        const snapshot = await gameStateStore.getByMessage(srcMsg.id, srcMsg.activeSwipeIndex);
         if (snapshot) {
           await copySnapshot(snapshot, branchedMsgId, 0);
         }

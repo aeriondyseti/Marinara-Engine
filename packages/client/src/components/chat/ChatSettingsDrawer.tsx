@@ -708,7 +708,7 @@ export function ChatSettingsDrawer({
   const { data: agentConfigs } = useAgentConfigs();
   const { data: customTools } = useCustomTools();
   const { data: customToolCapabilities } = useCustomToolCapabilities();
-  const { data: allChats } = useChats();
+  const { data: allChats } = useChats({ refetchOnMount: false });
   const personas = useMemo(() => (allPersonas ?? []) as DrawerPersona[], [allPersonas]);
 
   const chatCharIds: string[] = useMemo(

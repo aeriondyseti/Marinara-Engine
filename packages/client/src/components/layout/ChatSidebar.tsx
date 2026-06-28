@@ -87,33 +87,24 @@ function conversationStatusDotClass(status?: string) {
   return CONVERSATION_STATUS_DOT_CLASS[asConversationStatus(status) ?? "online"];
 }
 
-function formatConversationActivity(activity: unknown) {
-  return typeof activity === "string" && activity.trim().length > 0 ? activity.trim() : null;
-}
-
 function getConversationPresenceState(
   chatMode: ChatMode,
   chatMetadata: Chat["metadata"],
   charIds: string[],
   charLookup: Map<string, { name: string; conversationStatus?: string }>,
   presenceNow: Date,
-) {
+): Map<string, ConversationPresenceStatus> {
   if (chatMode !== "conversation") {
-    return {
-      conversationStatusByCharacter: new Map<string, ConversationPresenceStatus>(),
-      conversationStatusSummary: null,
-    };
+    return new Map<string, ConversationPresenceStatus>();
   }
 
   const convoMeta = parseChatMetadata(chatMetadata);
   const chatCharStatuses = convoMeta?.conversationCharacterStatuses as
-    | Record<string, { status?: unknown; activity?: unknown }>
+    | Record<string, { status?: unknown }>
     | undefined;
   const conversationStatuses: Array<{
     id: string;
-    name: string;
     status: ConversationPresenceStatus;
-    activity: string | null;
   }> = [];
 
   for (const id of charIds) {
@@ -124,25 +115,12 @@ function getConversationPresenceState(
     const snapshot = chatCharStatuses?.[id];
     conversationStatuses.push({
       id,
-      name: base.name,
       status:
         live?.status ?? asConversationStatus(snapshot?.status) ?? asConversationStatus(base.conversationStatus) ?? "online",
-      activity: formatConversationActivity(live?.activity ?? snapshot?.activity),
     });
   }
 
-  const conversationStatusByCharacter = new Map(conversationStatuses.map(({ id, status }) => [id, status] as const));
-  const conversationStatusSummary =
-    conversationStatuses.length === 1
-      ? conversationStatuses[0]!.activity
-      : conversationStatuses.length > 1
-        ? conversationStatuses
-            .filter((item) => item.activity)
-            .map((item) => `${item.name}: ${item.activity}`)
-            .join(" · ") || null
-        : null;
-
-  return { conversationStatusByCharacter, conversationStatusSummary };
+  return new Map(conversationStatuses.map(({ id, status }) => [id, status] as const));
 }
 
 function getChatTags(chat: Pick<Chat, "metadata">): string[] {
@@ -667,6 +645,7 @@ export function ChatSidebar() {
       try {
         const formData = new FormData();
         formData.append("file", file);
+        formData.append("mode", activeTab);
         const res = await fetch("/api/import/st-chat", { method: "POST", body: formData });
         const data = (await res.json().catch(() => ({}))) as {
           success?: boolean;
@@ -688,7 +667,7 @@ export function ChatSidebar() {
         setIsImportingChat(false);
       }
     },
-    [refetchChats, setActiveChatId],
+    [activeTab, refetchChats, setActiveChatId],
   );
 
   const activeModeConfig = MODE_CONFIG[activeTab] ?? MODE_CONFIG.conversation;
@@ -847,7 +826,7 @@ export function ChatSidebar() {
     const isActive = activeChatId === chat.id || (chat.groupId != null && chat.groupId === activeGroupId);
     const isSelected = selectedChatIds.has(chat.id);
     const charIds = normalizeChatCharacterIds((chat as { characterIds?: unknown }).characterIds);
-    const { conversationStatusByCharacter, conversationStatusSummary } = getConversationPresenceState(
+    const conversationStatusByCharacter = getConversationPresenceState(
       chat.mode,
       chat.metadata,
       charIds,
@@ -985,9 +964,9 @@ export function ChatSidebar() {
                 <div
                   className={cn(
                     "flex h-7 w-7 items-center justify-center rounded-lg text-xs transition-transform group-active:scale-90",
-                    isActive
-                      ? "mari-chrome-accent-tile mari-accent-animated shadow-sm"
-                      : "mari-chrome-accent-soft-tile mari-accent-animated",
+                    "mari-chat-mode-avatar",
+                    cfg.logoModeClass,
+                    isActive && "shadow-sm",
                   )}
                 >
                   {cfg.icon}
@@ -1077,11 +1056,6 @@ export function ChatSidebar() {
           >
             {chat.name}
           </span>
-          {conversationStatusSummary && (
-            <span className="mari-chrome-text-muted mt-0.5 block truncate text-[0.6875rem] leading-tight">
-              {conversationStatusSummary}
-            </span>
-          )}
         </div>
 
         {/* Branch count badge */}

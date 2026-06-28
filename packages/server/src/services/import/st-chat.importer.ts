@@ -144,6 +144,33 @@ function normalizeImportedRole(value: unknown): ParsedSTChatMessageInput["role"]
   }
 }
 
+function normalizeImportedMode(value: unknown): ChatMode | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  switch (normalized) {
+    case "conversation":
+    case "roleplay":
+    case "visual_novel":
+    case "game":
+      return normalized;
+    default:
+      return null;
+  }
+}
+
+const INTERNAL_EXTRA_KEYS = new Set([
+  "cachedPrompt",
+  "chatCompletionsReasoning",
+  "chatSummaryFingerprint",
+  "contextInjections",
+  "conversationCommandContent",
+  "encryptedReasoning",
+  "geminiParts",
+  "generationInfo",
+  "generationReplay",
+  "lorebookScan",
+]);
+
 function normalizeImportedExtra(raw: unknown): Record<string, unknown> {
   if (!isRecord(raw)) return {};
 
@@ -153,6 +180,9 @@ function normalizeImportedExtra(raw: unknown): Record<string, unknown> {
   delete extra.marinara_role;
   delete extra.marinara_character_id;
   delete extra.marinara_swipes;
+  for (const key of INTERNAL_EXTRA_KEYS) {
+    delete extra[key];
+  }
 
   if (typeof extra.displayText !== "string" && displayText) {
     extra.displayText = displayText;
@@ -234,6 +264,8 @@ export async function importSTChat(jsonlContent: string, db: DB, opts?: ImportST
       : typeof marinaraMetadata.branchName === "string"
         ? marinaraMetadata.branchName
         : null);
+  const importedMode =
+    opts?.mode ?? normalizeImportedMode(headerMetadata.mode) ?? normalizeImportedMode(marinaraMetadata.mode) ?? "roleplay";
 
   // Build characterIds array. Caller-supplied list wins so an import-into-group
   // can fully inherit the existing chat's roster instead of being limited to a
@@ -343,7 +375,7 @@ export async function importSTChat(jsonlContent: string, db: DB, opts?: ImportST
   const chat = await storage.create(
     {
       name: opts?.chatName ?? `${characterName} (imported)`,
-      mode: (opts?.mode ?? "roleplay") as ChatMode,
+      mode: importedMode,
       characterIds,
       groupId: opts?.groupId ?? null,
       personaId: opts?.personaId ?? null,

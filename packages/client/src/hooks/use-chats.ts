@@ -157,13 +157,14 @@ async function resetClientAfterExpunge(qc: ReturnType<typeof useQueryClient>) {
   qc.clear();
 }
 
-export function useChats() {
+export function useChats(options: { enabled?: boolean; refetchOnMount?: boolean | "always" } = {}) {
   return useQuery({
     queryKey: chatKeys.list(),
     queryFn: () => api.get<Chat[]>("/chats"),
+    enabled: options.enabled ?? true,
     placeholderData: (previousData) => previousData,
     staleTime: 10_000,
-    refetchOnMount: "always",
+    refetchOnMount: options.refetchOnMount ?? "always",
     refetchOnReconnect: true,
     retry: (failureCount, error) => {
       const status = error instanceof ApiError ? error.status : 0;

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { ChevronDown, ChevronRight, HelpCircle, Sparkles, TriangleAlert } from "lucide-react";
+import { useMemo, useState } from "react";
+import { ChevronDown, ChevronRight, HelpCircle, Search, Sparkles, TriangleAlert, X } from "lucide-react";
 import { cn } from "../../lib/utils";
 
 interface HomeFaqItem {
@@ -347,7 +347,8 @@ const HOME_FAQ_ITEMS: HomeFaqItem[] = [
     id: "booru-prompts",
     category: "Images",
     question: "How do I steer Illustrator prompts?",
-    answer: "Choose an Illustrator prompt mode from that chat's agent menu, or edit the agent prompt from the Agents tab.",
+    answer:
+      "Choose an Illustrator prompt mode from that chat's agent menu, or edit the agent prompt from the Agents tab.",
     bullets: [
       "Illustration, Comic Page, Colored Manga, B&W Manga, Background, and Selfie modes all tune the prompt differently.",
       "Use the default style from Style Profiles in Advanced settings when you want a shared image style.",
@@ -482,6 +483,10 @@ const CATEGORY_STYLES: Record<string, string> = {
   Misc: "border-[var(--border)] bg-[var(--muted)]/30 text-[var(--muted-foreground)]",
 };
 
+function getFaqSearchText(item: HomeFaqItem) {
+  return [item.category, item.question, item.answer, ...(item.bullets ?? [])].join(" ").toLowerCase();
+}
+
 export function HomeFaq({
   defaultExpanded = false,
   className,
@@ -501,6 +506,7 @@ export function HomeFaq({
 } = {}) {
   const [expandedInternal, setExpandedInternal] = useState(defaultExpanded);
   const [openItemIdInternal, setOpenItemIdInternal] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const expanded = expandedProp ?? expandedInternal;
   const setExpanded = (v: boolean) => {
@@ -512,6 +518,12 @@ export function HomeFaq({
     setOpenItemIdInternal(v);
     onOpenItemIdChange?.(v);
   };
+  const trimmedSearch = searchQuery.trim().toLowerCase();
+  const visibleFaqItems = useMemo(
+    () =>
+      trimmedSearch ? HOME_FAQ_ITEMS.filter((item) => getFaqSearchText(item).includes(trimmedSearch)) : HOME_FAQ_ITEMS,
+    [trimmedSearch],
+  );
 
   if (compact) {
     return (
@@ -545,8 +557,29 @@ export function HomeFaq({
 
           {expanded && (
             <div className="border-t border-[var(--border)]/60 p-2">
+              <div className="mb-2 flex items-center gap-1.5 rounded-lg border border-[var(--border)]/60 bg-[var(--background)]/70 px-2 py-1.5">
+                <Search size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
+                <input
+                  type="search"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="Search FAQ"
+                  aria-label="Search FAQ"
+                  className="min-w-0 flex-1 bg-transparent text-[0.6875rem] text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]/65"
+                />
+                {searchQuery ? (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery("")}
+                    className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                    aria-label="Clear FAQ search"
+                  >
+                    <X size="0.6875rem" />
+                  </button>
+                ) : null}
+              </div>
               <div className="max-h-64 space-y-1.5 overflow-y-auto pr-1">
-                {HOME_FAQ_ITEMS.map((item) => {
+                {visibleFaqItems.map((item) => {
                   const isOpen = openItemId === item.id;
 
                   return (
@@ -603,6 +636,11 @@ export function HomeFaq({
                     </div>
                   );
                 })}
+                {visibleFaqItems.length === 0 ? (
+                  <div className="rounded-lg border border-[var(--border)]/55 bg-[var(--muted)]/30 px-3 py-3 text-center text-[0.6875rem] text-[var(--muted-foreground)]">
+                    No FAQ matches.
+                  </div>
+                ) : null}
               </div>
             </div>
           )}
@@ -694,9 +732,30 @@ export function HomeFaq({
                   Tap a question to reveal the answer.
                 </p>
               </div>
+              <div className="mb-3 flex items-center gap-2 rounded-xl border border-[var(--border)]/60 bg-[var(--background)]/70 px-3 py-2">
+                <Search size="0.875rem" className="shrink-0 text-[var(--muted-foreground)]" />
+                <input
+                  type="search"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="Search FAQ"
+                  aria-label="Search FAQ"
+                  className="min-w-0 flex-1 bg-transparent text-xs text-[var(--foreground)] outline-none placeholder:text-[var(--muted-foreground)]/65"
+                />
+                {searchQuery ? (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery("")}
+                    className="flex h-6 w-6 items-center justify-center rounded-lg text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                    aria-label="Clear FAQ search"
+                  >
+                    <X size="0.75rem" />
+                  </button>
+                ) : null}
+              </div>
 
               <div className="max-h-[22rem] space-y-2 overflow-y-auto pr-0.5 sm:max-h-[28rem] sm:pr-1">
-                {HOME_FAQ_ITEMS.map((item) => {
+                {visibleFaqItems.map((item) => {
                   const isOpen = openItemId === item.id;
 
                   return (
@@ -753,6 +812,11 @@ export function HomeFaq({
                     </div>
                   );
                 })}
+                {visibleFaqItems.length === 0 ? (
+                  <div className="rounded-[1rem] border border-[var(--border)]/55 bg-[var(--muted)]/30 px-3 py-6 text-center text-xs text-[var(--muted-foreground)]">
+                    No FAQ matches.
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>

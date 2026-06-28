@@ -314,7 +314,7 @@ export function createLorebooksStorage(db: DB) {
           entryLimit: normalizeLorebookEntryLimit(input.entryLimit),
           recursiveScanning: String(input.recursiveScanning ?? false),
           maxRecursionDepth: input.maxRecursionDepth ?? 3,
-          excludeFromVectorization: String(input.excludeFromVectorization ?? false),
+          excludeFromVectorization: String(input.excludeFromVectorization ?? true),
           characterId: characterIds[0] ?? null,
           personaId: personaIds[0] ?? null,
           chatId: input.chatId ?? null,
@@ -668,6 +668,14 @@ export function createLorebooksStorage(db: DB) {
         .update(lorebookEntries)
         .set({ embedding: embedding ? JSON.stringify(embedding) : null, updatedAt: now() })
         .where(eq(lorebookEntries.id, id));
+    },
+
+    /** Remove every stored embedding vector for entries in one lorebook. */
+    async clearEntryEmbeddings(lorebookId: string) {
+      await db
+        .update(lorebookEntries)
+        .set({ embedding: null, updatedAt: now() })
+        .where(eq(lorebookEntries.lorebookId, lorebookId));
     },
 
     /** Bulk create entries (for imports and AI generation). */

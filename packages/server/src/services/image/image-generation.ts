@@ -1264,6 +1264,30 @@ async function generateTogetherAI(baseUrl: string, apiKey: string, request: Imag
 
 const NOVELAI_V4_PROMPT_HINT =
   "NovelAI V4/V4.5 prompts support roughly 512 T5 tokens and reject most Unicode prompt characters; try a shorter ASCII prompt without emoji or non-Latin text.";
+const NOVELAI_SIZE_MULTIPLE = 64;
+const NOVELAI_MIN_DIMENSION = 64;
+const NOVELAI_MAX_DIMENSION = 2048;
+const NOVELAI_MAX_PIXELS = 1024 * 1024;
+
+function clampNovelAiDimension(value: number): number {
+  const rounded = Math.round(value / NOVELAI_SIZE_MULTIPLE) * NOVELAI_SIZE_MULTIPLE;
+  return Math.max(NOVELAI_MIN_DIMENSION, Math.min(NOVELAI_MAX_DIMENSION, rounded));
+}
+
+function resolveNovelAiSize(request: ImageGenRequest): { width: number; height: number } {
+  let width = clampNovelAiDimension(request.width ?? 832);
+  let height = clampNovelAiDimension(request.height ?? 1216);
+  const pixels = width * height;
+  if (pixels <= NOVELAI_MAX_PIXELS) return { width, height };
+
+  const scale = Math.sqrt(NOVELAI_MAX_PIXELS / pixels);
+  width = Math.max(NOVELAI_MIN_DIMENSION, Math.floor((width * scale) / NOVELAI_SIZE_MULTIPLE) * NOVELAI_SIZE_MULTIPLE);
+  height = Math.max(
+    NOVELAI_MIN_DIMENSION,
+    Math.floor((height * scale) / NOVELAI_SIZE_MULTIPLE) * NOVELAI_SIZE_MULTIPLE,
+  );
+  return { width, height };
+}
 
 function isNovelAiV4Model(model: string): boolean {
   return /^nai-diffusion-(?:4(?:-(?:curated-preview|full))?|4-5(?:-(?:curated|full))?)$/i.test(model.trim());
@@ -1335,10 +1359,11 @@ async function generateNovelAI(baseUrl: string, apiKey: string, request: ImageGe
   );
   const seed = resolveSeed(request.imageDefaults);
   const referenceImages = collectNovelAiReferenceImages(request);
+  const size = resolveNovelAiSize(request);
 
   const parameters: Record<string, unknown> = {
-    width: request.width ?? 832,
-    height: request.height ?? 1216,
+    width: size.width,
+    height: size.height,
     n_samples: 1,
     ucPreset: defaults.undesiredContentPreset,
     negative_prompt: negativePrompt,

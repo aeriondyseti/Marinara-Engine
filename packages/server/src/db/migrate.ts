@@ -124,7 +124,7 @@ const CREATE_TABLES: string[] = [
     entry_limit INTEGER NOT NULL DEFAULT 100,
     recursive_scanning TEXT NOT NULL DEFAULT 'false',
     max_recursion_depth INTEGER NOT NULL DEFAULT 3,
-    exclude_from_vectorization TEXT NOT NULL DEFAULT 'false',
+    exclude_from_vectorization TEXT NOT NULL DEFAULT 'true',
     character_id TEXT,
     persona_id TEXT,
     chat_id TEXT,
@@ -632,7 +632,7 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
   {
     table: "lorebooks",
     column: "exclude_from_vectorization",
-    definition: "TEXT NOT NULL DEFAULT 'false'",
+    definition: "TEXT NOT NULL DEFAULT 'true'",
   },
   {
     table: "lorebooks",

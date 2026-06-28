@@ -257,42 +257,44 @@ function stringifyForSeed(value: unknown): string {
 }
 
 function buildCompatibleLorebookExport(lb: Record<string, unknown>, entries: Array<Record<string, unknown>>) {
-  const exportedEntries: Record<string, Record<string, unknown>> = {};
-  entries.forEach((entry, index) => {
-    exportedEntries[String(index)] = {
-      uid: index,
-      key: asStringArray(entry.keys),
-      keysecondary: asStringArray(entry.secondaryKeys),
-      comment: String(entry.name ?? `Entry ${index + 1}`),
-      description: String(entry.description ?? ""),
-      content: String(entry.content ?? ""),
-      disable: entry.enabled === false,
-      constant: entry.constant === true,
-      selective: entry.selective === true,
-      selectiveLogic: stSelectiveLogic(entry.selectiveLogic),
-      order: Number(entry.order ?? 100),
-      position: stPosition(entry.position),
-      depth: Number(entry.depth ?? 4),
-      probability: entry.probability ?? null,
-      scanDepth: entry.scanDepth ?? null,
-      matchWholeWords: entry.matchWholeWords === true,
-      caseSensitive: entry.caseSensitive === true,
-      role: stRole(entry.role),
-      group: String(entry.group ?? ""),
-      groupWeight: entry.groupWeight ?? null,
-      sticky: entry.sticky ?? null,
-      cooldown: entry.cooldown ?? null,
-      delay: entry.delay ?? null,
-      ephemeral: entry.ephemeral ?? null,
-      locked: entry.locked === true,
-      useRegex: entry.useRegex === true,
-      regex: entry.useRegex === true,
-      preventRecursion: entry.preventRecursion === true,
-      excludeRecursion: entry.excludeRecursion === true,
-      delayUntilRecursion: entry.delayUntilRecursion === true,
-      vectorized: entry.excludeFromVectorization !== true,
-    };
-  });
+  const exportedEntries = Object.fromEntries(
+    entries.map((entry, index) => [
+      String(index),
+      {
+        uid: index,
+        key: asStringArray(entry.keys),
+        keysecondary: asStringArray(entry.secondaryKeys),
+        comment: String(entry.name ?? `Entry ${index + 1}`),
+        description: String(entry.description ?? ""),
+        content: String(entry.content ?? ""),
+        disable: entry.enabled === false,
+        constant: entry.constant === true,
+        selective: entry.selective === true,
+        selectiveLogic: stSelectiveLogic(entry.selectiveLogic),
+        order: Number(entry.order ?? 100),
+        position: stPosition(entry.position),
+        depth: Number(entry.depth ?? 4),
+        probability: entry.probability ?? null,
+        scanDepth: entry.scanDepth ?? null,
+        matchWholeWords: entry.matchWholeWords === true,
+        caseSensitive: entry.caseSensitive === true,
+        role: stRole(entry.role),
+        group: String(entry.group ?? ""),
+        groupWeight: entry.groupWeight ?? null,
+        sticky: entry.sticky ?? null,
+        cooldown: entry.cooldown ?? null,
+        delay: entry.delay ?? null,
+        ephemeral: entry.ephemeral ?? null,
+        locked: entry.locked === true,
+        useRegex: entry.useRegex === true,
+        regex: entry.useRegex === true,
+        preventRecursion: entry.preventRecursion === true,
+        excludeRecursion: entry.excludeRecursion === true,
+        delayUntilRecursion: entry.delayUntilRecursion === true,
+        vectorized: entry.excludeFromVectorization !== true,
+      },
+    ]),
+  );
 
   return {
     name: String(lb.name ?? "Lorebook"),
@@ -835,8 +837,8 @@ export async function lorebooksRoutes(app: FastifyInstance) {
         const matchedKeysById = new Map(cachedScan.activatedEntries.map((entry) => [entry.id, entry.matchedKeys]));
         const activeEntries =
           cachedScan.activatedEntries.length > 0
-            ? await Promise.all(cachedScan.activatedEntries.map((entry) => storage.getEntry(entry.id))).then((entries) =>
-                entries.filter(Boolean),
+            ? await Promise.all(cachedScan.activatedEntries.map((entry) => storage.getEntry(entry.id))).then(
+                (entries) => entries.filter(Boolean),
               )
             : [];
 
@@ -1064,7 +1066,8 @@ export async function lorebooksRoutes(app: FastifyInstance) {
     const existingEmbeddingDimension = body.onlyMissing
       ? ((allEntries as Array<Record<string, unknown>>)
           .map((entry) => entry.embedding)
-          .find((embedding): embedding is unknown[] => Array.isArray(embedding) && embedding.length > 0)?.length ?? null)
+          .find((embedding): embedding is unknown[] => Array.isArray(embedding) && embedding.length > 0)?.length ??
+        null)
       : null;
 
     // Batch embed (most APIs support multiple texts per call)
@@ -1111,5 +1114,15 @@ export async function lorebooksRoutes(app: FastifyInstance) {
     }
 
     return { vectorized, total: allEntries.length, skipped: allEntries.length - entries.length };
+  });
+
+  app.delete<{ Params: { id: string } }>("/:id/vectors", async (req, reply) => {
+    const lorebook = await storage.getById(req.params.id);
+    if (!lorebook) return reply.status(404).send({ error: "Lorebook not found" });
+
+    const entries = (await storage.listEntries(req.params.id)) as Array<Record<string, unknown>>;
+    const cleared = entries.filter((entry) => Array.isArray(entry.embedding) && entry.embedding.length > 0).length;
+    await storage.clearEntryEmbeddings(req.params.id);
+    return { cleared, total: entries.length };
   });
 }

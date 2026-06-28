@@ -18,6 +18,7 @@ export type CharacterPromptInfo = {
   tags: string[];
   talkativeness: number;
   avatarPath: string | null;
+  avatarCrop: unknown | null;
 };
 
 type CharactersStore = {
@@ -80,6 +81,7 @@ export async function loadCharacterPromptInfo({
       tags: Array.isArray(charData.tags) ? charData.tags.map(String).filter(Boolean) : [],
       talkativeness: Math.max(0, Math.min(1, Number(charData.extensions?.talkativeness ?? 0.5))),
       avatarPath: (charRow.avatarPath as string) ?? null,
+      avatarCrop: charData.extensions?.avatarCrop ?? null,
     });
   }
   return charInfo;

@@ -7172,7 +7172,17 @@ export async function generateRoutes(app: FastifyInstance) {
         // (firstSavedMsg/lastSavedMsg/collectedCommands/collectedOocMessages
         // are declared above the follow-up loop so they survive iterations.)
 
-        const normalizedGenerationGuide = typeof input.generationGuide === "string" ? input.generationGuide.trim() : "";
+        const rawGenerationGuide = typeof input.generationGuide === "string" ? input.generationGuide.trim() : "";
+        const normalizedGenerationGuide = rawGenerationGuide
+          ? resolveMacros(
+              rawGenerationGuide,
+              {
+                ...promptMacroContext,
+                variables: { ...promptMacroContext.variables },
+              },
+              { trimResult: false },
+            ).trim()
+          : "";
         const generationGuideInstruction = normalizedGenerationGuide
           ? `Take the following into special consideration for your next message: ${normalizedGenerationGuide}`
           : null;
@@ -8304,11 +8314,14 @@ export async function generateRoutes(app: FastifyInstance) {
                 }
 
                 for (const char of chars) {
-                  if (char.avatarPath) continue; // already set
                   if (isManualTrackerCharacterId(char.characterId)) continue;
                   const name = (char.name as string) ?? "";
                   // Try matching against the chat's character cards (case-insensitive)
                   const matched = charInfo.find((c) => normalizeTextForMatch(c.name) === normalizeTextForMatch(name));
+                  if (!char.avatarCrop && matched?.avatarCrop) {
+                    char.avatarCrop = matched.avatarCrop;
+                  }
+                  if (char.avatarPath) continue; // already set
                   if (matched?.avatarPath) {
                     char.avatarPath = matched.avatarPath;
                     continue;

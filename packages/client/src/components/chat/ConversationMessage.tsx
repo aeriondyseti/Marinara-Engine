@@ -180,8 +180,9 @@ export const ConversationMessage = memo(function ConversationMessage({
     if (!characterMap) return null;
     if (!chatCharacterIds) return characterMap;
     const allowedIds = new Set(chatCharacterIds);
+    if (message.characterId) allowedIds.add(message.characterId);
     return new Map(Array.from(characterMap).filter(([id]) => allowedIds.has(id)));
-  }, [characterMap, chatCharacterIds]);
+  }, [characterMap, chatCharacterIds, message.characterId]);
 
   const charInfo = message.characterId && scopedCharacterMap ? scopedCharacterMap.get(message.characterId) : null;
   const fallbackChatCharacterEntry = useMemo(() => {

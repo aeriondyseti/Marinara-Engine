@@ -106,6 +106,7 @@ const RUNTIME_API_KEY = "local-marinara-runtime";
 const SESSION_ID = "professor-mari-workspace";
 const MAX_COMMAND_ROUNDS = 12;
 const MAX_PROTOCOL_REPAIR_ROUNDS = 2;
+const MAX_REPEATED_COMMAND_FAILURES = 3;
 const MAX_HISTORY_MESSAGES = 40;
 const MAX_PARALLEL_READONLY_COMMANDS = 4;
 const RECENT_WORKSPACE_CONTINUITY_LIMIT = 4;
@@ -290,6 +291,7 @@ Workspace defaults:
 - Inspect before claiming facts. Verify after changing anything.
 - Ask for approval before applying/saving destructive or user-visible changes.
 - Keep user-facing replies concise and human-readable.
+- For persona creation, interview the user briefly before creating anything unless they already supplied clear persona requirements. Ask for basics such as name, role/archetype, speaking style, appearance, boundaries, and any pasted source material to preserve. Do not guess a full persona from a vague request and immediately save it.
 
 Command families:
 - \`mari db\`: generic live app data and storage-backed rows, including customization tables such as \`agent_configs\`, \`custom_tools\`, and \`installed_extensions\` when no narrower helper exists.
@@ -408,6 +410,11 @@ function compactTraceText(value: string, limit = 2400): string {
 
 function compactOutput(value: string, limit = COMMAND_OUTPUT_LIMIT): string {
   return value.length > limit ? `${value.slice(0, limit)}\n… output truncated at ${limit} characters …` : value;
+}
+
+function commandFailureSignature(result: WorkspaceCommandResult) {
+  const input = JSON.stringify(result.input ?? {});
+  return `${result.name}:${input}:${result.output}`.slice(0, 2000);
 }
 
 function stringifyOutput(value: unknown): string {
@@ -1233,6 +1240,7 @@ export class ProfessorMariWorkspaceService {
         args.onEvent({ type: "thinking", data: delta });
       });
       const commandResultsForContinuity: WorkspaceCommandResult[] = [];
+      const repeatedFailureCounts = new Map<string, number>();
       let protocolRepairRounds = 0;
 
       for (let round = 0; round < MAX_COMMAND_ROUNDS; round += 1) {
@@ -1321,6 +1329,25 @@ export class ProfessorMariWorkspaceService {
           args.onEvent,
         );
         commandResultsForContinuity.push(...commandResults);
+
+        const repeatedFailure = commandResults
+          .filter((commandResult) => !commandResult.success)
+          .map((commandResult) => {
+            const signature = commandFailureSignature(commandResult);
+            const count = (repeatedFailureCounts.get(signature) ?? 0) + 1;
+            repeatedFailureCounts.set(signature, count);
+            return { commandResult, count };
+          })
+          .find((entry) => entry.count >= MAX_REPEATED_COMMAND_FAILURES);
+        if (repeatedFailure) {
+          const content = `Professor Mari hit the same ${repeatedFailure.commandResult.name} error ${MAX_REPEATED_COMMAND_FAILURES} times, so I stopped the workspace loop before it spammed the chat. Error: ${repeatedFailure.commandResult.output}`;
+          assistantText = appendVisibleText(assistantText, content);
+          appendTraceStatus(workspaceTrace, content);
+          args.onEvent({ type: "status", data: { content, kind: "retry", level: "warning" } });
+          for (const chunk of chunkText(content)) args.onEvent({ type: "token", data: chunk });
+          break;
+        }
+
         messages.push({ role: "user", content: formatCommandResultForPrompt(commandResults), contextKind: "history" });
 
         if (round === MAX_COMMAND_ROUNDS - 1) {
@@ -1960,7 +1987,8 @@ ${sections.join("\n\n")}
     const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
     const distCli = join(packageRoot, "dist", "bin", "mari.js");
     const sourceCli = join(packageRoot, "src", "bin", "mari.ts");
-    const posixScript = `#!/usr/bin/env sh
+    const posixShell = process.platform === "android" ? "/data/data/com.termux/files/usr/bin/sh" : "/bin/sh";
+    const posixScript = `#!${posixShell}
 DIST_CLI=${shellQuote(distCli)}
 SOURCE_CLI=${shellQuote(sourceCli)}
 if [ -f "$DIST_CLI" ]; then
