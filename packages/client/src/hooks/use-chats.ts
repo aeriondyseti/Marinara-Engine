@@ -571,6 +571,10 @@ export function useUpdateChat() {
       }
       qc.invalidateQueries({ queryKey: chatKeys.detail(vars.id) });
       qc.invalidateQueries({ queryKey: chatKeys.list() });
+      if (vars.characterIds !== undefined) {
+        qc.invalidateQueries({ queryKey: chatKeys.messages(vars.id) });
+        qc.invalidateQueries({ queryKey: chatKeys.messageCount(vars.id) });
+      }
 
       // Patch the group cache so the branch selector dropdown reflects renames
       // (and any other field changes) without waiting for a chat switch.
@@ -810,6 +814,7 @@ export function useDeleteMessage(chatId: string | null) {
       if (chatId) {
         qc.invalidateQueries({ queryKey: chatKeys.messages(chatId) });
         qc.invalidateQueries({ queryKey: chatKeys.messageCount(chatId) });
+        qc.invalidateQueries({ queryKey: chatKeys.list() });
         qc.invalidateQueries({ queryKey: lorebookKeys.active(chatId) });
       }
     },
@@ -824,6 +829,7 @@ export function useDeleteMessages(chatId: string | null) {
       if (chatId) {
         qc.invalidateQueries({ queryKey: chatKeys.messages(chatId) });
         qc.invalidateQueries({ queryKey: chatKeys.messageCount(chatId) });
+        qc.invalidateQueries({ queryKey: chatKeys.list() });
         qc.invalidateQueries({ queryKey: lorebookKeys.active(chatId) });
       }
     },

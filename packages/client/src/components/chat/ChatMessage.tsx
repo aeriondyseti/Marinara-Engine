@@ -1083,9 +1083,9 @@ export const ChatMessage = memo(function ChatMessage({
       ttsService.stop();
     } else {
       if (!hasTTSContent) return;
-      void ttsService.speakSequence(ttsVoiceRequests, message.id);
+      void ttsService.speakSequence(ttsVoiceRequests, message.id, { progressive: ttsConfig?.progressivePlayback });
     }
-  }, [hasTTSContent, message.id, ttsVoiceRequests]);
+  }, [hasTTSContent, message.id, ttsConfig?.progressivePlayback, ttsVoiceRequests]);
 
   const handlePauseResumeTTS = useCallback(() => {
     if (ttsService.getActiveId() !== message.id) return;
@@ -1447,7 +1447,8 @@ export const ChatMessage = memo(function ChatMessage({
       primaryCharacter: primaryCharInfo ?? { name: charName },
       characters: macroCharacters,
     };
-    const resolveDisplayMacros = createMessageMacroResolver(macroContext);
+    const macroRandomSeed = `${message.id}:${message.content}`;
+    const resolveDisplayMacros = createMessageMacroResolver(macroContext, { randomSeed: macroRandomSeed });
     const text =
       isUser || isSystem
         ? message.content
@@ -1468,6 +1469,7 @@ export const ChatMessage = memo(function ChatMessage({
     macroCharacters,
     message.content,
     messageDepth,
+    message.id,
     personaAppearance,
     personaBackstory,
     personaDescription,

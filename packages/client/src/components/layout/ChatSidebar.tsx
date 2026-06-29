@@ -59,6 +59,7 @@ import { resolveLiveConversationStatus } from "../../lib/conversation-presence-s
 import { Modal } from "../ui/Modal";
 import { Reorder, useDragControls } from "framer-motion";
 import { parseChatMetadata } from "../../lib/chat-display";
+import { compareChatsByActivityAsc, compareChatsByActivityDesc } from "../../lib/chat-recency";
 import { getCurrentGameGroupRepresentative } from "../../lib/game-session-resolution";
 import { SelectionActionBar } from "../ui/SelectionActionBar";
 import { SmoothFolderContent } from "../ui/SmoothFolderContent";
@@ -390,14 +391,14 @@ export function ChatSidebar() {
     const sorted = [...filtered].sort((a, b) => {
       switch (sort) {
         case "oldest":
-          return new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
+          return compareChatsByActivityAsc(a, b);
         case "name-asc":
           return toSearchText(a.name).localeCompare(toSearchText(b.name));
         case "name-desc":
           return toSearchText(b.name).localeCompare(toSearchText(a.name));
         case "newest":
         default:
-          return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+          return compareChatsByActivityDesc(a, b);
       }
     });
 

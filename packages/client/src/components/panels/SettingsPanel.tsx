@@ -32,7 +32,7 @@ import {
   getPrivilegedActionErrorMessage,
 } from "../../lib/api-client";
 import { chatBackgroundUrlToMetadata } from "../../lib/backgrounds";
-import { normalizeThemeCss } from "../../lib/theme-css";
+import { normalizeThemeCss, sanitizeAppCss } from "../../lib/theme-css";
 import { forceRefreshSpa } from "@/lib/browser-runtime";
 import React, { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { toast } from "sonner";
@@ -48,6 +48,7 @@ import {
   type ImagePromptMode,
   type ImageStyleProfile,
   type ImageStyleProfileSettings,
+  type InstalledExtension,
   type QuoteFormat,
   type Theme,
 } from "@marinara-engine/shared";
@@ -97,6 +98,7 @@ import {
   ScrollText,
   UserCheck,
   WandSparkles,
+  Terminal,
 } from "lucide-react";
 import { useClearAllData, useExpungeData, useUpdateChatMetadata, type ExpungeScope } from "../../hooks/use-chats";
 import { useChatStore } from "../../stores/chat.store";
@@ -162,6 +164,42 @@ const SETTINGS_COMPACT_PRIMARY_BUTTON_CLASS =
   "mari-chrome-control mari-chrome-control--compact mari-chrome-control--selected text-[0.625rem]";
 const SETTINGS_INLINE_ACCENT_BUTTON_CLASS =
   "shrink-0 rounded-md border border-[var(--marinara-chat-chrome-button-border-active)] bg-[var(--marinara-chat-chrome-button-bg-active)] px-1.5 py-0.5 text-[0.5625rem] font-semibold text-[var(--marinara-chat-chrome-button-text-active)] transition-colors hover:bg-[var(--marinara-chat-chrome-button-bg-hover)] disabled:cursor-not-allowed disabled:opacity-45";
+
+type MarinaraAndroidBridge = {
+  openConsole?: () => void;
+};
+
+function getMarinaraAndroidBridge(): MarinaraAndroidBridge | null {
+  if (typeof window === "undefined") return null;
+  const nativeWindow = window as Window & { MarinaraAndroid?: MarinaraAndroidBridge };
+  return nativeWindow.MarinaraAndroid ?? null;
+}
+
+function isMarinaraAndroidShell(): boolean {
+  return typeof navigator !== "undefined" && /\bMarinaraEngine\/Android\b/u.test(navigator.userAgent);
+}
+
+function isStandaloneIosInstall(): boolean {
+  if (typeof window === "undefined" || typeof navigator === "undefined") return false;
+  const nav = navigator as Navigator & { standalone?: boolean };
+  const isIos = /\b(iPad|iPhone|iPod)\b/u.test(nav.userAgent);
+  const isStandalone = nav.standalone === true || window.matchMedia?.("(display-mode: standalone)")?.matches === true;
+  return isIos && isStandalone;
+}
+
+function getNativeConsoleShortcutHelp(): string {
+  const bridge = getMarinaraAndroidBridge();
+  if (typeof bridge?.openConsole === "function") {
+    return "Opens Termux from the Android APK so you can view Marinara server logs while Debug mode is enabled.";
+  }
+  if (isMarinaraAndroidShell()) {
+    return "This Android APK build cannot expose the Termux console shortcut yet. Update Marinara, or open Termux manually.";
+  }
+  if (isStandaloneIosInstall()) {
+    return "iPhone installations do not expose a native console shortcut yet. Use the host server logs or Safari Web Inspector.";
+  }
+  return "Available in packaged Android/iPhone installations only. Browser and desktop users should use the server terminal or browser developer tools.";
+}
 
 const SETTINGS_COMPONENTS: Record<(typeof TABS)[number]["id"], React.FC> = {
   general: React.memo(GeneralSettings),
@@ -3356,7 +3394,7 @@ function ThemesSettings() {
       style = document.createElement("style");
       style.id = "marinara-css-editor-preview";
     }
-    style.textContent = normalizeThemeCss(themeCss);
+    style.textContent = sanitizeAppCss(themeCss);
     // Always (re-)append so it's the last <style> in <head>,
     // overriding the active-theme injector's saved CSS.
     document.head.appendChild(style);
@@ -3410,21 +3448,40 @@ function ThemesSettings() {
       let imported = 0;
       let skipped = 0;
       let failed = 0;
+      const skipMessages: string[] = [];
+      const failureMessages: string[] = [];
+
+      const recordSkippedTheme = (message: string) => {
+        skipped++;
+        skipMessages.push(message);
+      };
 
       if (file.name.endsWith(".json")) {
         const parsed = parseThemeJsonWithControlCharFallback(text);
         const entries = getFolderImportEntries(parsed, ["themes"]);
-        for (const entry of entries) {
+        for (const [index, entry] of entries.entries()) {
           const source = getFolderManifestConfig(entry);
-          if (!source || typeof source !== "object" || Array.isArray(source)) continue;
+          if (!source || typeof source !== "object" || Array.isArray(source)) {
+            recordSkippedTheme(`Entry ${index + 1} is not a theme object.`);
+            continue;
+          }
           const record = source as Record<string, unknown>;
           const importedThemeName =
-            typeof record.name === "string" && record.name.trim() ? record.name : file.name.replace(/\.json$/, "");
-          const importedThemeCss = typeof record.css === "string" ? normalizeThemeCss(record.css) : "";
-          if (!importedThemeCss.trim()) continue;
+            typeof record.name === "string" && record.name.trim()
+              ? record.name.trim()
+              : file.name.replace(/\.json$/i, "");
+          if (typeof record.css !== "string") {
+            recordSkippedTheme(`"${importedThemeName}" is missing a css field.`);
+            continue;
+          }
+          const importedThemeCss = normalizeThemeCss(record.css);
+          if (!importedThemeCss.trim()) {
+            recordSkippedTheme(`"${importedThemeName}" has empty css.`);
+            continue;
+          }
           const duplicate = findDuplicateTheme(workingThemes, importedThemeName, importedThemeCss);
           if (duplicate) {
-            skipped++;
+            recordSkippedTheme(`"${importedThemeName}" is already synced.`);
             continue;
           }
           try {
@@ -3437,6 +3494,9 @@ function ThemesSettings() {
             imported++;
           } catch (err) {
             failed++;
+            failureMessages.push(
+              err instanceof Error ? `"${importedThemeName}" failed: ${err.message}` : `"${importedThemeName}" failed.`,
+            );
             console.warn("[ThemesSettings] Failed to import theme entry:", importedThemeName, err);
           }
         }
@@ -3445,7 +3505,7 @@ function ThemesSettings() {
         const importedThemeCss = normalizeThemeCss(text);
         const duplicate = findDuplicateTheme(workingThemes, importedThemeName, importedThemeCss);
         if (duplicate) {
-          skipped++;
+          recordSkippedTheme(`"${importedThemeName}" is already synced.`);
         } else {
           const created = await createTheme.mutateAsync({
             name: importedThemeName,
@@ -3460,18 +3520,24 @@ function ThemesSettings() {
       if (imported > 0 || skipped > 0 || failed > 0) {
         const summary = [
           imported > 0 ? `${imported} imported` : null,
-          skipped > 0 ? `${skipped} already synced` : null,
+          skipped > 0 ? `${skipped} skipped` : null,
           failed > 0 ? `${failed} failed` : null,
         ].filter(Boolean);
         const message = `Theme import: ${summary.join(", ")}`;
-        if (failed > 0) toast.warning(message);
+        const description = [...failureMessages, ...skipMessages].slice(0, 3).join(" ");
+        if (failed > 0) toast.warning(message, { description, duration: 12_000 });
+        else if (skipped > 0) toast.warning(message, { description, duration: 12_000 });
         else toast.success(message);
       } else {
         toast.error("No valid themes found in file.");
       }
     } catch (err) {
       console.error("[ThemesSettings] Failed to import theme:", err);
-      toast.error("Failed to import theme. Ensure it's a valid CSS or JSON file.");
+      toast.error(
+        err instanceof SyntaxError
+          ? "Failed to import theme. The JSON could not be parsed."
+          : getPrivilegedActionErrorMessage(err, "Failed to import theme. Ensure it's a valid CSS or JSON file."),
+      );
     }
   };
   // ── CSS Editor View ──
@@ -3697,6 +3763,13 @@ function ThemesSettings() {
                 <button
                   onClick={() => {
                     void (async () => {
+                      const confirmed = await showConfirmDialog({
+                        title: "Delete Theme",
+                        message: `Delete "${t.name}"? This permanently removes the saved theme CSS from this server.`,
+                        confirmLabel: "Delete",
+                        tone: "destructive",
+                      });
+                      if (!confirmed) return;
                       try {
                         await deleteTheme.mutateAsync(t.id);
                         toast.success(`Theme "${t.name}" removed`);
@@ -3856,7 +3929,7 @@ function normalizeExtensionImportEntry(entry: FolderPackageImportEntry, fallback
     description: typeof record.description === "string" ? record.description : "",
     css: cssFromFiles ?? (typeof record.css === "string" ? record.css : null),
     js: jsFromFiles ?? (typeof record.js === "string" ? record.js : null),
-    enabled: typeof record.enabled === "boolean" ? record.enabled : true,
+    enabled: typeof record.enabled === "boolean" ? record.enabled : false,
   };
 }
 
@@ -3880,7 +3953,7 @@ function createLooseExtensionFolderImportEntries(
         description: "Extension imported from folder",
         css: css || null,
         js: js || null,
-        enabled: true,
+        enabled: false,
       },
       fallbackName || "extension",
     ),
@@ -3991,14 +4064,14 @@ function ExtensionsSettings() {
       const more = failureMessages.length > 1 ? ` (+${failureMessages.length - 1} more)` : "";
       toast.error(
         imported > 0
-          ? `Installed ${imported} extension${imported === 1 ? "" : "s"}${skipNote}; ${failed} failed — ${failureMessages[0]}${more}`
-          : `Failed to install ${failed} extension${failed === 1 ? "" : "s"}${skipNote} — ${failureMessages[0]}${more}`,
+          ? `Imported ${imported} extension${imported === 1 ? "" : "s"}${skipNote}; ${failed} failed — ${failureMessages[0]}${more}`
+          : `Failed to import ${failed} extension${failed === 1 ? "" : "s"}${skipNote} — ${failureMessages[0]}${more}`,
         { duration: 12_000 },
       );
     } else if (skipped > 0) {
       toast.warning(
         imported > 0
-          ? `Installed ${imported} extension${imported === 1 ? "" : "s"}${skipNote}.`
+          ? `Imported ${imported} extension${imported === 1 ? "" : "s"}${skipNote}. Review before enabling.`
           : `Skipped ${skipped} extension entr${skipped === 1 ? "y" : "ies"}.`,
         {
           description: failureMessages[0],
@@ -4006,7 +4079,7 @@ function ExtensionsSettings() {
         },
       );
     } else {
-      toast.success(`Installed ${imported} extension${imported === 1 ? "" : "s"}${skipNote}`);
+      toast.success(`Imported ${imported} extension${imported === 1 ? "" : "s"}${skipNote}. Review before enabling.`);
     }
   };
 
@@ -4042,13 +4115,13 @@ function ExtensionsSettings() {
             name,
             description: "JS extension imported from file",
             js: text,
-            enabled: true,
+            enabled: false,
             installedAt,
           });
         } catch (err) {
           throw new Error(describeExtensionImportError(err, name));
         }
-        toast.success(`Extension "${name}" installed`);
+        toast.success(`Extension "${name}" imported and left disabled for review`);
       } else if (lowerName.endsWith(".css")) {
         const text = await file.text();
         const name = file.name.replace(/\.css$/i, "");
@@ -4057,13 +4130,13 @@ function ExtensionsSettings() {
             name,
             description: "CSS extension imported from file",
             css: text,
-            enabled: true,
+            enabled: false,
             installedAt,
           });
         } catch (err) {
           throw new Error(describeExtensionImportError(err, name));
         }
-        toast.success(`Extension "${name}" installed`);
+        toast.success(`Extension "${name}" imported and left disabled for review`);
       } else {
         toast.error("Only .zip, .json, .css, and .js extension files are supported.");
       }
@@ -4091,9 +4164,45 @@ function ExtensionsSettings() {
     }
   };
 
+  const handleToggleExtension = async (ext: InstalledExtension) => {
+    const nextEnabled = !ext.enabled;
+    if (nextEnabled && ext.js?.trim()) {
+      const confirmed = await showConfirmDialog({
+        title: "Enable Extension",
+        message: `Enable "${ext.name}"? This runs the extension's JavaScript inside Marinara Engine.`,
+        confirmLabel: "Enable",
+        tone: "destructive",
+      });
+      if (!confirmed) return;
+    }
+
+    try {
+      await updateExtension.mutateAsync({ id: ext.id, enabled: nextEnabled });
+    } catch (err) {
+      toast.error(getPrivilegedActionErrorMessage(err, "Failed to update extension."));
+    }
+  };
+
+  const handleDeleteExtension = async (ext: InstalledExtension) => {
+    const confirmed = await showConfirmDialog({
+      title: "Delete Extension",
+      message: `Delete "${ext.name}"? This permanently removes its saved CSS and JavaScript from this server.`,
+      confirmLabel: "Delete",
+      tone: "destructive",
+    });
+    if (!confirmed) return;
+
+    try {
+      await deleteExtension.mutateAsync(ext.id);
+      toast.success(`Extension "${ext.name}" removed`);
+    } catch (err) {
+      toast.error(getPrivilegedActionErrorMessage(err, "Failed to remove extension."));
+    }
+  };
+
   return (
     <div className="flex flex-col gap-3">
-      <SettingsIntro>Install browser-local extensions to add custom behavior or styling.</SettingsIntro>
+      <SettingsIntro>Install extensions to add custom behavior or styling.</SettingsIntro>
 
       <SettingsSection
         title="Extension Library"
@@ -4144,7 +4253,7 @@ function ExtensionsSettings() {
                 )}
               >
                 <button
-                  onClick={() => updateExtension.mutate({ id: ext.id, enabled: !ext.enabled })}
+                  onClick={() => void handleToggleExtension(ext)}
                   className={cn(
                     "rounded p-0.5 transition-colors",
                     ext.enabled
@@ -4182,7 +4291,7 @@ function ExtensionsSettings() {
                   <Upload size="0.6875rem" />
                 </button>
                 <button
-                  onClick={() => deleteExtension.mutate(ext.id)}
+                  onClick={() => void handleDeleteExtension(ext)}
                   className="rounded p-0.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/10 hover:text-[var(--destructive)]"
                   title="Remove extension"
                 >
@@ -4946,8 +5055,6 @@ function ImportButton({
 }
 
 function AdvancedSettings() {
-  const messageGrouping = useUIStore((s) => s.messageGrouping);
-  const setMessageGrouping = useUIStore((s) => s.setMessageGrouping);
   const showTimestamps = useUIStore((s) => s.showTimestamps);
   const setShowTimestamps = useUIStore((s) => s.setShowTimestamps);
   const showModelName = useUIStore((s) => s.showModelName);
@@ -4977,11 +5084,25 @@ function AdvancedSettings() {
   const [refreshingSpa, setRefreshingSpa] = useState(false);
   const [adminSecret, setAdminSecret] = useState(() => localStorage.getItem(ADMIN_SECRET_STORAGE_KEY) ?? "");
   const [quickRepliesDrawerOpen, setQuickRepliesDrawerOpen] = useState(true);
+  const nativeConsoleBridge = getMarinaraAndroidBridge();
+  const canOpenNativeConsole = typeof nativeConsoleBridge?.openConsole === "function";
+  const nativeConsoleHelp = getNativeConsoleShortcutHelp();
 
   const handleQuickRepliesMenuChange = (enabled: boolean) => {
     setShowQuickRepliesMenu(enabled);
     if (enabled) setQuickRepliesDrawerOpen(true);
   };
+
+  const handleOpenNativeConsole = useCallback(() => {
+    const bridge = getMarinaraAndroidBridge();
+    if (typeof bridge?.openConsole !== "function") {
+      toast.info(getNativeConsoleShortcutHelp());
+      return;
+    }
+
+    bridge.openConsole();
+    toast.info("Opening Termux console…");
+  }, []);
 
   type ProfileExportFormat = "native" | "compatible" | "zip";
   const profileExportFallbackNames: Record<ProfileExportFormat, string> = {
@@ -5710,12 +5831,6 @@ function AdvancedSettings() {
             )}
           </div>
           <ToggleSetting
-            label="Group consecutive messages"
-            checked={messageGrouping}
-            onChange={setMessageGrouping}
-            help="Combines multiple messages from the same sender into a visual group, reducing clutter in the chat."
-          />
-          <ToggleSetting
             label="Show message timestamps"
             checked={showTimestamps}
             onChange={setShowTimestamps}
@@ -5751,6 +5866,20 @@ function AdvancedSettings() {
             onChange={setDebugMode}
             help="Logs the prompt and response payloads sent to the model in the server console for debugging."
           />
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1" title={nativeConsoleHelp}>
+              <button
+                type="button"
+                onClick={handleOpenNativeConsole}
+                disabled={!canOpenNativeConsole}
+                className={cn(SETTINGS_BUTTON_CLASS, "w-full justify-center gap-1.5 px-3 py-2 text-xs")}
+              >
+                <Terminal size="0.8125rem" className="shrink-0" />
+                <span>Open Console</span>
+              </button>
+            </div>
+            <HelpTooltip side="bottom" text={nativeConsoleHelp} />
+          </div>
         </div>
       </SettingsSection>
 

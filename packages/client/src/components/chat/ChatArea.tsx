@@ -25,7 +25,6 @@ import {
   useUpdateMessageExtra,
   usePeekPrompt,
   useSetActiveSwipe,
-  useTouchChat,
   useUpdateChatMetadata,
   useBranchChat,
   useChats,
@@ -556,7 +555,6 @@ export function ChatArea() {
   const updateMessageExtra = useUpdateMessageExtra(activeChatId);
   const peekPrompt = usePeekPrompt();
   const branchChat = useBranchChat();
-  const touchChat = useTouchChat();
   const { generate, retryAgents } = useGenerate();
   const setActiveSwipe = useSetActiveSwipe(activeChatId);
   const setActiveChatId = useChatStore((s) => s.setActiveChatId);
@@ -574,17 +572,6 @@ export function ChatArea() {
     if (listedActiveChat) return;
     setActiveChatId(null);
   }, [activeChatId, allChats, listedActiveChat, setActiveChatId]);
-
-  const touchedActiveChatRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!chat?.id) {
-      touchedActiveChatRef.current = null;
-      return;
-    }
-    if (touchedActiveChatRef.current === chat.id) return;
-    touchedActiveChatRef.current = chat.id;
-    touchChat.mutate(chat.id);
-  }, [chat?.id, touchChat]);
 
   const currentGameSessionChatId = useMemo(() => resolveCurrentGameSessionChatId(chat, allChats), [allChats, chat]);
 
@@ -1969,7 +1956,9 @@ export function ChatArea() {
     );
     if (ttsRequests.length === 0) return;
 
-    void ttsService.speakSequence(withTTSVoiceRequestCacheKeys(ttsRequests, cfg, lastMsg.id), lastMsg.id);
+    void ttsService.speakSequence(withTTSVoiceRequestCacheKeys(ttsRequests, cfg, lastMsg.id), lastMsg.id, {
+      progressive: cfg.progressivePlayback,
+    });
   }, [characterMap, isStreaming, resolveTTSCharacterId]);
 
   const newestMsgId = msgData?.pages[0]?.[msgData.pages[0].length - 1]?.id;

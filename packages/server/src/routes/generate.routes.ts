@@ -33,6 +33,7 @@ import {
   wrapConversationInstructions,
   NARRATIVE_DIRECTOR_SECRET_PLOT_PROMPT,
   findKnownModel,
+  LOCAL_SIDECAR_CONNECTION_ID,
   normalizeTextForMatch,
   type APIProvider,
 } from "@marinara-engine/shared";
@@ -77,6 +78,7 @@ import {
 import { lorebookEntryPassesContextFilters, type GameStateForScanning } from "../services/lorebook/keyword-scanner.js";
 import { injectAtDepth } from "../services/lorebook/prompt-injector.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
+import { getLocalSidecarProvider } from "../services/llm/local-sidecar.js";
 import { resolveChatSummaryConnection } from "../services/chat-summary/connection-resolution.js";
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
 import { loadImageGenerationUserSettings } from "../services/image/image-generation-settings.js";
@@ -202,6 +204,7 @@ import {
   buildUserMessageRegenerationSourceMessage,
   buildLockedPlayerStatsArrayPatch,
   buildLockedPersonaTrackerPatch,
+  createLocalSidecarGenerationConnection,
   extractImageAttachmentDataUrls,
   appendNonLeadingSystemMessagesToLastUser,
   appendSeparateAgentInjectionMessage,
@@ -418,6 +421,8 @@ type LorebookScanSnapshot = {
   totalEntries: number;
 };
 
+type MemoryRecallEmbeddingSource = Awaited<ReturnType<typeof resolveMemoryRecallEmbeddingSource>>;
+
 function emptyLorebookScanSnapshot(): LorebookScanSnapshot {
   return {
     activatedEntries: [],
@@ -434,6 +439,82 @@ function toLorebookScanSnapshot(result: LorebookScanResult | null | undefined): 
     budgetSkippedEntries: result.budgetSkippedEntries,
     totalTokensEstimate: result.totalTokensEstimate,
     totalEntries: result.totalEntries,
+  };
+}
+
+function normalizeLorebookVectorQueryDepth(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_DEFAULT;
+  return Math.max(0, Math.min(LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_MAX, Math.trunc(parsed)));
+}
+
+function selectLorebookVectorQueryText(messages: Array<{ content: string }>, depth: number): string {
+  const selectedMessages = depth > 0 ? messages.slice(-depth) : messages;
+  return selectedMessages.map((message) => message.content).join("\n").trim();
+}
+
+async function buildLorebookSemanticEmbeddingsById({
+  lorebooks,
+  entries,
+  scanMessages,
+  embeddingSource,
+  signal,
+}: {
+  lorebooks: Lorebook[];
+  entries: LorebookEntry[];
+  scanMessages: Array<{ content: string }>;
+  embeddingSource: MemoryRecallEmbeddingSource | null;
+  signal: AbortSignal;
+}): Promise<{ defaultEmbedding: number[] | null; embeddingsByLorebookId?: Map<string, number[] | null> }> {
+  if (!embeddingSource) return { defaultEmbedding: null };
+  const lorebookIdsWithVectors = new Set(
+    entries
+      .filter(
+        (entry) =>
+          !entry.excludeFromVectorization &&
+          Array.isArray(entry.embedding) &&
+          entry.embedding.length > 0,
+      )
+      .map((entry) => entry.lorebookId),
+  );
+  if (lorebookIdsWithVectors.size === 0) return { defaultEmbedding: null };
+
+  const vectorLorebooks = lorebooks.filter(
+    (lorebook) => !lorebook.excludeFromVectorization && lorebookIdsWithVectors.has(lorebook.id),
+  );
+  if (vectorLorebooks.length === 0) return { defaultEmbedding: null };
+
+  const depths = Array.from(
+    new Set(vectorLorebooks.map((lorebook) => normalizeLorebookVectorQueryDepth(lorebook.vectorQueryDepth))),
+  );
+  const embeddingsByDepth = new Map<number, number[] | null>();
+  for (const depth of depths) {
+    const queryText = selectLorebookVectorQueryText(scanMessages, depth);
+    if (!queryText) {
+      embeddingsByDepth.set(depth, null);
+      continue;
+    }
+    const embeddings = await embedMemoryRecallTexts([queryText], {
+      embeddingSource,
+      signal,
+    });
+    embeddingsByDepth.set(depth, embeddings[0] ?? null);
+  }
+
+  const embeddingsByLorebookId = new Map<string, number[] | null>();
+  for (const lorebook of vectorLorebooks) {
+    embeddingsByLorebookId.set(
+      lorebook.id,
+      embeddingsByDepth.get(normalizeLorebookVectorQueryDepth(lorebook.vectorQueryDepth)) ?? null,
+    );
+  }
+
+  return {
+    defaultEmbedding:
+      embeddingsByDepth.get(LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_DEFAULT) ??
+      Array.from(embeddingsByDepth.values()).find((embedding) => embedding && embedding.length > 0) ??
+      null,
+    embeddingsByLorebookId,
   };
 }
 
@@ -1443,7 +1524,12 @@ export async function generateRoutes(app: FastifyInstance) {
       releaseActiveGeneration();
       return reply.status(400).send({ error: "No API connection configured for this chat" });
     }
-    let conn = await connections.getWithKey(connId).catch(releaseActiveGenerationAndRethrow);
+    const resolveGenerationConnection = async (connectionId: string) =>
+      connectionId === LOCAL_SIDECAR_CONNECTION_ID
+        ? createLocalSidecarGenerationConnection()
+        : await connections.getWithKey(connectionId).catch(releaseActiveGenerationAndRethrow);
+
+    let conn = await resolveGenerationConnection(connId);
     if (!conn && impersonateConnectionOverride && connId === impersonateConnectionOverride && fallbackConnectionId) {
       logger.warn(
         "[generate] Impersonate connection override %s was not found; falling back to chat/request connection",
@@ -1459,7 +1545,7 @@ export async function generateRoutes(app: FastifyInstance) {
         const picked = pool[Math.floor(Math.random() * pool.length)];
         connId = picked.id;
       }
-      conn = connId ? await connections.getWithKey(connId).catch(releaseActiveGenerationAndRethrow) : null;
+      conn = connId ? await resolveGenerationConnection(connId) : null;
     }
     if (!conn) {
       releaseActiveGeneration();
@@ -1692,6 +1778,7 @@ export async function generateRoutes(app: FastifyInstance) {
         }
 
         return {
+          id: typeof m.id === "string" ? m.id : null,
           role: m.role === "narrator" ? ("system" as const) : (m.role as "user" | "assistant" | "system"),
           content,
           contextKind: "history" as const,
@@ -2041,13 +2128,14 @@ export async function generateRoutes(app: FastifyInstance) {
         if (followUpIteration === 0) {
           const regexScripts = await getPromptRegexScripts();
           applyRegexScriptsToPromptMessages(mappedMessages, regexScripts, {
-            resolveMacros: (value) => resolveMacros(value, promptMacroContext, { trimResult: false }),
+            resolveMacros: (value, randomSeed) => resolveMacros(value, promptMacroContext, { trimResult: false, randomSeed }),
             targetCharacterId: promptTargetCharacterId,
           });
           if (regenerateUserSourceMessage) {
             const sourceMessages = [regenerateUserSourceMessage];
             applyRegexScriptsToPromptMessages(sourceMessages, regexScripts, {
-              resolveMacros: (value) => resolveMacros(value, promptMacroContext, { trimResult: false }),
+              resolveMacros: (value, randomSeed) =>
+                resolveMacros(value, promptMacroContext, { trimResult: false, randomSeed }),
               targetCharacterId: promptTargetCharacterId,
             });
           }
@@ -2132,33 +2220,37 @@ export async function generateRoutes(app: FastifyInstance) {
         sendProgress("embedding");
         const _tEmbed = Date.now();
         let chatContextEmbedding: number[] | null = null;
+        let lorebookSemanticEmbeddingsById: Map<string, number[] | null> | undefined;
         const knowledgeRouterActivatedLorebookEntryIds = new Set<string>();
         const knowledgeRouterExcludedLorebookEntryIds = new Set<string>();
         let knowledgeRouterActivationPassCompleted = false;
         try {
-          const activeEntries = (await lorebooksStore.listActiveEntries({
+          const lorebookScopeFilters = {
             chatId: input.chatId,
             characterIds: promptCharacterIds,
             personaId,
             activeLorebookIds: chatActiveLorebookIds,
             excludedLorebookIds: lorebookScopeExclusions.excludedLorebookIds,
             excludedSourceAgentIds: lorebookScopeExclusions.excludedSourceAgentIds,
+          };
+          const activeEntries = (await lorebooksStore.listActiveEntries({
+            ...lorebookScopeFilters,
           })) as LorebookEntry[];
           const hasVectorizedEntries = activeEntries.some(
             (entry) => Array.isArray(entry.embedding) && entry.embedding.length > 0,
           );
           if (hasVectorizedEntries && memoryRecallVectorizerAvailable) {
-            const recentMsgs = currentInputMessages()
-              .slice(-10)
-              .map((m) => m.content)
-              .join("\n");
-            if (recentMsgs.trim()) {
-              const embeddings = await embedMemoryRecallTexts([recentMsgs], {
-                embeddingSource: memoryRecallEmbeddingSource,
-                signal: abortController.signal,
-              });
-              chatContextEmbedding = embeddings[0] ?? null;
-            }
+            const allLorebooks = (await lorebooksStore.list()) as unknown as Lorebook[];
+            const relevantLorebooks = filterRelevantLorebooks(allLorebooks, lorebookScopeFilters) as Lorebook[];
+            const semanticEmbeddings = await buildLorebookSemanticEmbeddingsById({
+              lorebooks: relevantLorebooks,
+              entries: activeEntries,
+              scanMessages: toLorebookScanMessages(),
+              embeddingSource: memoryRecallEmbeddingSource,
+              signal: abortController.signal,
+            });
+            chatContextEmbedding = semanticEmbeddings.defaultEmbedding;
+            lorebookSemanticEmbeddingsById = semanticEmbeddings.embeddingsByLorebookId;
           }
         } catch {
           // Embedding generation is optional — if it fails, fall back to keyword-only matching
@@ -2236,6 +2328,7 @@ export async function generateRoutes(app: FastifyInstance) {
             excludedLorebookSourceAgentIds: lorebookScopeExclusions.excludedSourceAgentIds,
             lorebookTokenBudget: resolveLorebookTokenBudget(chatMeta),
             chatEmbedding: chatContextEmbedding,
+            semanticEmbeddingsByLorebookId: lorebookSemanticEmbeddingsById,
             entryStateOverrides:
               (chatMeta.entryStateOverrides as Record<string, { ephemeral?: number | null; enabled?: boolean }>) ??
               undefined,
@@ -3488,6 +3581,7 @@ export async function generateRoutes(app: FastifyInstance) {
               excludedSourceAgentIds: lorebookScopeExclusions.excludedSourceAgentIds,
               tokenBudget: resolveLorebookTokenBudget(chatMeta),
               chatEmbedding: chatContextEmbedding,
+              semanticEmbeddingsByLorebookId: lorebookSemanticEmbeddingsById,
               entryStateOverrides:
                 (chatMeta.entryStateOverrides as Record<string, { ephemeral?: number | null; enabled?: boolean }>) ??
                 undefined,
@@ -3545,6 +3639,7 @@ export async function generateRoutes(app: FastifyInstance) {
             excludedSourceAgentIds: lorebookScopeExclusions.excludedSourceAgentIds,
             tokenBudget: resolveLorebookTokenBudget(chatMeta),
             chatEmbedding: chatContextEmbedding,
+            semanticEmbeddingsByLorebookId: lorebookSemanticEmbeddingsById,
             entryStateOverrides:
               (chatMeta.entryStateOverrides as Record<string, { ephemeral?: number | null; enabled?: boolean }>) ??
               undefined,
@@ -3839,16 +3934,19 @@ export async function generateRoutes(app: FastifyInstance) {
         const providerTopK = resolveProviderTopK(conn.provider, topK);
 
         // Create provider
-        const provider = createLLMProvider(
-          conn.provider,
-          baseUrl,
-          conn.apiKey,
-          conn.maxContext,
-          conn.openrouterProvider,
-          conn.maxTokensOverride,
-          conn.claudeFastMode === "true",
-          conn.treatAsLocalEndpoint === "true",
-        );
+        const provider =
+          connId === LOCAL_SIDECAR_CONNECTION_ID
+            ? getLocalSidecarProvider()
+            : createLLMProvider(
+                conn.provider,
+                baseUrl,
+                conn.apiKey,
+                conn.maxContext,
+                conn.openrouterProvider,
+                conn.maxTokensOverride,
+                conn.claudeFastMode === "true",
+                conn.treatAsLocalEndpoint === "true",
+              );
 
         const chatConnectionMaxParallelJobs = Number(conn.maxParallelJobs) || 1;
         const chatConnectionKnownModel = findKnownModel(conn.provider as APIProvider, conn.model.trim());
@@ -4232,6 +4330,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 excludedSourceAgentIds: lorebookScopeExclusions.excludedSourceAgentIds,
                 tokenBudget: resolveLorebookTokenBudget(chatMeta),
                 chatEmbedding: chatContextEmbedding,
+                semanticEmbeddingsByLorebookId: lorebookSemanticEmbeddingsById,
                 entryStateOverrides:
                   (chatMeta.entryStateOverrides as Record<string, { ephemeral?: number | null; enabled?: boolean }>) ??
                   undefined,
@@ -4381,6 +4480,7 @@ export async function generateRoutes(app: FastifyInstance) {
             contextLimit: suppressModelParameters ? undefined : (effectiveMaxContext ?? connectionMaxContext),
             sendProgress,
             signal: abortController.signal,
+            resolveMacros: (value) => resolveMacros(value, promptMacroContext, { trimResult: false }),
           });
         }
 
@@ -6115,7 +6215,8 @@ export async function generateRoutes(app: FastifyInstance) {
               : scopedMessagesForGen;
           if (!promptTargetCharacterId && targetCharId) {
             applyRegexScriptsToPromptMessages(targetScopedMessagesForGen, await getPromptRegexScripts(), {
-              resolveMacros: (value) => resolveMacros(value, promptMacroContext, { trimResult: false }),
+              resolveMacros: (value, randomSeed) =>
+                resolveMacros(value, promptMacroContext, { trimResult: false, randomSeed }),
               targetCharacterId: targetCharId,
               targetedOnly: true,
             });
@@ -10955,7 +11056,8 @@ export async function generateRoutes(app: FastifyInstance) {
               characterId: null,
             };
             applyRegexScriptsToPromptMessages([newMariMsg], await regexScriptsStore.list(), {
-              resolveMacros: (value) => resolveMacros(value, promptMacroContext, { trimResult: false }),
+              resolveMacros: (value, randomSeed) =>
+                resolveMacros(value, promptMacroContext, { trimResult: false, randomSeed }),
             });
             newMariMsg.content = newMariMsg.content.replace(/\n([ \t]*\n){2,}/g, "\n\n");
             runningMessagesForFollowUp.push(resolveHistoryMessageMacros([newMariMsg])[0] ?? newMariMsg);

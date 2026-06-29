@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import {
   GENERATION_PARAMETER_SEND_KEYS,
+  LOCAL_SIDECAR_CONNECTION_ID,
   PROVIDERS,
   SUMMARY_TAIL_MESSAGES,
   applyTrackerFieldLocksToGameStatePatch,
@@ -15,6 +16,8 @@ import {
   type InventoryItem,
   type PlayerStats,
 } from "@marinara-engine/shared";
+import { LOCAL_SIDECAR_MODEL } from "../../services/llm/local-sidecar.js";
+import { sidecarModelService } from "../../services/sidecar/sidecar-model.service.js";
 import { wrapContent } from "../../services/prompt/format-engine.js";
 
 export type SimpleMessage = {
@@ -30,6 +33,40 @@ export type SpeakerPrefixMessage = SimpleMessage & {
   providerMetadata?: Record<string, unknown>;
 };
 export type StoredGenerationParameters = Partial<GenerationParameters>;
+export type LocalSidecarGenerationConnection = {
+  id: typeof LOCAL_SIDECAR_CONNECTION_ID;
+  name: string;
+  provider: "local_sidecar";
+  baseUrl: string;
+  apiKey: string;
+  apiKeyEncrypted: string;
+  model: string;
+  imagePath: null;
+  maxContext: number;
+  isDefault: "false";
+  useForRandom: "false";
+  enableCaching: "false";
+  cachingAtDepth: number;
+  defaultForAgents: "false";
+  embeddingModel: string;
+  embeddingBaseUrl: string;
+  embeddingConnectionId: null;
+  openrouterProvider: null;
+  imageGenerationSource: null;
+  comfyuiWorkflow: null;
+  imageService: null;
+  imageEndpointId: null;
+  defaultParameters: null;
+  promptPresetId: null;
+  maxTokensOverride: null;
+  maxParallelJobs: number;
+  treatAsLocalEndpoint: "true";
+  claudeFastMode: "false";
+  folderId: null;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+};
 export type PromptAttachment = {
   type?: string | null;
   url?: string | null;
@@ -39,6 +76,44 @@ export type PromptAttachment = {
   prompt?: string | null;
   galleryId?: string | null;
 };
+
+export function createLocalSidecarGenerationConnection(): LocalSidecarGenerationConnection {
+  const config = sidecarModelService.getConfig();
+  return {
+    id: LOCAL_SIDECAR_CONNECTION_ID,
+    name: "Local Model (sidecar)",
+    provider: "local_sidecar",
+    baseUrl: "local-sidecar://runtime",
+    apiKey: "",
+    apiKeyEncrypted: "",
+    model: LOCAL_SIDECAR_MODEL,
+    imagePath: null,
+    maxContext: config.contextSize,
+    isDefault: "false",
+    useForRandom: "false",
+    enableCaching: "false",
+    cachingAtDepth: 5,
+    defaultForAgents: "false",
+    embeddingModel: "",
+    embeddingBaseUrl: "",
+    embeddingConnectionId: null,
+    openrouterProvider: null,
+    imageGenerationSource: null,
+    comfyuiWorkflow: null,
+    imageService: null,
+    imageEndpointId: null,
+    defaultParameters: null,
+    promptPresetId: null,
+    maxTokensOverride: null,
+    maxParallelJobs: 1,
+    treatAsLocalEndpoint: "true",
+    claudeFastMode: "false",
+    folderId: null,
+    sortOrder: 0,
+    createdAt: "local-sidecar",
+    updatedAt: "local-sidecar",
+  };
+}
 
 function createEmptyPlayerStats(): PlayerStats {
   return { stats: [], attributes: null, skills: {}, inventory: [], activeQuests: [], status: "" };
@@ -416,8 +491,10 @@ function appendPromptMessageContent(target: PromptRoleMessage, source: PromptRol
  * conversation turns have started, later system blocks are appended to the
  * latest user message so the request remains system/user/assistant/user...
  * without making post-history preset sections removable during context fitting.
- * Depth injections are already positioned in history, so they become user
- * messages in place instead of moving to the latest user turn.
+ * History-context system messages are already positioned in the transcript, so
+ * they become user messages in place instead of moving to the latest user turn.
+ * Depth injections follow the same rule because they are also inserted at an
+ * exact history position.
  */
 export function appendNonLeadingSystemMessagesToLastUser<T extends PromptRoleMessage>(messages: T[]): T[] {
   const result: T[] = [];
@@ -435,7 +512,7 @@ export function appendNonLeadingSystemMessagesToLastUser<T extends PromptRoleMes
 
     if (cloned.role === "system") {
       const converted = { ...cloned, role: "user" as const };
-      if (cloned.contextKind === "injection") {
+      if (cloned.contextKind === "history" || cloned.contextKind === "injection") {
         result.push(converted as T);
         lastUserIndex = result.length - 1;
         continue;

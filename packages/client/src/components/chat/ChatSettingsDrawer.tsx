@@ -107,7 +107,10 @@ import {
 import { useUpdateGameWidgets } from "../../hooks/use-game";
 import { useRegexScripts, useUpdateRegexScript, type RegexScriptRow } from "../../hooks/use-regex-scripts";
 import { api } from "../../lib/api-client";
-import { filterLanguageGenerationConnections } from "../../lib/connection-filters";
+import {
+  appendLocalSidecarConnectionOption,
+  filterLanguageGenerationConnections,
+} from "../../lib/connection-filters";
 import { getConnectedChatDisplayName } from "../../lib/chat-display";
 import { getTouchReorderDropIndex } from "../../lib/touch-reorder";
 import {
@@ -151,6 +154,7 @@ import type {
 } from "@marinara-engine/shared";
 import { useAgentConfigs, useCreateAgent, useUpdateAgent, type AgentConfigRow } from "../../hooks/use-agents";
 import { useAgentStore } from "../../stores/agent.store";
+import { useSidecarStore } from "../../stores/sidecar.store";
 import {
   BUILT_IN_AGENTS,
   BUILT_IN_TOOLS,
@@ -703,6 +707,17 @@ export function ChatSettingsDrawer({
         (connections as Array<{ id: string; name: string; model?: string; provider?: string }>) ?? [],
       ),
     [connections],
+  );
+  const sidecarModelDownloaded = useSidecarStore((state) => state.modelDownloaded);
+  const sidecarModelDisplayName = useSidecarStore((state) => state.modelDisplayName);
+  const chatGenerationConnectionsList = useMemo(
+    () =>
+      appendLocalSidecarConnectionOption(
+        textConnectionsList,
+        !isGame && sidecarModelDownloaded,
+        sidecarModelDisplayName,
+      ),
+    [isGame, sidecarModelDisplayName, sidecarModelDownloaded, textConnectionsList],
   );
   const { data: allPersonas } = usePersonas();
   const { data: agentConfigs } = useAgentConfigs();
@@ -3170,7 +3185,7 @@ export function ChatSettingsDrawer({
           <div style={{ order: CHAT_SETTINGS_ORDER.connection }}>
             <ConnectionSection
               connectionId={chat.connectionId ?? null}
-              connections={textConnectionsList}
+              connections={chatGenerationConnectionsList}
               isGame={isGame}
               onConnectionChange={setConnection}
             />
@@ -6995,7 +7010,7 @@ export function ChatSettingsDrawer({
               metadata={metadata}
               isConversation={isConversation}
               connectionId={chat.connectionId ?? null}
-              connections={(connections as Record<string, unknown>[]) ?? []}
+              connections={chatGenerationConnectionsList as Record<string, unknown>[]}
               contextMessageLimit={metadata.contextMessageLimit as number | null | undefined}
               excludePastReasoning={metadata.excludePastReasoning as boolean | undefined}
               onChatParametersChange={(chatParameters) => updateMeta.mutate({ id: chat.id, chatParameters })}
@@ -7012,7 +7027,7 @@ export function ChatSettingsDrawer({
             <div style={{ order: CHAT_SETTINGS_ORDER.impersonate }}>
               <ImpersonateSection
                 presets={(presets ?? []) as Array<{ id: string; name: string }>}
-                connections={textConnectionsList}
+                connections={chatGenerationConnectionsList}
               />
             </div>
           )}

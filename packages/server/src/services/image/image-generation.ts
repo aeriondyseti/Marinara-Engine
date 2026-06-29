@@ -1225,7 +1225,7 @@ async function generateStabilityV1(baseUrl: string, apiKey: string, request: Ima
 }
 
 async function generateTogetherAI(baseUrl: string, apiKey: string, request: ImageGenRequest): Promise<ImageGenResult> {
-  const url = `${baseUrl.replace(/\/+$/, "")}/images/generations`;
+  const url = openAIImagesUrl(baseUrl, "generations");
   const body: Record<string, unknown> = {
     prompt: request.prompt,
     model: request.model || "black-forest-labs/FLUX.1-schnell-Free",

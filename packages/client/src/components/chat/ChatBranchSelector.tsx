@@ -25,6 +25,7 @@ import {
 import { showConfirmDialog, showPromptDialog } from "../../lib/app-dialogs";
 import { CHAT_FLOATING_UI_DISMISS_EVENT } from "../../lib/chat-floating-ui-events";
 import { getChatDisplayName } from "../../lib/chat-display";
+import { compareChatsByActivityDesc } from "../../lib/chat-recency";
 import { useChatStore } from "../../stores/chat.store";
 import { cn } from "../../lib/utils";
 import {
@@ -44,7 +45,9 @@ import {
 type BranchRow = {
   id: string;
   name: string;
+  createdAt?: string | null;
   updatedAt: string;
+  lastMessageAt?: string | null;
 };
 
 interface ChatBranchSelectorProps {
@@ -88,7 +91,7 @@ export function ChatBranchSelector({
     rows.sort((left, right) => {
       if (left.id === activeChatId) return -1;
       if (right.id === activeChatId) return 1;
-      return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+      return compareChatsByActivityDesc(left, right);
     });
     return rows;
   }, [activeChatId, groupChats]);

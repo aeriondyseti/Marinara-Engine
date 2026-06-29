@@ -777,7 +777,7 @@ async function spotifyGetPlaylists(
   if (!creds?.accessToken) {
     return { error: "Spotify not configured. Please add your Spotify access token in the Music DJ agent settings." };
   }
-  const limit = Math.min(Number(args.limit ?? 20), 50);
+  const limit = clampNumber(args.limit ?? 20, 20, 1, 50);
 
   try {
     const res = await fetch(
@@ -1528,7 +1528,7 @@ async function spotifySearch(
     return { error: "Spotify not configured. Please add your Spotify access token in the Music DJ agent settings." };
   }
   const query = normalizeSpotifySearchQuery(args.query);
-  const limit = Math.min(Number(args.limit ?? 5), 20);
+  const limit = clampNumber(args.limit ?? 5, 5, 1, 20);
 
   try {
     const res = await fetch(

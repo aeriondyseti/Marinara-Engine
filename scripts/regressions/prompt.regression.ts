@@ -1,12 +1,21 @@
 import assert from "node:assert/strict";
 import {
+  applyRegexReplacement,
   compileChatSummaryEntries,
+  compileImagePrompt,
+  createRegexScriptSchema,
+  createDefaultImageStyleProfileSettings,
+  isPatternSafe,
   normalizeChatSummaryEntries,
+  resolveRegexPatternLiteralMacros,
   resolveMacros,
   testPrimaryKeys,
   testSecondaryKeys,
+  type AgentContext,
   type ChatMLMessage,
 } from "../../packages/shared/src/index.js";
+import { renderAgentPromptTemplate } from "../../packages/server/src/services/agents/agent-executor.js";
+import { buildMemoryRecallBlock } from "../../packages/server/src/services/generation/memory-recall-context.js";
 import type { DB } from "../../packages/server/src/db/connection.js";
 import {
   appendNonLeadingSystemMessagesToLastUser,
@@ -72,6 +81,27 @@ const cases: RegressionCase[] = [
     },
   },
   {
+    name: "history system events stay in chronological position",
+    run() {
+      const messages: SimpleMessage[] = [
+        { role: "system", content: "base system" },
+        { role: "user", content: "hello", contextKind: "history" },
+        { role: "assistant", content: "hi", contextKind: "history" },
+        { role: "system", content: "Rana has left the chat.", contextKind: "history" },
+        { role: "assistant", content: "after event", contextKind: "history" },
+      ];
+
+      const normalized = appendNonLeadingSystemMessagesToLastUser(messages);
+
+      assert.equal(normalized.length, 5);
+      assert.equal(normalized[3]?.role, "user");
+      assert.equal(normalized[3]?.content, "Rana has left the chat.");
+      assert.equal(normalized[4]?.role, "assistant");
+      assert.equal(normalized[4]?.content, "after event");
+      assert.equal(normalized[1]?.content, "hello");
+    },
+  },
+  {
     name: "lorebook keyword matching handles unicode and secondary blockers",
     run() {
       assert.deepEqual(testPrimaryKeys(["чай"], "Она пьет чай.", keywordOptions), {
@@ -101,6 +131,256 @@ const cases: RegressionCase[] = [
       });
 
       assert.equal(resolved, "regenerate | 12 minutes | Europe/Warsaw | Continue the experiment.");
+    },
+  },
+  {
+    name: "macro conditionals support numeric comparisons",
+    run() {
+      const context = {
+        user: "Mari",
+        char: "Dottore",
+        characters: ["Dottore"],
+        variables: {},
+      };
+
+      assert.equal(resolveMacros("{{#if 1 > 100}}THIS SHOULD NOT SHOW{{/if}}", context), "");
+      assert.equal(resolveMacros("{{#if 3 < 5}}low{{else}}high{{/if}}", context), "low");
+      assert.equal(resolveMacros("{{#if 5 >= 5.0}}same{{/if}}", context), "same");
+    },
+  },
+  {
+    name: "macro conditionals support else-if and nested macro conditions",
+    run() {
+      const context = {
+        user: "Mari",
+        char: "Dottore",
+        characters: ["Dottore"],
+        variables: {},
+      };
+
+      assert.equal(resolveMacros("{{#if 1==0}}one{{else if 2==2}}two{{else}}three{{/if}}", context), "two");
+      assert.equal(
+        resolveMacros('{{setvar::name::Bob}}{{#if {{getvar::name}} == "Bob"}}Hi Bob{{/if}}', context),
+        "Hi Bob",
+      );
+      assert.equal(resolveMacros("{{#if 1==1}}It is one{{else if 2==2}}It is two{{/if}}", context), "It is one");
+    },
+  },
+  {
+    name: "random range macros normalize reversed bounds and zero-sided dice",
+    run() {
+      const context = {
+        user: "Mari",
+        char: "Dottore",
+        characters: ["Dottore"],
+        variables: {},
+      };
+
+      for (let index = 0; index < 25; index += 1) {
+        const value = Number(resolveMacros("{{random:5:1}}", context));
+        assert.equal(Number.isInteger(value), true);
+        assert.equal(value >= 1 && value <= 5, true);
+      }
+      assert.equal(resolveMacros("{{roll:2d0}}", context), "0");
+    },
+  },
+  {
+    name: "random and roll macros can resolve stably per message seed",
+    run() {
+      const context = {
+        user: "Mari",
+        char: "Dottore",
+        characters: ["Dottore"],
+        variables: {},
+      };
+
+      const first = resolveMacros("{{roll:2d6}} {{random}} {{random::red::blue}}", context, {
+        randomSeed: "message-a",
+      });
+      const second = resolveMacros("{{roll:2d6}} {{random}} {{random::red::blue}}", context, {
+        randomSeed: "message-a",
+      });
+      const other = resolveMacros("{{roll:2d6}} {{random}} {{random::red::blue}}", context, {
+        randomSeed: "message-b",
+      });
+
+      assert.equal(first, second);
+      assert.notEqual(first, other);
+    },
+  },
+  {
+    name: "macro expansion caps stop runaway nested random output",
+    run() {
+      const context = {
+        user: "Mari",
+        char: "Dottore",
+        characters: ["Dottore"],
+        variables: {},
+      };
+
+      const result = resolveMacros("{{random::{{random::{{random::x::y}}::z}}::w}}", context, {
+        maxMacroDepth: 1,
+        maxMacroExpansions: 2,
+        maxMacroOutputLength: 16,
+      });
+
+      assert.equal(result.length <= 16, true);
+    },
+  },
+  {
+    name: "character field macros resolve nested macros",
+    run() {
+      const resolved = resolveMacros("Profile: {{description}}", {
+        user: "Mari",
+        char: "Dottore",
+        characters: ["Dottore"],
+        variables: {},
+        characterFields: {
+          description: "{{char}} keeps notes for {{user}}.",
+        },
+      });
+
+      assert.equal(resolved, "Profile: Dottore keeps notes for Mari.");
+    },
+  },
+  {
+    name: "regex safety accepts common patterns and rejects ambiguous quantified alternatives",
+    run() {
+      assert.equal(isPatternSafe(String.raw`\s{2,}`), true);
+      assert.equal(isPatternSafe(String.raw`\p{L}+`), true);
+      assert.equal(isPatternSafe("hello {name}"), true);
+      assert.equal(isPatternSafe("a{,5}"), true);
+      assert.equal(isPatternSafe("(a|a)+$"), false);
+      assert.equal(isPatternSafe("(a|ab)*c"), false);
+      assert.equal(isPatternSafe("a++"), false);
+    },
+  },
+  {
+    name: "regex replacement matches native named-group fallback and preserves literal backslashes",
+    run() {
+      assert.equal(applyRegexReplacement("John", /(?<first>\w+)/, "Hello $<frist>!"), "Hello !");
+      assert.equal(applyRegexReplacement("abc", /(?<g>b)/, "$<>"), "ac");
+      assert.equal(applyRegexReplacement("x", /x/, String.raw`C:\Users\bob`), String.raw`C:\Users\bob`);
+      assert.equal(applyRegexReplacement("bob", /(\w+)/, String.raw`\U$1\E`), "BOB");
+      assert.equal(applyRegexReplacement("bob", /(\w+)/, String.raw`\u$1`), "Bob");
+    },
+  },
+  {
+    name: "regex macro values are literal in find and inert in replace",
+    run() {
+      const resolveMacro = (value: string) => {
+        if (value === "{{user}}") return String.raw`A(B`;
+        if (value === "{{path}}") return String.raw`C:\Users\bob $&`;
+        if (value === "{{roll:1d6}}") return "4";
+        return value;
+      };
+
+      const pattern = resolveRegexPatternLiteralMacros(String.raw`\b{{user}}\b`, resolveMacro);
+      assert.equal(new RegExp(pattern).test("A(B"), true);
+      assert.equal(applyRegexReplacement("x x x", /x/g, "{{roll:1d6}}", resolveMacro), "4 4 4");
+      assert.equal(applyRegexReplacement("x", /x/, "{{path}}", resolveMacro), String.raw`C:\Users\bob $&`);
+    },
+  },
+  {
+    name: "regex schema rejects invalid flags and impossible depth ranges",
+    run() {
+      const base = {
+        name: "Fixture",
+        findRegex: "foo",
+        placement: ["ai_output"],
+      };
+
+      assert.equal(createRegexScriptSchema.safeParse({ ...base, flags: "gi" }).success, true);
+      assert.equal(createRegexScriptSchema.safeParse({ ...base, applyMode: "both" }).success, true);
+      assert.equal(createRegexScriptSchema.safeParse({ ...base, flags: "gg" }).success, false);
+      assert.equal(createRegexScriptSchema.safeParse({ ...base, minDepth: 5, maxDepth: 2 }).success, false);
+    },
+  },
+  {
+    name: "memory recall blocks resolve prompt macros",
+    run() {
+      const block = buildMemoryRecallBlock(["Narrator: {{char}} steadies {{user}} before the experiment."], (value) =>
+        resolveMacros(
+          value,
+          {
+            user: "Mari",
+            char: "Dottore",
+            characters: ["Dottore"],
+            variables: {},
+          },
+          { trimResult: false },
+        ),
+      );
+
+      assert.match(block, /Narrator: Dottore steadies Mari before the experiment\./);
+      assert.equal(block.includes("{{char}}"), false);
+      assert.equal(block.includes("{{user}}"), false);
+    },
+  },
+  {
+    name: "agent prompt templates resolve standard macros inside agents blocks",
+    run() {
+      const context: AgentContext = {
+        chatId: "chat-agent-macros",
+        chatMode: "game",
+        recentMessages: [{ role: "user", content: "Track the current party." }],
+        mainResponse: null,
+        gameState: null,
+        characters: [
+          {
+            id: "char-dottore",
+            name: "Dottore",
+            description: "A precise researcher.",
+            appearance: "Blue hair and a mask.",
+          },
+        ],
+        persona: {
+          name: "Mari",
+          description: "The player persona.",
+          appearance: "Red dress.",
+        },
+        memory: {},
+        activatedLorebookEntries: null,
+        writableLorebookIds: null,
+        chatSummary: null,
+      };
+
+      const rendered = renderAgentPromptTemplate(
+        "Do NOT include the player's {{user}}. Track {{char}} with {{tone}}. Latest: {{input}}",
+        { tone: "care" },
+        context,
+      );
+
+      assert.equal(
+        rendered,
+        "Do NOT include the player's Mari. Track Dottore with care. Latest: Track the current party.",
+      );
+    },
+  },
+  {
+    name: "danbooru illustration prompts preserve generated tags",
+    run() {
+      const compiled = compileImagePrompt({
+        kind: "illustration",
+        prompt: [
+          "military-straight posture",
+          "coiled whip-blade at hip",
+          "slight smirk",
+          "brass alchemy mask",
+          "violet laboratory haze",
+          "red rim light",
+          "silver surgical gloves",
+          "black marble floor reflection",
+          "torn manifesto pages",
+          "overhead cathedral machinery",
+        ].join(", "),
+        styleProfiles: createDefaultImageStyleProfileSettings(),
+        styleProfileId: "danbooru",
+      });
+
+      assert.match(compiled.prompt, /military-straight posture/);
+      assert.match(compiled.prompt, /coiled whip-blade at hip/);
+      assert.match(compiled.prompt, /overhead cathedral machinery/);
     },
   },
   {

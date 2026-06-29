@@ -312,6 +312,7 @@ export function App() {
   const rightPanel = useUIStore((s) => s.rightPanel);
   const settingsTab = useUIStore((s) => s.settingsTab);
   const appearanceSettingsActive = rightPanelOpen && rightPanel === "settings" && settingsTab === "appearance";
+  const pauseChromeEffectsForAppearance = appearanceSettingsActive && !appAccentRgbMode;
   const { data: syncedThemes = [] } = useThemes();
   const activeCustomTheme = useMemo(() => syncedThemes.find((themeItem) => themeItem.isActive) ?? null, [syncedThemes]);
   const themeAccentPulseConfig = useMemo(
@@ -393,7 +394,7 @@ export function App() {
   useEffect(() => {
     const root = document.documentElement;
     const syncEffectsPausedState = () => {
-      if (document.visibilityState === "visible" && document.hasFocus() && !appearanceSettingsActive) {
+      if (document.visibilityState === "visible" && document.hasFocus() && !pauseChromeEffectsForAppearance) {
         delete root.dataset.marinaraEffectsPaused;
       } else {
         root.dataset.marinaraEffectsPaused = "true";
@@ -415,7 +416,7 @@ export function App() {
       window.removeEventListener("pagehide", syncEffectsPausedState);
       delete root.dataset.marinaraEffectsPaused;
     };
-  }, [appearanceSettingsActive]);
+  }, [pauseChromeEffectsForAppearance]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -490,7 +491,7 @@ export function App() {
 
       accentAnimationTimer = window.setTimeout(() => {
         accentAnimationTimer = null;
-        if (!accentAnimationEnabled || !canRunAccentAnimation(reducedMotionQuery, appearanceSettingsActive)) {
+        if (!accentAnimationEnabled || !canRunAccentAnimation(reducedMotionQuery, pauseChromeEffectsForAppearance)) {
           stopAccentAnimation();
           return;
         }
@@ -508,7 +509,7 @@ export function App() {
     };
 
     const syncAccentAnimationState = () => {
-      if (accentAnimationEnabled && canRunAccentAnimation(reducedMotionQuery, appearanceSettingsActive)) {
+      if (accentAnimationEnabled && canRunAccentAnimation(reducedMotionQuery, pauseChromeEffectsForAppearance)) {
         startAccentAnimation();
       } else {
         stopAccentAnimation();
@@ -546,7 +547,7 @@ export function App() {
     appAccentColor,
     appAccentPulseMode,
     appAccentRgbMode,
-    appearanceSettingsActive,
+    pauseChromeEffectsForAppearance,
     theme,
     themeAccentPulseConfig.enabled,
     themeAccentPulseConfig.source,

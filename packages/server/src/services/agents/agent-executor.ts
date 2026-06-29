@@ -4,7 +4,14 @@
 import { existsSync, readdirSync, statSync, type Dirent } from "node:fs";
 import { basename, extname, join, relative, resolve } from "node:path";
 import type { BaseLLMProvider, ChatMessage, LLMToolDefinition, LLMToolCall, LLMUsage } from "../llm/base-provider.js";
-import type { AgentResult, AgentContext, AgentResultType, AgentCallDebugEvent, WrapFormat } from "@marinara-engine/shared";
+import type {
+  AgentResult,
+  AgentContext,
+  AgentResultType,
+  AgentCallDebugEvent,
+  MacroContext,
+  WrapFormat,
+} from "@marinara-engine/shared";
 import {
   compactQuestProgressForContext,
   DEFAULT_AGENT_CONTEXT_SIZE,
@@ -12,6 +19,7 @@ import {
   MIN_AGENT_MAX_TOKENS,
   normalizeCustomAgentCapabilities,
   getDefaultAgentPrompt,
+  resolveMacros,
 } from "@marinara-engine/shared";
 import { getMaxToolRounds, isDebugAgentsEnabled } from "../../config/runtime-config.js";
 import { logger } from "../../lib/logger.js";
@@ -146,6 +154,72 @@ function renderAgentSettingsMacros(
     const rendered = stringifyAgentSettingMacroValue(value);
     return options.escapeValues ? escapeXml(rendered) : rendered;
   });
+}
+
+function renderAgentMacroValue(value: string | null | undefined, options: { escapeValues?: boolean }): string {
+  const text = value ?? "";
+  return options.escapeValues ? escapeXml(text) : text;
+}
+
+export function buildAgentPromptMacroContext(
+  context: AgentContext,
+  options: { escapeValues?: boolean } = {},
+): MacroContext {
+  const characters = context.characters.map((character) => character.name.trim()).filter(Boolean);
+  const firstCharacter = context.characters[0] ?? null;
+  const latestUserMessage = findLatestUserMessage(context);
+  const value = (entry: string | null | undefined) => renderAgentMacroValue(entry, options);
+
+  return {
+    user: value(context.persona?.name?.trim() || "User"),
+    char: value(characters.join(", ") || "Assistant"),
+    characters: characters.map(value),
+    variables: {},
+    lastInput: latestUserMessage ? value(latestUserMessage.content) : "",
+    chatId: value(context.chatId),
+    characterProfiles: context.characters.map((character) => ({
+      name: value(character.name),
+      description: value(character.description),
+      personality: value(character.personality),
+      backstory: value(character.backstory),
+      appearance: value(character.appearance),
+      scenario: value(character.scenario),
+      example: value(character.mesExample),
+      systemPrompt: value(character.systemPrompt),
+      postHistoryInstructions: value(character.postHistoryInstructions),
+    })),
+    characterFields: firstCharacter
+      ? {
+          description: value(firstCharacter.description),
+          personality: value(firstCharacter.personality),
+          backstory: value(firstCharacter.backstory),
+          appearance: value(firstCharacter.appearance),
+          scenario: value(firstCharacter.scenario),
+          example: value(firstCharacter.mesExample),
+          systemPrompt: value(firstCharacter.systemPrompt),
+          postHistoryInstructions: value(firstCharacter.postHistoryInstructions),
+        }
+      : undefined,
+    personaFields: context.persona
+      ? {
+          description: value(context.persona.description),
+          personality: value(context.persona.personality),
+          backstory: value(context.persona.backstory),
+          appearance: value(context.persona.appearance),
+          scenario: value(context.persona.scenario),
+        }
+      : undefined,
+  };
+}
+
+export function renderAgentPromptTemplate(
+  template: string,
+  settings: Record<string, unknown>,
+  context: AgentContext,
+  options: { escapeValues?: boolean } = {},
+): string {
+  const withSettingMacros = renderAgentSettingsMacros(template, settings, options);
+  return resolveMacros(withSettingMacros, buildAgentPromptMacroContext(context, options), { trimResult: false });
 }
 
 export function normalizeAgentContextSize(value: unknown, fallback = DEFAULT_AGENT_CONTEXT_SIZE): number {
@@ -353,9 +427,10 @@ export async function executeAgent(
   const startTime = Date.now();
 
   try {
-    const template = renderAgentSettingsMacros(
+    const template = renderAgentPromptTemplate(
       config.promptTemplate || getDefaultPromptForAgent(config),
       config.settings,
+      context,
     );
     if (!template) {
       return makeError(config, "No prompt template configured", startTime);
@@ -935,9 +1010,10 @@ function buildBatchSystemPrompt(configs: AgentExecConfig[], context: AgentContex
   parts.push(`<agents>`);
   parts.push(`Fulfill each of the requested tasks here and return the outputs in the formats they're specified:`);
   for (const config of configs) {
-    const template = renderAgentSettingsMacros(
+    const template = renderAgentPromptTemplate(
       config.promptTemplate || getDefaultPromptForAgent(config),
       config.settings,
+      context,
       { escapeValues: true },
     );
     parts.push(``);

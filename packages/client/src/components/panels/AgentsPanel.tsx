@@ -19,6 +19,7 @@ import {
   FolderPlus,
   FolderOpen,
   ArrowUpDown,
+  GripVertical,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useUIStore, type ResourcePanelSort } from "../../stores/ui.store";
@@ -1235,6 +1236,22 @@ function renderAgentCard({
         >
           <Check size="0.75rem" />
         </div>
+      )}
+      {!selectionMode && (
+        <button
+          type="button"
+          aria-hidden="true"
+          tabIndex={-1}
+          title="Drag agent"
+          className="mari-chrome-accent-text-muted mari-accent-animated flex h-7 w-5 shrink-0 cursor-grab touch-none items-center justify-center rounded-md opacity-0 transition-all hover:bg-[var(--marinara-chat-chrome-highlight-bg)] hover:text-[var(--marinara-chat-chrome-button-text-hover)] active:cursor-grabbing active:scale-95 group-focus-within:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:hidden"
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        >
+          <GripVertical size="0.8125rem" />
+        </button>
       )}
       <button
         type="button"

@@ -1,7 +1,7 @@
 // ──────────────────────────────────────────────
 // Schema: Lorebooks, Folders & Entries
 // ──────────────────────────────────────────────
-import { sqliteTable, text, integer, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const lorebooks = sqliteTable("lorebooks", {
   id: text("id").primaryKey(),
@@ -15,6 +15,9 @@ export const lorebooks = sqliteTable("lorebooks", {
   recursiveScanning: text("recursive_scanning").notNull().default("false"),
   maxRecursionDepth: integer("max_recursion_depth").notNull().default(3),
   excludeFromVectorization: text("exclude_from_vectorization").notNull().default("true"),
+  vectorQueryDepth: integer("vector_query_depth").notNull().default(10),
+  vectorScoreThreshold: real("vector_score_threshold").notNull().default(0.3),
+  vectorMaxResults: integer("vector_max_results").notNull().default(10),
   characterId: text("character_id"),
   personaId: text("persona_id"),
   chatId: text("chat_id"),

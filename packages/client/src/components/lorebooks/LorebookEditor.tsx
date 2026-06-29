@@ -464,6 +464,11 @@ export function LorebookEditor() {
   const [formRecursive, setFormRecursive] = useState(false);
   const [formMaxRecursionDepth, setFormMaxRecursionDepth] = useState(3);
   const [formExcludeFromVectorization, setFormExcludeFromVectorization] = useState(false);
+  const [formVectorQueryDepth, setFormVectorQueryDepth] = useState<number>(LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_DEFAULT);
+  const [formVectorScoreThreshold, setFormVectorScoreThreshold] = useState<number>(
+    LIMITS.LOREBOOK_VECTOR_SCORE_THRESHOLD_DEFAULT,
+  );
+  const [formVectorMaxResults, setFormVectorMaxResults] = useState<number>(LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_DEFAULT);
   const [formCharacterIds, setFormCharacterIds] = useState<string[]>([]);
   const [formPersonaIds, setFormPersonaIds] = useState<string[]>([]);
   const [formTags, setFormTags] = useState<string[]>([]);
@@ -538,6 +543,9 @@ export function LorebookEditor() {
     setFormRecursive(lorebook.recursiveScanning);
     setFormMaxRecursionDepth(lorebook.maxRecursionDepth ?? 3);
     setFormExcludeFromVectorization(lorebook.excludeFromVectorization ?? false);
+    setFormVectorQueryDepth(lorebook.vectorQueryDepth ?? LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_DEFAULT);
+    setFormVectorScoreThreshold(lorebook.vectorScoreThreshold ?? LIMITS.LOREBOOK_VECTOR_SCORE_THRESHOLD_DEFAULT);
+    setFormVectorMaxResults(lorebook.vectorMaxResults ?? LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_DEFAULT);
     const characterSource =
       Array.isArray(lorebook.characterIds) && lorebook.characterIds.length > 0
         ? lorebook.characterIds
@@ -1310,6 +1318,9 @@ export function LorebookEditor() {
         recursiveScanning: formRecursive,
         maxRecursionDepth: formMaxRecursionDepth,
         excludeFromVectorization: formExcludeFromVectorization,
+        vectorQueryDepth: formVectorQueryDepth,
+        vectorScoreThreshold: formVectorScoreThreshold,
+        vectorMaxResults: formVectorMaxResults,
         characterIds: formIsGlobal ? [] : formCharacterIds,
         personaIds: formIsGlobal ? [] : formPersonaIds,
         tags: formTags,
@@ -1331,6 +1342,9 @@ export function LorebookEditor() {
     formRecursive,
     formMaxRecursionDepth,
     formExcludeFromVectorization,
+    formVectorQueryDepth,
+    formVectorScoreThreshold,
+    formVectorMaxResults,
     formCharacterIds,
     formPersonaIds,
     formTags,
@@ -2057,6 +2071,21 @@ export function LorebookEditor() {
                   lorebookId={lorebookId!}
                   entries={entries}
                   excludeFromVectorization={formExcludeFromVectorization}
+                  vectorQueryDepth={formVectorQueryDepth}
+                  vectorScoreThreshold={formVectorScoreThreshold}
+                  vectorMaxResults={formVectorMaxResults}
+                  onVectorQueryDepthChange={(value) => {
+                    setFormVectorQueryDepth(value);
+                    markLorebookDirty();
+                  }}
+                  onVectorScoreThresholdChange={(value) => {
+                    setFormVectorScoreThreshold(value);
+                    markLorebookDirty();
+                  }}
+                  onVectorMaxResultsChange={(value) => {
+                    setFormVectorMaxResults(value);
+                    markLorebookDirty();
+                  }}
                 />
               </div>
             )}
@@ -2519,10 +2548,22 @@ function VectorizeSection({
   lorebookId,
   entries,
   excludeFromVectorization,
+  vectorQueryDepth,
+  vectorScoreThreshold,
+  vectorMaxResults,
+  onVectorQueryDepthChange,
+  onVectorScoreThresholdChange,
+  onVectorMaxResultsChange,
 }: {
   lorebookId: string;
   entries: LorebookEntry[];
   excludeFromVectorization: boolean;
+  vectorQueryDepth: number;
+  vectorScoreThreshold: number;
+  vectorMaxResults: number;
+  onVectorQueryDepthChange: (value: number) => void;
+  onVectorScoreThresholdChange: (value: number) => void;
+  onVectorMaxResultsChange: (value: number) => void;
 }) {
   const queryClient = useQueryClient();
   const { data: rawConnections } = useConnections();
@@ -2685,6 +2726,67 @@ function VectorizeSection({
         {missingCount > 0 && <span>{missingCount} still need embeddings.</span>}
         {excludeFromVectorization ? <span>This lorebook excludes every entry.</span> : null}
         {!excludeFromVectorization && excludedCount > 0 && <span>{excludedCount} excluded.</span>}
+      </div>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <label className="space-y-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+          <span className="flex items-center gap-1">
+            Query Messages
+            <HelpTooltip text="How many recent chat messages to embed when searching this lorebook semantically. Use 0 to query against the full chat history." />
+          </span>
+          <input
+            type="number"
+            value={vectorQueryDepth}
+            onChange={(e) =>
+              onVectorQueryDepthChange(
+                Math.max(
+                  0,
+                  Math.min(LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_MAX, Number.parseInt(e.target.value, 10) || 0),
+                ),
+              )
+            }
+            min={0}
+            max={LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_MAX}
+            className="mari-editor-field h-9 w-full px-2.5 py-1.5 text-xs"
+          />
+        </label>
+        <label className="space-y-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+          <span className="flex items-center gap-1">
+            Score Threshold
+            <HelpTooltip text="Minimum semantic similarity required before a vectorized entry activates. Higher values are stricter." />
+          </span>
+          <input
+            type="number"
+            value={vectorScoreThreshold}
+            onChange={(e) =>
+              onVectorScoreThresholdChange(Math.max(0, Math.min(1, Number.parseFloat(e.target.value) || 0)))
+            }
+            min={0}
+            max={1}
+            step={0.01}
+            className="mari-editor-field h-9 w-full px-2.5 py-1.5 text-xs"
+          />
+        </label>
+        <label className="space-y-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+          <span className="flex items-center gap-1">
+            Vector Limit
+            <HelpTooltip text="Maximum number of semantic/vector entries this lorebook can add to one generation before normal token budgets are applied." />
+          </span>
+          <input
+            type="number"
+            value={vectorMaxResults}
+            onChange={(e) =>
+              onVectorMaxResultsChange(
+                Math.max(
+                  LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_MIN,
+                  Math.min(LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_MAX, Number.parseInt(e.target.value, 10) || 0),
+                ),
+              )
+            }
+            min={LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_MIN}
+            max={LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_MAX}
+            className="mari-editor-field h-9 w-full px-2.5 py-1.5 text-xs"
+          />
+        </label>
       </div>
       {excludeFromVectorization ? (
         <p className="text-[0.625rem] text-[var(--muted-foreground)]">

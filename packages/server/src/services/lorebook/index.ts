@@ -32,7 +32,13 @@ export interface LorebookScanResult {
   totalEntries: number;
   totalTokensEstimate: number;
   activatedEntryIds: string[];
-  activatedEntries: Array<{ id: string; content: string; matchedKeys: string[] }>;
+  activatedEntries: Array<{
+    id: string;
+    content: string;
+    matchedKeys: string[];
+    matchType: LorebookMatchType;
+    semanticScore?: number;
+  }>;
   budgetSkippedEntries: LorebookBudgetSkippedEntry[];
   /** Updated per-chat entry state overrides (ephemeral countdown). Caller should persist to chat metadata. */
   updatedEntryStateOverrides?: Record<string, { ephemeral?: number | null; enabled?: boolean }>;
@@ -41,6 +47,7 @@ export interface LorebookScanResult {
 }
 
 export type LorebookBudgetSkipReason = "lorebook" | "chat" | "both";
+export type LorebookMatchType = "keyword" | "semantic" | "constant" | "sticky";
 
 export interface LorebookBudgetSkippedEntry {
   id: string;
@@ -48,6 +55,8 @@ export interface LorebookBudgetSkippedEntry {
   lorebookId: string;
   lorebookName: string;
   matchedKeys: string[];
+  matchType: LorebookMatchType;
+  semanticScore?: number;
   estimatedTokens: number;
   lorebookBudget: number;
   lorebookUsedTokens: number;
@@ -75,6 +84,8 @@ type RelevantLorebook = Pick<
   | "entryLimit"
   | "recursiveScanning"
   | "maxRecursionDepth"
+  | "vectorScoreThreshold"
+  | "vectorMaxResults"
   | "isGlobal"
   | "characterId"
   | "characterIds"
@@ -480,6 +491,35 @@ function normalizeLorebookEntryLimit(value: unknown): number {
   );
 }
 
+function normalizeLorebookVectorScoreThreshold(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return LIMITS.LOREBOOK_VECTOR_SCORE_THRESHOLD_DEFAULT;
+  return Math.max(0, Math.min(1, parsed));
+}
+
+function normalizeLorebookVectorMaxResults(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_DEFAULT;
+  return Math.max(
+    LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_MIN,
+    Math.min(LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_MAX, Math.trunc(parsed)),
+  );
+}
+
+function readSemanticScore(matchedKeys: string[]): number | undefined {
+  const semanticKey = matchedKeys.find((key) => key.startsWith("[semantic:"));
+  if (!semanticKey) return undefined;
+  const score = Number(semanticKey.match(/^\[semantic:([0-9.]+)\]$/)?.[1]);
+  return Number.isFinite(score) ? score : undefined;
+}
+
+function getLorebookMatchType(matchedKeys: string[]): LorebookMatchType {
+  if (matchedKeys.some((key) => key.startsWith("[semantic:"))) return "semantic";
+  if (matchedKeys.includes("[constant]")) return "constant";
+  if (matchedKeys.includes("[sticky]")) return "sticky";
+  return "keyword";
+}
+
 function trySelectBudgetedLorebookEntry(
   candidate: ActivatedEntry,
   state: LorebookBudgetSelectionState,
@@ -537,12 +577,15 @@ function toBudgetSkippedEntries(
     const { entry } = skippedEntry.entry;
     if (seen.has(entry.id)) continue;
     seen.add(entry.id);
+    const semanticScore = readSemanticScore(skippedEntry.entry.matchedKeys);
     diagnostics.push({
       id: entry.id,
       name: entry.name,
       lorebookId: entry.lorebookId,
       lorebookName: lorebooksById.get(entry.lorebookId)?.name ?? "Unknown lorebook",
       matchedKeys: skippedEntry.entry.matchedKeys,
+      matchType: getLorebookMatchType(skippedEntry.entry.matchedKeys),
+      ...(semanticScore !== undefined ? { semanticScore } : {}),
       estimatedTokens: skippedEntry.estimatedTokens,
       lorebookBudget: skippedEntry.lorebookBudget,
       lorebookUsedTokens: skippedEntry.lorebookUsedTokens,
@@ -812,6 +855,8 @@ export async function processLorebooks(
     enableRecursive?: boolean;
     /** Pre-computed embedding of the chat context for semantic matching. */
     chatEmbedding?: number[] | null;
+    /** Per-lorebook pre-computed embeddings for semantic matching. */
+    semanticEmbeddingsByLorebookId?: ReadonlyMap<string, number[] | null>;
     /** Cosine similarity threshold for semantic matching (0-1, default 0.3). */
     semanticThreshold?: number;
     /** Per-chat entry state overrides (from chat metadata). When provided, ephemeral
@@ -916,6 +961,13 @@ export async function processLorebooks(
     gameState: gameState ?? null,
     chatEmbedding: options?.chatEmbedding ?? null,
     semanticThreshold: options?.semanticThreshold,
+    semanticEmbeddingsByLorebookId: options?.semanticEmbeddingsByLorebookId,
+    semanticThresholdByLorebookId: new Map(
+      relevantLorebooks.map((book) => [book.id, normalizeLorebookVectorScoreThreshold(book.vectorScoreThreshold)]),
+    ),
+    semanticMaxMatchesByLorebookId: new Map(
+      relevantLorebooks.map((book) => [book.id, normalizeLorebookVectorMaxResults(book.vectorMaxResults)]),
+    ),
     activeCharacterIds: matchingContext.activeCharacterIds,
     activeCharacterTags: matchingContext.activeCharacterTags,
     generationTriggers: options?.generationTriggers ?? ["chat"],
@@ -1012,17 +1064,24 @@ export async function processLorebooks(
   return {
     ...result,
     activatedEntryIds: finalActivated.map((a) => a.entry.id),
-    activatedEntries: finalActivated.map((a) => ({
-      id: a.entry.id,
-      content: a.entry.content,
-      matchedKeys: a.matchedKeys,
-    })),
+    activatedEntries: finalActivated.map((a) => {
+      const semanticScore = readSemanticScore(a.matchedKeys);
+      return {
+        id: a.entry.id,
+        content: a.entry.content,
+        matchedKeys: a.matchedKeys,
+        matchType: getLorebookMatchType(a.matchedKeys),
+        ...(semanticScore !== undefined ? { semanticScore } : {}),
+      };
+    }),
     budgetSkippedEntries: budgetResult.budgetSkippedEntries.map((entry) => ({
       id: entry.id,
       name: entry.name,
       lorebookId: entry.lorebookId,
       lorebookName: entry.lorebookName,
       matchedKeys: entry.matchedKeys,
+      matchType: entry.matchType,
+      ...(entry.semanticScore !== undefined ? { semanticScore: entry.semanticScore } : {}),
       estimatedTokens: entry.estimatedTokens,
       lorebookBudget: entry.lorebookBudget,
       lorebookUsedTokens: entry.lorebookUsedTokens,

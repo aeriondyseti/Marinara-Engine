@@ -82,7 +82,7 @@ const PROFESSOR_MARI_ERROR_TOAST_DURATION_MS = 120_000;
 const PROFESSOR_MARI_NO_CONNECTION_TOAST =
   "You haven't set up a connection yet! Click the chains icon on the left side of the input box to select one.";
 const MARI_WELCOME =
-  "Howdy, welcome to Marinara Engine!\n\nFeeling a little lost? It is not a skill issue yet, I am here to help! Ask me about the app, your setup, or what to do next.\n\nNeed something made or changed? I can create character cards, personas, lorebooks, chats, and presets, and I can make local workspace changes with your approval.";
+  "Howdy, welcome to Marinara Engine!\n\nFeeling a little lost? It is not a skill issue yet, I am here to help! Ask me about the app, your setup, or what to do next.\n\nNeed something made or changed? I can create character cards, personas, lorebooks, chats, and presets, and I can make reversible local workspace changes with a Keep/Restore review.";
 const NEW_SKILL_CONTENT = `# Custom Professor Mari Skill
 
 Use this skill when the request matches a workflow you want Professor Mari to follow.
@@ -1308,24 +1308,27 @@ function WorkspaceErrorEvent({ message }: { message: string }) {
 
 function WorkspaceApprovalCard({
   approval,
-  onApprove,
-  onReject,
+  onKeep,
+  onRestore,
 }: {
   approval: MariDbPendingApproval;
-  onApprove: (id: string) => void;
-  onReject: (id: string) => void;
+  onKeep: (id: string) => void;
+  onRestore: (id: string) => void;
 }) {
   const deletedRows = approval.diffPreview.filter((change) => change.action === "delete");
 
   return (
-    <TranscriptRow marker={<ShieldAlert size="0.85rem" className="mt-1 text-amber-400" />}>
-      <div className="rounded-xl border border-amber-400/25 bg-amber-400/5 p-3 text-xs text-[var(--foreground)]">
+    <TranscriptRow marker={<ShieldAlert size="0.85rem" className="mt-1 text-[var(--primary)]" />}>
+      <div className="rounded-xl border border-[var(--primary)]/30 bg-[var(--primary)]/5 p-3 text-xs text-[var(--foreground)]">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="font-semibold">Approve database change</span>
-          <span className="rounded-full bg-amber-400/10 px-1.5 py-0.5 text-[0.625rem] text-amber-300">
-            {approval.validationStatus}
+          <span className="font-semibold">Review Mari&apos;s changes</span>
+          <span className="rounded-full bg-[var(--primary)]/10 px-1.5 py-0.5 text-[0.625rem] text-[var(--primary)]">
+            saved
           </span>
         </div>
+        <p className="mt-1 text-[0.6875rem] text-[var(--muted-foreground)]">
+          Mari already applied this. Keep it, or restore the previous app data snapshot.
+        </p>
         <pre className="mt-2 max-h-24 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-[var(--background)]/80 p-2 font-mono text-[0.6875rem] text-[var(--muted-foreground)]">
           {approval.command}
         </pre>
@@ -1341,10 +1344,10 @@ function WorkspaceApprovalCard({
           <div className="mt-2 rounded-lg border border-[var(--destructive)]/30 bg-[var(--destructive)]/10 p-2 text-[0.6875rem] text-[var(--foreground)]">
             <div className="flex items-center gap-1.5 font-semibold text-[var(--destructive)]">
               <Trash2 size="0.75rem" />
-              Mari is about to delete {deletedRows.length} item{deletedRows.length === 1 ? "" : "s"}.
+              Mari deleted {deletedRows.length} item{deletedRows.length === 1 ? "" : "s"}.
             </div>
             <p className="mt-1 text-[var(--muted-foreground)]">
-              A restore copy is written to the approval journal before the delete is applied.
+              Restore will put the saved row snapshot back.
             </p>
             <div className="mt-2 space-y-2">
               {deletedRows.slice(0, 3).map((change) => (
@@ -1368,17 +1371,23 @@ function WorkspaceApprovalCard({
         <div className="mt-2 flex justify-end gap-1.5">
           <button
             type="button"
-            onClick={() => onReject(approval.id)}
+            onClick={() => onRestore(approval.id)}
             className="rounded-md border border-[var(--border)] px-2.5 py-1 text-[0.6875rem] font-semibold text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
           >
-            Reject
+            <span className="inline-flex items-center gap-1">
+              <RefreshCw size="0.7rem" />
+              Restore
+            </span>
           </button>
           <button
             type="button"
-            onClick={() => onApprove(approval.id)}
+            onClick={() => onKeep(approval.id)}
             className="rounded-md bg-[var(--primary)] px-2.5 py-1 text-[0.6875rem] font-semibold text-[var(--primary-foreground)] transition-opacity hover:opacity-90"
           >
-            Approve
+            <span className="inline-flex items-center gap-1">
+              <Check size="0.7rem" />
+              Keep
+            </span>
           </button>
         </div>
       </div>
@@ -1921,19 +1930,20 @@ export function HomeProfessorMariChat({
     });
   }, [selectedSkill]);
 
-  const pendingApprovals = workspaceStatus?.pendingApprovals ?? [];
-  const pendingApprovalKey = pendingApprovals.map((approval) => approval.id).join("|");
+  const pendingChangeReviews = workspaceStatus?.pendingApprovals ?? [];
+  const workspaceTimelineActive = workspaceActive || hasActiveGeneration;
+  const workspaceHasResponseText = workspaceTimeline.some((item) => item.type === "text" && item.content.trim());
+  const showDottoreSupport = workspaceTimelineActive && !workspaceHasResponseText;
+  const visiblePendingChangeReviews = !sending && !workspaceTimelineActive ? pendingChangeReviews : [];
+  const visiblePendingChangeReviewKey = visiblePendingChangeReviews.map((approval) => approval.id).join("|");
 
   useEffect(() => {
     const node = scrollRef.current;
     if (!node) return;
     node.scrollTop = node.scrollHeight;
-  }, [messages, workspaceTimeline, workspaceActivity, pendingApprovalKey, workspaceStatus?.error]);
+  }, [messages, workspaceTimeline, workspaceActivity, visiblePendingChangeReviewKey, workspaceStatus?.error]);
 
   const displayMessages = useMemo(() => [createWelcomeMessage(chatId), ...messages], [chatId, messages]);
-  const workspaceTimelineActive = workspaceActive || hasActiveGeneration;
-  const workspaceHasResponseText = workspaceTimeline.some((item) => item.type === "text" && item.content.trim());
-  const showDottoreSupport = workspaceTimelineActive && !workspaceHasResponseText;
 
   useEffect(() => {
     if (!mobileFocusMode) return;
@@ -2174,52 +2184,41 @@ export function HomeProfessorMariChat({
     }
   }, [handleRestart, isBusy]);
 
-  const approveWorkspaceChange = useCallback(
+  const keepWorkspaceChange = useCallback(
     async (id: string) => {
       try {
         const result = await api.post<WorkspaceApprovalResponse>(`/professor-mari/workspace/approvals/${id}/approve`);
         await refreshWorkspaceStatus().catch(() => undefined);
-        if (result.history?.status === "approved") {
-          await invalidateWorkspaceData();
-          const deletedCount = result.approval?.diffPreview.filter((change) => change.action === "delete").length ?? 0;
-          if (deletedCount > 0) {
-            toast.success(
-              `Mari deleted ${deletedCount} item${deletedCount === 1 ? "" : "s"}. A restore copy was saved to the approval journal.`,
-              { duration: 20_000 },
-            );
-          } else {
-            toast.success("Workspace change applied. App data refreshed.");
-          }
-        } else if (result.completed === false) {
-          window.setTimeout(() => {
-            void invalidateWorkspaceData();
-          }, 1500);
-        }
+        if (result.history?.status === "kept") toast.success("Kept Mari's workspace change.");
       } catch (error) {
-        console.error("[Professor Mari] Failed to approve workspace change", error);
-        toast.error("Professor Mari could not apply that workspace change.", {
-          description: describeProfessorMariError(error),
-          duration: 12_000,
-        });
-      }
-    },
-    [invalidateWorkspaceData, refreshWorkspaceStatus],
-  );
-
-  const rejectWorkspaceChange = useCallback(
-    async (id: string) => {
-      try {
-        await api.post(`/professor-mari/workspace/approvals/${id}/reject`);
-        await refreshWorkspaceStatus().catch(() => undefined);
-      } catch (error) {
-        console.error("[Professor Mari] Failed to reject workspace change", error);
-        toast.error("Professor Mari could not reject that workspace change.", {
+        console.error("[Professor Mari] Failed to keep workspace change", error);
+        toast.error("Professor Mari could not keep that workspace change.", {
           description: describeProfessorMariError(error),
           duration: 12_000,
         });
       }
     },
     [refreshWorkspaceStatus],
+  );
+
+  const restoreWorkspaceChange = useCallback(
+    async (id: string) => {
+      try {
+        const result = await api.post<WorkspaceApprovalResponse>(`/professor-mari/workspace/approvals/${id}/reject`);
+        await refreshWorkspaceStatus().catch(() => undefined);
+        if (result.history?.status === "restored") {
+          await invalidateWorkspaceData();
+          toast.success("Restored the previous app data snapshot.");
+        }
+      } catch (error) {
+        console.error("[Professor Mari] Failed to restore workspace change", error);
+        toast.error("Professor Mari could not restore that workspace change.", {
+          description: describeProfessorMariError(error),
+          duration: 12_000,
+        });
+      }
+    },
+    [invalidateWorkspaceData, refreshWorkspaceStatus],
   );
 
   const stopWorkspace = useCallback(async () => {
@@ -2588,12 +2587,12 @@ export function HomeProfessorMariChat({
             )}
             <WorkspaceTimelineList items={workspaceTimeline} active={workspaceTimelineActive} openReasoning />
             {workspaceStatus?.error && <WorkspaceErrorEvent message={workspaceStatus.error} />}
-            {pendingApprovals.map((approval) => (
+            {visiblePendingChangeReviews.map((approval) => (
               <WorkspaceApprovalCard
                 key={approval.id}
                 approval={approval}
-                onApprove={(id) => void approveWorkspaceChange(id)}
-                onReject={(id) => void rejectWorkspaceChange(id)}
+                onKeep={(id) => void keepWorkspaceChange(id)}
+                onRestore={(id) => void restoreWorkspaceChange(id)}
               />
             ))}
           </>
@@ -3049,7 +3048,6 @@ export function HomeProfessorMariChat({
                             className={cn(
                               "inline-flex h-8 items-center gap-1 rounded-md px-2 text-[0.6875rem] font-semibold transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50",
                               "mari-chrome-accent-text-muted mari-accent-animated hover:text-[var(--marinara-chat-chrome-button-text-hover)]",
-                              chatHistoryOpen && "bg-[var(--marinara-chat-chrome-highlight-bg)]",
                             )}
                             title="Open previous Professor Mari chats"
                             aria-expanded={chatHistoryOpen}
@@ -3137,12 +3135,12 @@ export function HomeProfessorMariChat({
                               openReasoning
                             />
                             {workspaceStatus?.error && <WorkspaceErrorEvent message={workspaceStatus.error} />}
-                            {pendingApprovals.map((approval) => (
+                            {visiblePendingChangeReviews.map((approval) => (
                               <WorkspaceApprovalCard
                                 key={approval.id}
                                 approval={approval}
-                                onApprove={(id) => void approveWorkspaceChange(id)}
-                                onReject={(id) => void rejectWorkspaceChange(id)}
+                                onKeep={(id) => void keepWorkspaceChange(id)}
+                                onRestore={(id) => void restoreWorkspaceChange(id)}
                               />
                             ))}
                           </>

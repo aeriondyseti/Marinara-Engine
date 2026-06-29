@@ -41,8 +41,8 @@ export function compileImagePrompt(input: CompileImagePromptInput): CompiledImag
   const negativePromptPrefix = imageNegativePromptPrefixFromDefaults(input.imageDefaults);
   const taggedPromptMode = promptMode === "tagged" || promptMode === "danbooru";
   const preserveGeneratedPrompt =
-    !taggedPromptMode && (input.kind === "illustration" || input.kind === "background" || input.kind === "selfie");
-  const compactTags = taggedPromptMode;
+    input.kind === "illustration" || input.kind === "background" || input.kind === "selfie";
+  const compactTags = !preserveGeneratedPrompt && taggedPromptMode;
   const compactVisualPrompt =
     profile.baseStyle !== "z_image_turbo" && ["avatar", "portrait", "sprite"].includes(input.kind);
   const compactPrompt = compactTags || compactVisualPrompt;

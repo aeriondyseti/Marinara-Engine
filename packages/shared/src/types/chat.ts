@@ -87,6 +87,8 @@ export interface Chat {
   folderId: string | null;
   /** Manual sort order within a folder (lower = higher). 0 = use default updatedAt sort. */
   sortOrder: number;
+  /** Timestamp of the newest saved message; null until the chat has messages. */
+  lastMessageAt?: string | null;
   createdAt: string;
   updatedAt: string;
   metadata: ChatMetadata;

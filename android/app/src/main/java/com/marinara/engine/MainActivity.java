@@ -21,6 +21,7 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -197,6 +198,8 @@ public class MainActivity extends Activity {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
         settings.setUserAgentString(settings.getUserAgentString() + " MarinaraEngine/Android");
+
+        webView.addJavascriptInterface(new MarinaraAndroidBridge(), "MarinaraAndroid");
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
@@ -630,14 +633,40 @@ public class MainActivity extends Activity {
         openUri(TERMUX_DOWNLOAD_PAGE);
     }
 
-    private void openTermux() {
+    private boolean openTermux() {
         Intent launchIntent = getPackageManager().getLaunchIntentForPackage(TERMUX_PACKAGE);
         if (launchIntent != null) {
             try {
                 startActivity(launchIntent);
+                return true;
             } catch (ActivityNotFoundException ignored) {
                 // The status text already explains the next step.
             }
+        }
+        return false;
+    }
+
+    private class MarinaraAndroidBridge {
+        @JavascriptInterface
+        public void openConsole() {
+            runOnUiThread(() -> {
+                if (!isTermuxInstalled()) {
+                    Toast.makeText(
+                            MainActivity.this,
+                            "Termux is not installed yet. Use Install / Start Marinara first.",
+                            Toast.LENGTH_LONG
+                    ).show();
+                    return;
+                }
+
+                if (!openTermux()) {
+                    Toast.makeText(
+                            MainActivity.this,
+                            "Android could not open Termux. Open Termux from your launcher to view logs.",
+                            Toast.LENGTH_LONG
+                    ).show();
+                }
+            });
         }
     }
 

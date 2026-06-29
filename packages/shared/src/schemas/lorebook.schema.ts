@@ -80,6 +80,23 @@ export const createLorebookSchema = z.object({
   recursiveScanning: z.boolean().default(false),
   maxRecursionDepth: z.number().int().min(1).max(10).default(3),
   excludeFromVectorization: z.boolean().default(true),
+  vectorQueryDepth: z
+    .number()
+    .int()
+    .min(0)
+    .max(LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_MAX)
+    .default(LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_DEFAULT),
+  vectorScoreThreshold: z
+    .number()
+    .min(0)
+    .max(1)
+    .default(LIMITS.LOREBOOK_VECTOR_SCORE_THRESHOLD_DEFAULT),
+  vectorMaxResults: z
+    .number()
+    .int()
+    .min(LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_MIN)
+    .max(LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_MAX)
+    .default(LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_DEFAULT),
   characterId: z.string().nullable().default(null),
   characterIds: z.array(z.string()).default([]),
   personaId: z.string().nullable().default(null),
@@ -110,6 +127,14 @@ export const updateLorebookSchema = z
     recursiveScanning: z.boolean().optional(),
     maxRecursionDepth: z.number().int().min(1).max(10).optional(),
     excludeFromVectorization: z.boolean().optional(),
+    vectorQueryDepth: z.number().int().min(0).max(LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_MAX).optional(),
+    vectorScoreThreshold: z.number().min(0).max(1).optional(),
+    vectorMaxResults: z
+      .number()
+      .int()
+      .min(LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_MIN)
+      .max(LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_MAX)
+      .optional(),
     characterId: z.string().nullable().optional(),
     characterIds: z.array(z.string()).optional(),
     personaId: z.string().nullable().optional(),

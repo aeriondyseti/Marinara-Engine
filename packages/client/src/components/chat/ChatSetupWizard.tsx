@@ -30,8 +30,9 @@ import { useChatPresets, useApplyChatPreset } from "../../hooks/use-chat-presets
 import { useAgentConfigs, useCreateAgent, useUpdateAgent, type AgentConfigRow } from "../../hooks/use-agents";
 import { useUIStore } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
+import { useSidecarStore } from "../../stores/sidecar.store";
 import { api } from "../../lib/api-client";
-import { filterLanguageGenerationConnections } from "../../lib/connection-filters";
+import { appendLocalSidecarConnectionOption } from "../../lib/connection-filters";
 import { getAgentRunIntervalMeta } from "../../lib/agent-cadence";
 import { getCharacterTitle, parseCharacterDisplayData } from "../../lib/character-display";
 import { addSilentGreetingSwipes } from "../../lib/message-swipes";
@@ -621,6 +622,8 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
   const currentStep = CONVERSATION_STEPS[step]!;
   const isLast = step === CONVERSATION_STEPS.length - 1;
   const { data: connections } = useConnections();
+  const sidecarModelDownloaded = useSidecarStore((state) => state.modelDownloaded);
+  const sidecarModelDisplayName = useSidecarStore((state) => state.modelDisplayName);
   const { data: presets } = usePresets();
   const { data: defaultPreset } = useDefaultPreset();
   const [selectedPromptPresetId, setSelectedPromptPresetId] = useState<string | null>(chat.promptPresetId ?? null);
@@ -682,8 +685,13 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
     Partial<Record<ConversationCommandKey, boolean>>
   >(() => readConversationCommandToggles(metadata.conversationCommandToggles));
   const connectionOptions = useMemo(
-    () => filterLanguageGenerationConnections((connections ?? []) as ConnectionSetupOption[]),
-    [connections],
+    () =>
+      appendLocalSidecarConnectionOption(
+        (connections ?? []) as ConnectionSetupOption[],
+        sidecarModelDownloaded,
+        sidecarModelDisplayName,
+      ),
+    [connections, sidecarModelDisplayName, sidecarModelDownloaded],
   );
   const selectedConnection = useMemo(
     () => connectionOptions.find((connection) => connection.id === selectedConnectionId) ?? null,
@@ -1311,6 +1319,8 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
   const { data: presetFull, isLoading: presetFullLoading } = usePresetFull(chat.promptPresetId ?? null);
 
   const { data: connections } = useConnections();
+  const sidecarModelDownloaded = useSidecarStore((state) => state.modelDownloaded);
+  const sidecarModelDisplayName = useSidecarStore((state) => state.modelDisplayName);
   const { data: presets } = usePresets();
   const { data: defaultPreset } = useDefaultPreset();
   const { data: allPersonas } = usePersonas();
@@ -1344,8 +1354,13 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
     [allCharacters],
   );
   const connectionOptions = useMemo(
-    () => filterLanguageGenerationConnections((connections ?? []) as ConnectionSetupOption[]),
-    [connections],
+    () =>
+      appendLocalSidecarConnectionOption(
+        (connections ?? []) as ConnectionSetupOption[],
+        sidecarModelDownloaded,
+        sidecarModelDisplayName,
+      ),
+    [connections, sidecarModelDisplayName, sidecarModelDownloaded],
   );
   const selectedConnection = useMemo(
     () => connectionOptions.find((connection) => connection.id === chat.connectionId) ?? null,

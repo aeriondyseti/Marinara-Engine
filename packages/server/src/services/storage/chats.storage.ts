@@ -158,6 +158,10 @@ function serializeJsonField(value: unknown, fallback: Record<string, unknown>) {
   return typeof value === "string" ? value : JSON.stringify(value);
 }
 
+function isUsableTimestamp(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0 && !Number.isNaN(Date.parse(value));
+}
+
 function parseMessageCursor(before?: string): { createdAt: string; rowid: number } | null {
   if (!before) return null;
   const separatorIndex = before.indexOf("|");
@@ -193,6 +197,9 @@ async function invalidateMemoryChunksFrom(db: DB, chatId: string, createdAt: str
 
 /** Create the chat storage facade used by routes and importers. */
 export function createChatsStorage(db: DB) {
+  let chatLastMessageAtBackfilled = false;
+  let chatLastMessageAtBackfillPromise: Promise<void> | null = null;
+
   async function hasGameDeletePayload(chatId: string): Promise<boolean> {
     const existingMessage = await db
       .select({ id: messages.id })
@@ -267,6 +274,58 @@ export function createChatsStorage(db: DB) {
     }
   }
 
+  async function readLatestMessageAt(chatId: string): Promise<string | null> {
+    const rows = await db
+      .select({ createdAt: messages.createdAt })
+      .from(messages)
+      .where(eq(messages.chatId, chatId))
+      .orderBy(desc(messages.createdAt))
+      .limit(1);
+    return rows[0]?.createdAt ?? null;
+  }
+
+  async function refreshChatLastMessageAt(chatId: string): Promise<string | null> {
+    const lastMessageAt = await readLatestMessageAt(chatId);
+    await db.update(chats).set({ lastMessageAt }).where(eq(chats.id, chatId));
+    return lastMessageAt;
+  }
+
+  async function ensureChatLastMessageAtBackfilled() {
+    if (chatLastMessageAtBackfilled) return;
+    chatLastMessageAtBackfillPromise ??= (async () => {
+      const chatRows = await db.select({ id: chats.id, lastMessageAt: chats.lastMessageAt }).from(chats);
+      const missingChatIds = new Set(
+        chatRows
+          .filter((chat) => !isUsableTimestamp(chat.lastMessageAt))
+          .map((chat) => chat.id)
+          .filter((id): id is string => typeof id === "string" && id.length > 0),
+      );
+      if (missingChatIds.size === 0) {
+        chatLastMessageAtBackfilled = true;
+        return;
+      }
+
+      const latestByChat = new Map<string, string>();
+      const messageRows = await db
+        .select({ chatId: messages.chatId, createdAt: messages.createdAt })
+        .from(messages)
+        .orderBy(desc(messages.createdAt));
+      for (const row of messageRows) {
+        if (!missingChatIds.has(row.chatId) || latestByChat.has(row.chatId)) continue;
+        latestByChat.set(row.chatId, row.createdAt);
+        if (latestByChat.size === missingChatIds.size) break;
+      }
+
+      for (const [chatId, lastMessageAt] of latestByChat) {
+        await db.update(chats).set({ lastMessageAt }).where(eq(chats.id, chatId));
+      }
+      chatLastMessageAtBackfilled = true;
+    })().finally(() => {
+      chatLastMessageAtBackfillPromise = null;
+    });
+    await chatLastMessageAtBackfillPromise;
+  }
+
   async function collectFreshConversationSchedules(
     characterIds: string[],
     excludeChatId?: string,
@@ -294,6 +353,7 @@ export function createChatsStorage(db: DB) {
 
   return {
     async list() {
+      await ensureChatLastMessageAtBackfilled();
       return db.select().from(chats).orderBy(desc(chats.updatedAt));
     },
 
@@ -331,6 +391,7 @@ export function createChatsStorage(db: DB) {
         promptPresetId: input.promptPresetId,
         connectionId: input.connectionId,
         metadata: JSON.stringify(metadata),
+        lastMessageAt: null,
         createdAt: timestamp.createdAt,
         updatedAt: timestamp.updatedAt,
       });
@@ -357,11 +418,15 @@ export function createChatsStorage(db: DB) {
 
       const nextSchedules: CharacterSchedules = { ...currentSchedules, ...sharedSchedules };
       const scheduleWeekStart = firstScheduleWeekStart(nextSchedules);
-      await this.patchMetadata(id, {
-        conversationSchedulesEnabled: true,
-        characterSchedules: nextSchedules,
-        ...(scheduleWeekStart ? { scheduleWeekStart } : {}),
-      });
+      await this.patchMetadata(
+        id,
+        {
+          conversationSchedulesEnabled: true,
+          characterSchedules: nextSchedules,
+          ...(scheduleWeekStart ? { scheduleWeekStart } : {}),
+        },
+        { touchUpdatedAt: false },
+      );
 
       return nextSchedules;
     },
@@ -428,7 +493,12 @@ export function createChatsStorage(db: DB) {
 
     /** List all chats belonging to a group. */
     async listByGroup(groupId: string) {
-      return db.select().from(chats).where(eq(chats.groupId, groupId)).orderBy(desc(chats.updatedAt));
+      await ensureChatLastMessageAtBackfilled();
+      return db
+        .select()
+        .from(chats)
+        .where(eq(chats.groupId, groupId))
+        .orderBy(desc(chats.updatedAt));
     },
 
     async canDeleteChat(id: string, options: { force?: boolean } = {}): Promise<ChatDeleteGuardResult> {
@@ -734,8 +804,7 @@ export function createChatsStorage(db: DB) {
         extra: JSON.stringify({}),
         createdAt: timestamp,
       });
-      // Update chat's updatedAt
-      await db.update(chats).set({ updatedAt: timestamp }).where(eq(chats.id, input.chatId));
+      await db.update(chats).set({ lastMessageAt: timestamp, updatedAt: timestamp }).where(eq(chats.id, input.chatId));
       return this.getMessage(id);
     },
 
@@ -837,7 +906,7 @@ export function createChatsStorage(db: DB) {
       for (let i = 0; i < swipeRows.length; i += CHUNK) {
         await db.insert(messageSwipes).values(swipeRows.slice(i, i + CHUNK));
       }
-      await db.update(chats).set({ updatedAt: lastTimestamp }).where(eq(chats.id, chatId));
+      await db.update(chats).set({ lastMessageAt: lastTimestamp, updatedAt: lastTimestamp }).where(eq(chats.id, chatId));
     },
 
     async updateMessageContent(id: string, content: string) {
@@ -982,6 +1051,7 @@ export function createChatsStorage(db: DB) {
       await db.delete(messages).where(eq(messages.id, id));
       if (existing) {
         await invalidateMemoryChunksFrom(db, existing.chatId, existing.createdAt);
+        await refreshChatLastMessageAt(existing.chatId);
       }
     },
 
@@ -1007,6 +1077,7 @@ export function createChatsStorage(db: DB) {
       }
       for (const [affectedChatId, createdAt] of earliestByChat) {
         await invalidateMemoryChunksFrom(db, affectedChatId, createdAt);
+        await refreshChatLastMessageAt(affectedChatId);
       }
     },
 

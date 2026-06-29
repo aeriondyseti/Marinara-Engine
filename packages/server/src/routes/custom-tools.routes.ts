@@ -2,7 +2,7 @@
 // Routes: Custom Tools
 // ──────────────────────────────────────────────
 import type { FastifyInstance } from "fastify";
-import { createCustomToolSchema, updateCustomToolSchema } from "@marinara-engine/shared";
+import { createCustomToolSchema, reorderCustomToolsSchema, updateCustomToolSchema } from "@marinara-engine/shared";
 import { createCustomToolsStorage } from "../services/storage/custom-tools.storage.js";
 import { requirePrivilegedAccess } from "../middleware/privileged-gate.js";
 import { isCustomToolScriptEnabled } from "../config/runtime-config.js";
@@ -19,6 +19,12 @@ export async function customToolsRoutes(app: FastifyInstance) {
 
   app.get("/capabilities", async () => {
     return { scriptExecutionEnabled: isCustomToolScriptEnabled() };
+  });
+
+  app.put("/reorder", async (req, reply) => {
+    if (!requirePrivilegedAccess(req, reply, { feature: "Custom tool reorder" })) return;
+    const input = reorderCustomToolsSchema.parse(req.body);
+    return storage.reorder(input.toolIds);
   });
 
   app.get<{ Params: { id: string } }>("/:id", async (req, reply) => {

@@ -51,6 +51,7 @@ import { sendSseEvent, startSseReply } from "./sse.js";
 import {
   appendReadableAttachmentsToContent,
   appendNonLeadingSystemMessagesToLastUser,
+  createLocalSidecarGenerationConnection,
   dedupeLastMessageWrappers,
   extractFileAttachmentInputs,
   extractImageAttachmentDataUrls,
@@ -555,7 +556,12 @@ export async function registerDryRunRoute(app: FastifyInstance) {
     }
 
     if (!connId) return reply.status(400).send({ error: "No API connection configured for this chat" });
-    let conn = await connections.getWithKey(connId);
+    const resolveDryRunConnection = async (connectionId: string) =>
+      connectionId === LOCAL_SIDECAR_CONNECTION_ID
+        ? createLocalSidecarGenerationConnection()
+        : await connections.getWithKey(connectionId);
+
+    let conn = await resolveDryRunConnection(connId);
     if (!conn && impersonateConnectionOverride && connId === impersonateConnectionOverride && fallbackConnectionId) {
       logger.warn(
         "[dryRun] Impersonate connection override %s was not found; falling back to chat/request connection",
@@ -568,7 +574,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
         const picked = pool[Math.floor(Math.random() * pool.length)];
         connId = picked.id;
       }
-      conn = connId ? await connections.getWithKey(connId) : null;
+      conn = connId ? await resolveDryRunConnection(connId) : null;
     }
     if (!conn) return reply.status(400).send({ error: "API connection not found" });
 
@@ -715,6 +721,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
           ? { providerMetadata: { geminiParts: extra.geminiParts } }
           : {};
       return {
+        id: typeof m.id === "string" ? m.id : null,
         role: m.role === "narrator" ? ("system" as const) : (m.role as "user" | "assistant" | "system"),
         content: appendReadableAttachmentsToContent((m.content as string) ?? "", attachments),
         contextKind: "history" as const,
@@ -870,7 +877,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
 
     // Apply regex scripts to prompt messages (mirrors main /generate, but stays read-only).
     applyRegexScriptsToPromptMessages(mappedMessages, await regexScriptsStore.list(), {
-      resolveMacros: (value) => resolveMacros(value, promptMacroContext, { trimResult: false }),
+      resolveMacros: (value, randomSeed) => resolveMacros(value, promptMacroContext, { trimResult: false, randomSeed }),
       targetCharacterId: promptTargetCharacterId,
     });
 

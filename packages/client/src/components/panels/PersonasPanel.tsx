@@ -1025,7 +1025,7 @@ export function PersonasPanel() {
                     to the rounded-xl shape). The wrapper can't be the button itself
                     because the active-indicator star and the camera-hover overlay live
                     outside the avatar bounds via negative offsets / absolute inset-0. */}
-                <div className="relative h-full w-full overflow-hidden rounded-xl">
+                <div className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-xl">
                   {persona.avatarPath ? (
                     <img
                       src={persona.avatarPath}

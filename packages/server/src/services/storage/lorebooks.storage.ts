@@ -32,6 +32,27 @@ function normalizeLorebookEntryLimit(value: unknown): number {
   );
 }
 
+function normalizeLorebookVectorQueryDepth(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_DEFAULT;
+  return Math.max(0, Math.min(LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_MAX, Math.trunc(parsed)));
+}
+
+function normalizeLorebookVectorScoreThreshold(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return LIMITS.LOREBOOK_VECTOR_SCORE_THRESHOLD_DEFAULT;
+  return Math.max(0, Math.min(1, parsed));
+}
+
+function normalizeLorebookVectorMaxResults(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_DEFAULT;
+  return Math.max(
+    LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_MIN,
+    Math.min(LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_MAX, Math.trunc(parsed)),
+  );
+}
+
 function resolveTimestamps(overrides?: TimestampOverrides | null) {
   const normalized = normalizeTimestampOverrides(overrides);
   const createdAt = normalized?.createdAt ?? now();
@@ -120,6 +141,9 @@ function parseLorebookRow(row: Record<string, unknown>) {
     entryLimit: normalizeLorebookEntryLimit(row.entryLimit),
     maxRecursionDepth: typeof row.maxRecursionDepth === "number" ? row.maxRecursionDepth : 3,
     excludeFromVectorization: row.excludeFromVectorization === "true",
+    vectorQueryDepth: normalizeLorebookVectorQueryDepth(row.vectorQueryDepth),
+    vectorScoreThreshold: normalizeLorebookVectorScoreThreshold(row.vectorScoreThreshold),
+    vectorMaxResults: normalizeLorebookVectorMaxResults(row.vectorMaxResults),
     isGlobal: row.isGlobal === "true",
     enabled: row.enabled === "true",
     scope: parseLorebookScope(row.scope),
@@ -315,6 +339,9 @@ export function createLorebooksStorage(db: DB) {
           recursiveScanning: String(input.recursiveScanning ?? false),
           maxRecursionDepth: input.maxRecursionDepth ?? 3,
           excludeFromVectorization: String(input.excludeFromVectorization ?? true),
+          vectorQueryDepth: normalizeLorebookVectorQueryDepth(input.vectorQueryDepth),
+          vectorScoreThreshold: normalizeLorebookVectorScoreThreshold(input.vectorScoreThreshold),
+          vectorMaxResults: normalizeLorebookVectorMaxResults(input.vectorMaxResults),
           characterId: characterIds[0] ?? null,
           personaId: personaIds[0] ?? null,
           chatId: input.chatId ?? null,
@@ -345,6 +372,12 @@ export function createLorebooksStorage(db: DB) {
       if (input.maxRecursionDepth !== undefined) updates.maxRecursionDepth = input.maxRecursionDepth;
       if (input.excludeFromVectorization !== undefined)
         updates.excludeFromVectorization = String(input.excludeFromVectorization);
+      if (input.vectorQueryDepth !== undefined)
+        updates.vectorQueryDepth = normalizeLorebookVectorQueryDepth(input.vectorQueryDepth);
+      if (input.vectorScoreThreshold !== undefined)
+        updates.vectorScoreThreshold = normalizeLorebookVectorScoreThreshold(input.vectorScoreThreshold);
+      if (input.vectorMaxResults !== undefined)
+        updates.vectorMaxResults = normalizeLorebookVectorMaxResults(input.vectorMaxResults);
       const shouldUpdateCharacterLinks = input.characterIds !== undefined || input.characterId !== undefined;
       const shouldUpdatePersonaLinks = input.personaIds !== undefined || input.personaId !== undefined;
       const current = shouldUpdateCharacterLinks || shouldUpdatePersonaLinks ? ((await this.getById(id)) as any) : null;

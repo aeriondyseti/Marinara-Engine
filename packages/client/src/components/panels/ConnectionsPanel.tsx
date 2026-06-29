@@ -41,6 +41,7 @@ import {
   Download,
   Search,
   ArrowUpDown,
+  AlertTriangle,
   Shuffle,
   ExternalLink,
   X,
@@ -268,6 +269,16 @@ function SidecarCard() {
             {expanded ? <ChevronUp size="0.875rem" /> : <ChevronDown size="0.875rem" />}
           </button>
         </div>
+      </div>
+      <div className="mt-2.5 rounded-lg border border-[var(--warning)]/30 bg-[var(--warning)]/10 p-2.5">
+        <div className="flex items-center gap-2 text-xs font-semibold text-[var(--warning)]">
+          <AlertTriangle size="0.875rem" className="shrink-0" />
+          Local Model is not for roleplay
+        </div>
+        <p className="mt-1 text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+          The bundled Local Model is intentionally small. Use it for tracker agents, scene analysis, and lightweight
+          background tasks only.
+        </p>
       </div>
       {/* Local model actions (only when model is downloaded) */}
       {expanded && (

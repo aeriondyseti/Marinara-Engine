@@ -436,7 +436,8 @@ export const ChatInput = memo(function ChatInput({
   const lastMessageRole = lastMessage?.role ?? null;
 
   const canRetry = !isStreaming && lastMessageRole === "user";
-  const canContinue = false;
+  const canContinue =
+    !isStreaming && mode === "roleplay" && groupResponseOrder !== "manual" && lastMessageRole === "assistant";
   const pendingAttachmentReads = activeChatId ? (pendingAttachmentReadsByChat[activeChatId] ?? 0) : 0;
   const isReadingAttachments = pendingAttachmentReads > 0;
   const hasPendingAttachments = isReadingAttachments || attachments.length > 0;
@@ -627,8 +628,9 @@ export const ChatInput = memo(function ChatInput({
       const cached = qc.getQueryData<InfiniteData<Message[]>>(chatKeys.messages(activeChatId));
       const firstPage = cached?.pages?.[0];
       const lastMsg = firstPage?.[firstPage.length - 1];
-      if (lastMsg?.role === "user") {
-        // Retry from the last visible user turn. Continuing an assistant turn is explicit via /continue.
+      if (lastMsg?.role === "user" || (mode === "roleplay" && lastMsg?.role === "assistant")) {
+        // User-tail retries and assistant-tail empty sends both create a new reply.
+        // Appending onto the previous assistant message remains explicit via /continue.
         try {
           await generateWithNarrativeDirector({
             chatId: activeChatId,
@@ -785,6 +787,7 @@ export const ChatInput = memo(function ChatInput({
     }
   }, [
     activeChatId,
+    mode,
     isStreaming,
     generateWithNarrativeDirector,
     applyToUserInput,
@@ -1572,7 +1575,7 @@ export const ChatInput = memo(function ChatInput({
         {showQuickRepliesMenu && quickReplyActions.length > 0 && (
           <QuickReplyMenu
             actions={quickReplyActions}
-            disabled={!activeChatId || isReadingAttachments || (!hasInput && attachments.length === 0)}
+            disabled={!activeChatId || isReadingAttachments}
           />
         )}
 

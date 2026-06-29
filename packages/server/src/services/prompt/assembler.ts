@@ -164,6 +164,8 @@ export interface AssemblerInput {
   disableLorebooks?: boolean;
   /** Pre-computed embedding of chat context for semantic lorebook matching. */
   chatEmbedding?: number[] | null;
+  /** Per-lorebook pre-computed embeddings for semantic lorebook matching. */
+  semanticEmbeddingsByLorebookId?: ReadonlyMap<string, number[] | null>;
   /** Per-chat ephemeral state overrides for lorebook entries (from chat metadata). */
   entryStateOverrides?: Record<string, { ephemeral?: number | null; enabled?: boolean }>;
   /** Per-chat sticky/cooldown/delay timing state for lorebook entries. */
@@ -320,6 +322,7 @@ export async function assemblePrompt(input: AssemblerInput): Promise<AssemblerOu
     excludedLorebookSourceAgentIds: input.excludedLorebookSourceAgentIds ?? [],
     disableLorebooks: input.disableLorebooks === true,
     chatEmbedding: input.chatEmbedding ?? null,
+    semanticEmbeddingsByLorebookId: input.semanticEmbeddingsByLorebookId,
     entryStateOverrides: input.entryStateOverrides,
     entryTimingStates: input.entryTimingStates,
     lorebookTokenBudget: input.lorebookTokenBudget,

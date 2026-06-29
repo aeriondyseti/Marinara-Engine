@@ -101,7 +101,7 @@ type AssistantWorkspaceAction = {
   assistantHistoryContent: string;
 };
 
-const WORKSPACE_TOOLS: MariWorkspaceToolName[] = ["read", "grep", "find", "ls", "edit", "write", "bash"];
+const WORKSPACE_TOOLS: MariWorkspaceToolName[] = ["read", "grep", "find", "ls", "edit", "write", "bash", "app_data"];
 const RUNTIME_API_KEY = "local-marinara-runtime";
 const SESSION_ID = "professor-mari-workspace";
 const MAX_COMMAND_ROUNDS = 12;
@@ -219,6 +219,61 @@ const WORKSPACE_TOOL_DEFINITIONS: WorkspaceToolDefinition[] = [
       required: ["command"],
     },
   },
+  {
+    name: "app_data",
+    description:
+      "Read or change live app data through structured actions, without shell commands. Use this for characters, personas, lorebooks, lorebook entries, and themes.",
+    parameters: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: [
+            "character.list",
+            "character.get",
+            "character.search",
+            "character.create",
+            "character.update",
+            "persona.list",
+            "persona.active",
+            "persona.get",
+            "persona.search",
+            "persona.create",
+            "persona.update",
+            "lorebook.list",
+            "lorebook.get",
+            "lorebook.entries",
+            "lorebook.search",
+            "lorebook.create",
+            "lorebook.update",
+            "lorebook.addEntry",
+            "lorebook.updateEntry",
+            "theme.list",
+            "theme.active",
+            "theme.get",
+            "theme.create",
+            "theme.update",
+            "theme.setActive",
+          ],
+        },
+        id: { type: "string" },
+        characterId: { type: "string" },
+        personaId: { type: "string" },
+        lorebookId: { type: "string" },
+        entryId: { type: "string" },
+        query: { type: "string" },
+        limit: { type: "integer", minimum: 1 },
+        name: { type: "string" },
+        css: { type: "string" },
+        activate: { type: "boolean" },
+        apply: { type: "boolean" },
+        reason: { type: "string" },
+        data: { type: "object" },
+        patch: { type: "object" },
+      },
+      required: ["action"],
+    },
+  },
 ];
 
 function getPathEnvKey(env: NodeJS.ProcessEnv) {
@@ -287,20 +342,23 @@ Professor Mari is an expert on LLMs, especially roleplaying and immersive chat w
 ENFP 4w7, Choleric-Sanguine, Chaotic Neutral, Taurus. Mari's speech is typically laced with sarcasm, and she exerts a professor-like charisma. Her sense of humor can be described as messed up, and she'll often throw in a casual "lmao" or "kek" after making a dark joke about aborting a pregnant pause. Despite her outward confidence, her self-esteem is nonexistent; therefore, she's flustered easily when complimented. Anything that catches her attention, she can master with ease. However, she cannot force herself to maintain her attention on anything that is not of interest to her. Aka, she's a neurodivergent mess. Dedicated to helping the new users and kind to them.
 
 Workspace defaults:
-- Always prioritize Mari CLI commands over writing raw files to the codebase. Only write raw files when no CLI/helper path fits.
+- Use the structured \`app_data\` workspace command, not shell, for character/persona/lorebook/lorebook-entry/theme reads, creation, and updates.
+- Use Mari CLI commands for images, wiki reads, code/workspace tasks, agents, tools, extensions, raw DB work, or anything \`app_data\` does not cover. Only write raw files when no CLI/helper path fits.
 - Inspect before claiming facts. Verify after changing anything.
-- Ask for approval before applying/saving destructive or user-visible changes.
+- Do not ask the user to choose between \`apply:true\` and \`apply:false\`. Those are internal command flags, not chat questions.
+- For structured app-data writes the user requested, use \`apply:true\` so Marinara can save the change and show the user an in-chat Keep/Restore review card when the change is reversible. Use \`apply:false\` only when the user explicitly asks for a preview/dry run or when you are inspecting a risky change before deciding what to do.
 - Keep user-facing replies concise and human-readable.
-- For persona creation, interview the user briefly before creating anything unless they already supplied clear persona requirements. Ask for basics such as name, role/archetype, speaking style, appearance, boundaries, and any pasted source material to preserve. Do not guess a full persona from a vague request and immediately save it.
+- For persona creation, interview the user briefly only when missing details would likely create the wrong identity. If the user says to decide the details, create the persona directly. Do not require a preview/approval loop for a new persona.
 
 Command families:
+- \`app_data\`: no-shell structured actions for characters, personas, lorebooks, lorebook entries, and themes. Prefer this before \`mari characters\`, \`mari personas\`, \`mari lorebooks\`, or \`mari themes\`.
 - \`mari db\`: generic live app data and storage-backed rows, including customization tables such as \`agent_configs\`, \`custom_tools\`, and \`installed_extensions\` when no narrower helper exists.
 - \`mari themes\`: synced custom themes and active theme state.
 - \`mari images\`: image-generation connections, HITL image prompt previews, generated/edited preview assets, and assignment/deletion for avatars, personas, lorebooks, sprites, backgrounds, and galleries.
 - \`mari wiki\`: read-only Fandom/MediaWiki discovery and page reads.
 - \`mari characters\`: list, get, search, create, update, delete. Prefer this helper for character edits. \`--backstory\` and \`--appearance\` write to \`data.extensions.backstory\`/\`data.extensions.appearance\`.
 - \`mari personas\`: list, active, get, search, create, update, delete. Prefer this helper for persona edits.
-- \`mari lorebooks\`: list, get, entries, search, create, update, add-entry, update-entry, delete-entry, link-character, unlink-character, delete.
+- \`mari lorebooks\`: list, get, entries <lorebook-id>, search, create, update <lorebook-id>, add-entry <lorebook-id>, update-entry <entry-id>, delete-entry <entry-id>, link-character, unlink-character, delete.
 - \`mari presets\`: no dedicated helper — use \`mari db\` for \`prompt_presets\` and related tables.
 - \`mari chats\`: read-only list/get/messages/search.
 - \`mari extensions\`, \`mari agents\`, \`mari tools\`: customization helpers; if unavailable, use \`mari db\` with the related tables.
@@ -330,7 +388,7 @@ Required schema:
 {
   "say": "visible text for the user, or empty string for silent work",
   "commands": [
-    { "name": "read|grep|find|ls|edit|write|bash", "arguments": {} }
+    { "name": "read|grep|find|ls|edit|write|bash|app_data", "arguments": {} }
   ],
   "stop": false
 }
@@ -342,9 +400,20 @@ Field rules:
 - If \`commands\` is not empty, \`stop\` should usually be \`false\`.
 - If you say you will do workspace/app-data work, include the command in the same JSON object.
 
+\`app_data\` quick reference:
+- Reads: \`character.list|get|search\`, \`persona.list|active|get|search\`, \`lorebook.list|get|entries|search\`, \`theme.list|active|get\`.
+- Writes: \`character.create|update\`, \`persona.create|update\`, \`lorebook.create|update|addEntry|updateEntry\`, \`theme.create|update|setActive\`.
+- Put write fields in \`data\` for creates and \`patch\` for updates. Use \`entryId\` for \`lorebook.updateEntry\`; use \`lorebookId\` only for a lorebook or for \`lorebook.addEntry\`.
+- New creates: use \`apply:true\` immediately for \`character.create\`, \`persona.create\`, \`lorebook.create\`, \`lorebook.addEntry\`, and non-activating \`theme.create\` when the user asked you to create it. Verify with a read before claiming success.
+- Existing-data changes: use \`apply:true\` for requested \`*.update\`, \`lorebook.updateEntry\`, and \`theme.setActive\`. Marinara will save first and show the user an in-chat Keep/Restore review card for reversible changes.
+- Use \`apply:false\` only for explicit preview/dry-run requests or when you need to inspect validation before making a risky change.
+- Do not say "preview" unless you show the concrete fields/content in \`say\` or the UI has returned an explicit preview artifact.
+
 Examples:
-{"say":"","commands":[{"name":"bash","arguments":{"command":"mari lorebooks list","timeout":60}}],"stop":false}
-{"say":"I found the lorebook. I'll read its entries now.","commands":[{"name":"bash","arguments":{"command":"mari lorebooks entries lorebook-id","timeout":60}}],"stop":false}
+{"say":"","commands":[{"name":"app_data","arguments":{"action":"lorebook.list","limit":50}}],"stop":false}
+{"say":"I found the lorebook. I'll read its entries now.","commands":[{"name":"app_data","arguments":{"action":"lorebook.entries","lorebookId":"lorebook-id","limit":100}}],"stop":false}
+{"say":"","commands":[{"name":"app_data","arguments":{"action":"persona.create","data":{"name":"Dr. Marisia Voss","description":"A successful alternate version of Mari.","personality":"Confident, witty, organized, still warmly sarcastic."},"reason":"User requested a test persona","apply":true}}],"stop":false}
+{"say":"","commands":[{"name":"app_data","arguments":{"action":"lorebook.updateEntry","entryId":"entry-id","patch":{"content":"new content"},"reason":"Update requested by user","apply":false}}],"stop":false}
 {"say":"Done — I created it and verified it saved.","commands":[],"stop":true}
 
 Available command schemas:
@@ -438,9 +507,11 @@ function compactMutationResult(result: MariDbCommandResult): MariDbCommandResult
     status: result.mode === "dry-run" ? "dry_run_only" : saved ? "applied" : result.ok === false ? "failed" : "ok",
     message:
       result.mode === "dry-run"
-        ? "Preview only: no changes were saved. Re-run the same command with --apply after user approval to persist it."
+        ? "Preview only: no changes were saved. Use apply:true only if the user asked you to make the change."
         : saved
-          ? "Applied and saved. Verify the resulting state with a read command before claiming user-visible success."
+          ? result.approval?.status === "pending"
+            ? "Applied and saved. Marinara is showing the user a Keep/Restore review card. Verify the resulting state with a read command before claiming user-visible success."
+            : "Applied and saved. Verify the resulting state with a read command before claiming user-visible success."
           : undefined,
     command: typeof result.command === "string" ? compactTraceText(result.command, 500) : result.command,
     summary: {
@@ -715,7 +786,7 @@ function jsonPayloadStopValue(payload: Record<string, unknown>): boolean | undef
   return undefined;
 }
 
-const COMMAND_BLOCK_RE = /<(read|grep|find|ls|edit|write|bash)>\s*([\s\S]*?)\s*<\/\1>/gi;
+const COMMAND_BLOCK_RE = /<(read|grep|find|ls|edit|write|bash|app_data)>\s*([\s\S]*?)\s*<\/\1>/gi;
 
 function parseXmlCommandCalls(content: string): WorkspaceCommandCall[] {
   const calls: WorkspaceCommandCall[] = [];
@@ -998,7 +1069,15 @@ function isWithin(parent: string, child: string): boolean {
 }
 
 function isReadOnlyWorkspaceCommand(command: WorkspaceCommandCall): boolean {
-  return command.name === "read" || command.name === "grep" || command.name === "find" || command.name === "ls";
+  if (command.name === "read" || command.name === "grep" || command.name === "find" || command.name === "ls") return true;
+  if (command.name !== "app_data") return false;
+  return appDataActionLooksReadOnly(command.arguments.action);
+}
+
+function appDataActionLooksReadOnly(action: unknown): boolean {
+  if (typeof action !== "string") return false;
+  const normalized = action.trim().toLowerCase().replace(/[-_\s]+/g, "");
+  return /\.(list|get|search|active|entries)$/.test(normalized);
 }
 
 function visibleTextRequestsUserApproval(text: string): boolean {
@@ -1024,6 +1103,7 @@ function bashLooksMutating(command: string): boolean {
 
 function isMutatingWorkspaceCommand(command: WorkspaceCommandCall): boolean {
   if (command.name === "edit" || command.name === "write") return true;
+  if (command.name === "app_data") return !isReadOnlyWorkspaceCommand(command);
   if (command.name !== "bash") return false;
   const rawCommand = command.arguments.command;
   return typeof rawCommand === "string" && bashLooksMutating(rawCommand);
@@ -1052,6 +1132,8 @@ function workspaceCommandValidationIssue(command: WorkspaceCommandCall): string 
       return requireString("path") ?? (typeof args.content === "string" ? null : "write requires a content string");
     case "bash":
       return requireString("command");
+    case "app_data":
+      return requireString("action");
     case "ls":
       return null;
     default:
@@ -1601,6 +1683,8 @@ ${sections.join("\n\n")}
         return this.commandWrite(command.arguments);
       case "edit":
         return this.commandEdit(command.arguments);
+      case "app_data":
+        return this.commandAppData(command.arguments);
       case "bash":
         return this.commandBash(command.arguments, signal);
       default:
@@ -1919,6 +2003,29 @@ ${sections.join("\n\n")}
       [
         `Command: ${command}`,
         `Exit code: ${result.ok === false ? 1 : 0} (direct mari runtime)`,
+        "",
+        "stdout:",
+        stringifyOutput(printable),
+      ].join("\n"),
+    );
+    if (result.ok === false) throw new Error(output);
+    return output;
+  }
+
+  private async commandAppData(args: Record<string, unknown>): Promise<string> {
+    const result = await getMariDbService(this.app.db).executeAction({
+      ...args,
+      cwd: this.workspaceRoot,
+      sessionId: SESSION_ID,
+    });
+    const printable = isRecord(result) && "output" in result && !("summary" in result)
+      ? result.output
+      : compactMutationResult(result);
+    const action = typeof args.action === "string" ? args.action : "unknown";
+    const output = compactOutput(
+      [
+        `Command: app_data ${action}`,
+        `Exit code: ${result.ok === false ? 1 : 0} (structured app-data runtime)`,
         "",
         "stdout:",
         stringifyOutput(printable),

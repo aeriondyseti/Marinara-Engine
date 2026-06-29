@@ -8,6 +8,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  AlertTriangle,
   BrainCircuit,
   Check,
   ChevronDown,
@@ -500,6 +501,19 @@ export function ModelDownloadModal({ open, onClose }: Props) {
                 : "Set up the runtime first, then choose either a curated Gemma preset or any GGUF from HuggingFace. Runtime device selection lives inside Runtime Settings."}
             </p>
           </div>
+        </div>
+
+        <div className="rounded-xl border border-[var(--warning)]/30 bg-[var(--warning)]/10 p-3">
+          <div className="flex items-center gap-2 text-sm font-semibold text-[var(--warning)]">
+            <AlertTriangle size="0.95rem" className="shrink-0" />
+            Local Model is for helpers, not main roleplay
+          </div>
+          <p className="mt-1.5 text-xs leading-relaxed text-[var(--muted-foreground)]">
+            The bundled model is deliberately small so it can handle tracker agents, scene analysis, and lightweight
+            background chores without stealing main-model tokens. It is not intended for main chat, roleplay, Game
+            Master narration, or Professor Mari creation/editing. Use a stronger local or API language connection for
+            those.
+          </p>
         </div>
 
         {hasModel && (

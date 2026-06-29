@@ -4,7 +4,7 @@
 import type { GenerationParameters } from "../types/prompt.js";
 
 /** App version — single source of truth. */
-export const APP_VERSION = "2.0.6";
+export const APP_VERSION = "2.0.7";
 
 /** Stable synthetic connection id for the built-in local llama sidecar. */
 export const LOCAL_SIDECAR_CONNECTION_ID = "__local_sidecar__";
@@ -78,6 +78,18 @@ export const LIMITS = {
   SUMMARY_INTERVAL: 50,
   /** Default vectorization: top-K results */
   VECTOR_TOP_K: 10,
+  /** Default recent-message window used to build lorebook vector queries. 0 means all messages. */
+  LOREBOOK_VECTOR_QUERY_DEPTH_DEFAULT: 10,
+  /** Maximum recent-message window for lorebook vector queries. */
+  LOREBOOK_VECTOR_QUERY_DEPTH_MAX: 100,
+  /** Default minimum cosine similarity for lorebook vector matches. */
+  LOREBOOK_VECTOR_SCORE_THRESHOLD_DEFAULT: 0.3,
+  /** Default maximum semantic/vector matches a single lorebook may contribute per generation. */
+  LOREBOOK_VECTOR_MAX_RESULTS_DEFAULT: 10,
+  /** Minimum maximum semantic/vector matches per lorebook. */
+  LOREBOOK_VECTOR_MAX_RESULTS_MIN: 1,
+  /** Maximum maximum semantic/vector matches per lorebook. */
+  LOREBOOK_VECTOR_MAX_RESULTS_MAX: 100,
   /** Echo Chamber: messages per generation */
   ECHO_CHAMBER_MESSAGES: 5,
 } as const;

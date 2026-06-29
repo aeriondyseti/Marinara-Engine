@@ -1414,7 +1414,8 @@ export function GameNarration({
         primaryCharacter: resolveMacroCharacter(speaker),
         characters: macroCharacters,
       };
-      const resolveMacrosForText = createMessageMacroResolver(macroContext);
+      const macroRandomSeed = `${sourceMessageId ?? "game-segment"}:${text}`;
+      const resolveMacrosForText = createMessageMacroResolver(macroContext, { randomSeed: macroRandomSeed });
       const regexApplied = applyOutputRegexForSource(text, sourceMessageId, sourceRole, resolveMacrosForText);
       return formatTextQuotes(resolveMacrosForText(regexApplied), quoteFormat);
     },

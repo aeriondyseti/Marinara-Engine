@@ -44,6 +44,7 @@ export interface CharacterMacroData {
 }
 
 export type PromptMacroMessage = {
+  id?: string | null;
   content: string;
   characterId?: string | null;
 };
@@ -309,6 +310,7 @@ export function resolvePromptMessageMacros<T extends PromptMacroMessage>(
       {
         trimResult: false,
         ...options,
+        randomSeed: message.id ? `${message.id}:${message.content}` : options.randomSeed,
       },
     );
     return content === message.content ? message : { ...message, content };

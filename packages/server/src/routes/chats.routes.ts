@@ -839,7 +839,7 @@ export async function chatsRoutes(app: FastifyInstance) {
           legacySummary: typeof freshMeta.summary === "string" ? freshMeta.summary : null,
         });
         const now = new Date().toISOString();
-        let nextEntries = currentEntries;
+        let nextEntries: ChatSummaryEntry[];
 
         if (incoming.hideSummarisedMessages) {
           const tail = resolveRoleplaySummaryTail(freshMeta.summaryTailMessages);
@@ -2057,8 +2057,10 @@ export async function chatsRoutes(app: FastifyInstance) {
           }
 
           const mappedMessages = filteredMessages.map((m: any) => ({
+            id: typeof m.id === "string" ? m.id : null,
             role: m.role === "narrator" ? "system" : m.role,
             content: m.content as string,
+            characterId: typeof m.characterId === "string" && m.characterId ? m.characterId : null,
           }));
 
           // Strip trailing assistant messages — peek should show only what we SEND to the model
@@ -2135,7 +2137,7 @@ export async function chatsRoutes(app: FastifyInstance) {
           // Apply regex scripts to prompt context (mirrors generate.routes.ts).
           const regexStore = createRegexScriptsStorage(app.db);
           applyRegexScriptsToPromptMessages(mappedMessages, await regexStore.list(), {
-            resolveMacros: (value) => resolveMacros(value, promptMacroContext, { trimResult: false }),
+            resolveMacros: (value, randomSeed) => resolveMacros(value, promptMacroContext, { trimResult: false, randomSeed }),
           });
           promptMacroContext.lastInput = [...mappedMessages]
             .reverse()
@@ -2526,8 +2528,10 @@ export async function chatsRoutes(app: FastifyInstance) {
 
     // ── Last resort: return raw chat messages ──
     const mappedMessages = chatMessages.map((m: any) => ({
+      id: typeof m.id === "string" ? m.id : null,
       role: m.role === "narrator" ? "system" : m.role,
       content: m.content as string,
+      characterId: typeof m.characterId === "string" && m.characterId ? m.characterId : null,
     }));
     while (mappedMessages.length > 0 && mappedMessages[mappedMessages.length - 1]!.role === "assistant") {
       mappedMessages.pop();

@@ -12,7 +12,6 @@ import {
   Hash,
   Download,
   Loader2,
-  ChevronLeft,
   ChevronDown,
   X,
   CheckCircle,
@@ -1953,10 +1952,13 @@ export function BotBrowserView() {
       <div className="relative flex h-12 flex-shrink-0 items-center gap-3 bg-[var(--card)]/80 px-4 backdrop-blur-sm">
         <div className="absolute inset-x-0 bottom-0 h-px bg-[var(--border)]/30" />
         <button
+          type="button"
           onClick={closeBotBrowser}
-          className="mari-chrome-control mari-chrome-control--small px-2 py-1.5 text-xs"
+          className="mari-editor-action inline-flex shrink-0"
+          title="Back"
+          aria-label="Back"
         >
-          <ArrowLeft size="0.875rem" /> Back
+          <ArrowLeft size="1.125rem" />
         </button>
         <h2 className="mari-chrome-text-strong text-sm font-semibold">Browser</h2>
         <div className="relative ml-2">
@@ -2939,8 +2941,14 @@ function DetailView({
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-2">
-        <button onClick={onBack} className="mari-chrome-control mari-chrome-control--small px-2 py-1.5 text-xs">
-          <ChevronLeft size="0.875rem" /> Back to results
+        <button
+          type="button"
+          onClick={onBack}
+          className="mari-editor-action inline-flex shrink-0"
+          title="Back to results"
+          aria-label="Back to results"
+        >
+          <ArrowLeft size="1.125rem" />
         </button>
         <div className="flex-1" />
         <a
