@@ -6719,7 +6719,10 @@ export async function generateRoutes(app: FastifyInstance) {
                 result = await gen.next();
               }
               // Generator return value contains usage
-              if (result.value) usage = result.value;
+              if (result.value) {
+                usage = result.value;
+                finishReason = usage.finishReason ?? finishReason;
+              }
             } catch (err) {
               if (abortController.signal.aborted || isAbortLikeError(err)) {
                 return null;
@@ -7059,7 +7062,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 generationComplete = true;
               }
               if (chatMode === "conversation" && !input.regenerateMessageId) {
-                recordAssistantActivity(input.chatId, targetCharId ?? undefined);
+                recordAssistantActivity(input.chatId, input.autonomous ? (targetCharId ?? undefined) : undefined);
                 conversationAssistantSaved = true;
               }
               await recordSavedAutonomousGeneration(targetCharId);
@@ -7109,7 +7112,7 @@ export async function generateRoutes(app: FastifyInstance) {
             generationComplete = true;
           }
           if (chatMode === "conversation" && !input.impersonate && !input.regenerateMessageId) {
-            recordAssistantActivity(input.chatId, targetCharId ?? undefined);
+            recordAssistantActivity(input.chatId, input.autonomous ? (targetCharId ?? undefined) : undefined);
             await recordSavedAutonomousGeneration(targetCharId);
             conversationAssistantSaved = true;
           }
@@ -7393,12 +7396,22 @@ export async function generateRoutes(app: FastifyInstance) {
             collectedOocMessages.push(...genResult.oocMessages);
 
             // Add this character's response to the running context for the next character
-            runningMessages.push({
+            const inTurnMessage = {
               role: "assistant",
               content: genResult.response,
               contextKind: "history",
               characterId: charId,
-            });
+            } as const;
+            if (shouldPrefixGroupHistorySpeakers) {
+              const characterNamesById = await getGroupHistoryCharacterNamesById();
+              const [prefixed] = prefixGroupIndividualHistorySpeakers([inTurnMessage], {
+                personaName,
+                characterNamesById,
+              });
+              runningMessages.push(prefixed ?? inTurnMessage);
+            } else {
+              runningMessages.push(inTurnMessage);
+            }
           }
         } else {
           // Single/merged: one generation

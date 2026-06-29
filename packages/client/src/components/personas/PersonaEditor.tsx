@@ -2332,6 +2332,7 @@ const PERSONA_VERSION_COMPARE_FIELDS: Array<{ key: keyof PersonaCardSnapshot; la
   { key: "boxColor", label: "Box Color" },
   { key: "personaStats", label: "Persona Stats" },
   { key: "tags", label: "Tags" },
+  { key: "savedStatusOptions", label: "Saved Status Options" },
 ];
 
 function buildCurrentPersonaSnapshot(formData: PersonaFormData): PersonaCardSnapshot {
@@ -2352,6 +2353,7 @@ function buildCurrentPersonaSnapshot(formData: PersonaFormData): PersonaCardSnap
     trackerCardColors: serializeTrackerCardColorConfig(formData.trackerCardColors),
     personaStats: formData.personaStats,
     tags: JSON.stringify(formData.tags),
+    savedStatusOptions: formData.savedStatusOptions,
   };
 }
 

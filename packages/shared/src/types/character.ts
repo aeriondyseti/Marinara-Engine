@@ -160,6 +160,7 @@ export interface PersonaCardSnapshot {
   trackerCardColors: string;
   personaStats: string;
   tags: string;
+  savedStatusOptions: string;
 }
 
 /** Saved snapshot of a previous persona card state. */

@@ -755,6 +755,7 @@ export class GoogleProvider extends BaseLLMProvider {
           completionTokens: json.usageMetadata.candidatesTokenCount,
           totalTokens: json.usageMetadata.totalTokenCount,
           completionReasoningTokens: json.usageMetadata.thoughtsTokenCount,
+          finishReason: normalizeGeminiFinishReason(candidate?.finishReason),
         };
       }
       return;
