@@ -2221,7 +2221,7 @@ export function ChatSettingsDrawer({
         { id: chat.id, promptPresetId: presetId },
         {
           onSuccess: async () => {
-            if (!presetId) {
+            if (!presetId || !isRoleplayMode) {
               setChoiceModalPresetId(null);
               return;
             }
@@ -2240,7 +2240,7 @@ export function ChatSettingsDrawer({
         },
       );
     },
-    [chat.id, updateChat],
+    [chat.id, isRoleplayMode, updateChat],
   );
 
   const setConnection = (connectionId: string | null) => {
@@ -7112,7 +7112,7 @@ export function ChatSettingsDrawer({
 
       {/* Choice selection modal for preset variables */}
       <ChoiceSelectionModal
-        open={!!choiceModalPresetId}
+        open={isRoleplayMode && !!choiceModalPresetId}
         onClose={() => setChoiceModalPresetId(null)}
         presetId={choiceModalPresetId}
         chatId={chat.id}

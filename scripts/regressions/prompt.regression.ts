@@ -444,6 +444,34 @@ const cases: RegressionCase[] = [
     },
   },
   {
+    name: "image prompt negation only moves the directly negated comma clause",
+    run() {
+      const styleProfiles = createDefaultImageStyleProfileSettings();
+      const natural = compileImagePrompt({
+        kind: "selfie",
+        prompt: "A woman, no makeup, holding flowers, smiling",
+        styleProfiles,
+        styleProfileId: "realistic",
+      });
+
+      assert.match(natural.negativePrompt, /\bmakeup\b/);
+      assert.doesNotMatch(natural.negativePrompt, /holding flowers|smiling/);
+      assert.match(natural.prompt, /holding flowers/);
+      assert.match(natural.prompt, /smiling/);
+
+      const tagged = compileImagePrompt({
+        kind: "portrait",
+        prompt: "no glasses, red hair",
+        styleProfiles,
+        styleProfileId: "danbooru",
+      });
+
+      assert.match(tagged.negativePrompt, /\bglasses\b/);
+      assert.doesNotMatch(tagged.negativePrompt, /red hair/);
+      assert.match(tagged.prompt, /red hair/);
+    },
+  },
+  {
     name: "chat summaries normalize legacy data and compile enabled entries only",
     run() {
       const legacyEntries = normalizeChatSummaryEntries([], {

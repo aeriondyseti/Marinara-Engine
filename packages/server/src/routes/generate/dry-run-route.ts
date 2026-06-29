@@ -99,63 +99,6 @@ function presetStringField(preset: Record<string, unknown> | null | undefined, f
   return typeof value === "string" ? value.trim() : "";
 }
 
-type PromptChoiceBlockRow = {
-  variableName: string;
-  options: unknown;
-  multiSelect?: unknown;
-  randomPick?: unknown;
-  separator?: unknown;
-};
-
-function parsePromptChoiceOptions(value: unknown): Array<{ value: string }> {
-  try {
-    const parsed = typeof value === "string" ? JSON.parse(value) : value;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.flatMap((option) => {
-      if (!option || typeof option !== "object" || Array.isArray(option)) return [];
-      const rawValue = (option as Record<string, unknown>).value;
-      return typeof rawValue === "string" ? [{ value: rawValue }] : [];
-    });
-  } catch {
-    return [];
-  }
-}
-
-function resolvePromptChoiceVariables(
-  choiceBlocks: PromptChoiceBlockRow[],
-  chatChoices: Record<string, string | string[]>,
-): Record<string, string> {
-  const variables: Record<string, string> = {};
-  for (const block of choiceBlocks) {
-    const options = parsePromptChoiceOptions(block.options);
-    const optionValues = new Set(options.map((option) => option.value));
-    const fallback = options[0]?.value ?? "";
-    const selected = chatChoices[block.variableName];
-    const isMulti = block.multiSelect === true || block.multiSelect === "true";
-    const isRandom = block.randomPick === true || block.randomPick === "true";
-    const separator = typeof block.separator === "string" ? block.separator : ", ";
-
-    if (isMulti) {
-      const selectedValues = Array.isArray(selected)
-        ? selected.filter((value) => optionValues.has(value))
-        : typeof selected === "string" && optionValues.has(selected)
-          ? [selected]
-          : [];
-      if (selectedValues.length === 0) {
-        variables[block.variableName] = fallback;
-      } else if (isRandom) {
-        variables[block.variableName] = selectedValues[Math.floor(Math.random() * selectedValues.length)] ?? "";
-      } else {
-        variables[block.variableName] = selectedValues.join(separator);
-      }
-      continue;
-    }
-
-    variables[block.variableName] = typeof selected === "string" && optionValues.has(selected) ? selected : fallback;
-  }
-  return variables;
-}
-
 function resolveDryRunLorebookGenerationTriggers(
   input: {
     impersonate?: boolean;
@@ -837,21 +780,13 @@ export async function registerDryRunRoute(app: FastifyInstance) {
 
     const chatChoices: Record<string, string | string[]> =
       requestChoices ?? (isDifferentPresetOverride ? (presetDefaultChoices ?? {}) : chatChoicesFromMeta);
-    const modePromptChoiceBlocks =
-      effectivePresetId && effectivePreset && (chatMode === "conversation" || chatMode === "game")
-        ? await presets.listChoiceBlocksForPreset(effectivePresetId)
-        : [];
-    const modePromptVariables = resolvePromptChoiceVariables(
-      modePromptChoiceBlocks as PromptChoiceBlockRow[],
-      chatChoices,
-    );
     const promptMacroContext = await buildPromptMacroContext({
       db: app.db,
       characterIds: promptCharacterIds,
       personaName,
       personaDescription,
       personaFields,
-      variables: modePromptVariables,
+      variables: {},
       groupScenarioOverrideText:
         typeof chatMeta.groupScenarioText === "string" && (chatMeta.groupScenarioText as string).trim()
           ? (chatMeta.groupScenarioText as string).trim()

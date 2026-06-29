@@ -1542,9 +1542,7 @@ async function generateNovelAI(baseUrl: string, apiKey: string, request: ImageGe
   if (!resp.ok) {
     const errText = await resp.text().catch(() => "Unknown error");
     const hint = isV4 ? ` ${NOVELAI_V4_PROMPT_HINT}` : "";
-    const referenceDetail = hasReferences
-      ? ` with ${directorReferenceImages.length} precise reference image(s)`
-      : "";
+    const referenceDetail = hasReferences ? ` with ${directorReferenceImages.length} precise reference image(s)` : "";
     throw new Error(
       `NovelAI image generation failed (${resp.status})${referenceDetail}: ${sanitizeErrorText(errText)}${hint}`,
     );
@@ -1740,7 +1738,7 @@ function buildChatImageMessageContent(request: ImageGenRequest): string | Array<
   if (refImages.length > 0) {
     const parts: Array<Record<string, unknown>> = refImages.map((b64) => ({
       type: "image_url",
-      image_url: { url: `data:image/png;base64,${b64}` },
+      image_url: { url: imageDataUrlFromReference(b64) },
     }));
     parts.push({ type: "text", text: prompt });
     return parts;
