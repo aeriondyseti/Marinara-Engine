@@ -94,6 +94,10 @@ interface ChatHistoryBlock {
 
 type DisplaySection = SectionBlock | ChatHistoryBlock;
 
+function isDisplayedChatHistoryRole(role: string): boolean {
+  return role === "user" || role === "assistant";
+}
+
 // ═══════════════════════════════════════════════
 //  Parsing: works on the WHOLE messages array
 // ═══════════════════════════════════════════════
@@ -186,7 +190,10 @@ function buildDisplaySections(messages: Array<{ role: string; content: string }>
       const entries: ChatHistoryEntry[] = [];
       const rawParts: string[] = [];
       for (let j = chStartIdx; j <= chEndIdx; j++) {
-        let content = messages[j]!.content;
+        const entry = messages[j]!;
+        if (!isDisplayedChatHistoryRole(entry.role)) continue;
+
+        let content = entry.content;
         // Strip the wrapping tags from the content shown inside child blocks
         content = content
           .replace(/^<chat_history>\n?/i, "")
@@ -194,7 +201,7 @@ function buildDisplaySections(messages: Array<{ role: string; content: string }>
           .replace(/^## Chat History\n?/i, "");
         const trimmed = content.trim();
         if (trimmed) {
-          entries.push({ role: messages[j]!.role, content: trimmed });
+          entries.push({ role: entry.role, content: trimmed });
           rawParts.push(trimmed);
         }
       }

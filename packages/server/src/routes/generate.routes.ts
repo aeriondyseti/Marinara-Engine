@@ -139,6 +139,7 @@ import {
 } from "../services/conversation/character-commands.js";
 import {
   ILLUSTRATOR_TEXT_NEGATIVE_PROMPT,
+  isNovelAiImageConnection,
   resolveIllustratorCharacterReferences,
 } from "./generate/illustrator-references.js";
 import {
@@ -7055,8 +7056,10 @@ export async function generateRoutes(app: FastifyInstance) {
 
           // Save assistant message (or user message for impersonate)
           let savedMsg: any;
+          let savedSwipeIndex: number | null = null;
           if (input.regenerateMessageId) {
-            savedMsg = await chats.addSwipe(input.regenerateMessageId, fullResponse);
+            const createdSwipe = await chats.addSwipe(input.regenerateMessageId, fullResponse);
+            savedSwipeIndex = createdSwipe.index;
             savedMsg = await chats.getMessage(input.regenerateMessageId);
           } else if (input.continueMessageId) {
             const targetMessage = (await chats.getMessage(input.continueMessageId)) ?? continueTargetMessage;
@@ -7064,6 +7067,10 @@ export async function generateRoutes(app: FastifyInstance) {
               input.continueMessageId,
               appendContinuationMessageContent(targetMessage?.content, fullResponse),
             );
+            savedSwipeIndex =
+              typeof savedMsg?.activeSwipeIndex === "number" && Number.isInteger(savedMsg.activeSwipeIndex)
+                ? savedMsg.activeSwipeIndex
+                : 0;
           } else {
             savedMsg = await chats.createMessage({
               chatId: input.chatId,
@@ -7071,6 +7078,7 @@ export async function generateRoutes(app: FastifyInstance) {
               characterId: input.impersonate ? null : targetCharId,
               content: fullResponse,
             });
+            savedSwipeIndex = 0;
           }
           if (markGenerationCommitted && savedMsg?.id) {
             generationComplete = true;
@@ -7112,6 +7120,7 @@ export async function generateRoutes(app: FastifyInstance) {
             else extraUpdate.thinking = null;
             // Store Gemini response parts (thought signatures + summaries) for multi-turn continuity
             if (geminiResponseParts) extraUpdate.geminiParts = geminiResponseParts;
+            else extraUpdate.geminiParts = null;
             // Store Chat Completions reasoning fields for providers that require replay (DeepSeek/OpenRouter)
             if (chatCompletionsReasoning) extraUpdate.chatCompletionsReasoning = chatCompletionsReasoning;
             else extraUpdate.chatCompletionsReasoning = null;
@@ -7133,12 +7142,10 @@ export async function generateRoutes(app: FastifyInstance) {
             extraUpdate.chatSummaryFingerprint = fingerprintChatSummary(chatMeta.summary);
             const persistentAttachments = resolveUserRegenerationPersistentAttachments(regenMsg ?? {});
             if (persistentAttachments) extraUpdate.attachments = persistentAttachments;
-            await chats.updateMessageExtra(savedMsg.id, extraUpdate);
-            // Also persist on the active swipe so switching swipes preserves per-swipe extras
-            const refreshedMsg = await chats.getMessage(savedMsg.id);
-            if (refreshedMsg) {
-              await chats.updateSwipeExtra(savedMsg.id, refreshedMsg.activeSwipeIndex, extraUpdate);
-            }
+            const refreshedMsg =
+              savedSwipeIndex !== null
+                ? await chats.updateMessageExtraForSwipe(savedMsg.id, savedSwipeIndex, extraUpdate)
+                : await chats.updateMessageExtra(savedMsg.id, extraUpdate);
 
             const savedMessagePayload =
               holdForProseGuardianRewrite && !input.impersonate
@@ -8205,8 +8212,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 }
                 try {
                   if (Object.keys(exprMap).length > 0) {
-                    await chats.updateMessageExtra(messageId, { spriteExpressions: exprMap });
-                    await chats.updateSwipeExtra(messageId, targetSwipeIndex, { spriteExpressions: exprMap });
+                    await chats.updateMessageExtraForSwipe(messageId, targetSwipeIndex, { spriteExpressions: exprMap });
                   }
                   if (Object.keys(personaExprMap).length > 0) {
                     const personaMessageId =
@@ -8226,8 +8232,9 @@ export async function generateRoutes(app: FastifyInstance) {
               const cyoaData = result.data as { choices?: Array<{ label: string; text: string }> };
               if (cyoaData.choices && cyoaData.choices.length > 0) {
                 try {
-                  await chats.updateMessageExtra(messageId, { cyoaChoices: cyoaData.choices });
-                  await chats.updateSwipeExtra(messageId, targetSwipeIndex, { cyoaChoices: cyoaData.choices });
+                  await chats.updateMessageExtraForSwipe(messageId, targetSwipeIndex, {
+                    cyoaChoices: cyoaData.choices,
+                  });
                 } catch {
                   /* non-critical */
                 }
@@ -9013,6 +9020,12 @@ export async function generateRoutes(app: FastifyInstance) {
                       const imgApiKey = imgConnFull.apiKey || "";
                       const imgSource = (imgConnFull as any).imageGenerationSource || imgModel;
                       const imgServiceHint = imgConnFull.imageService || imgSource;
+                      const suppressReferencePromptLine = isNovelAiImageConnection({
+                        model: imgModel,
+                        baseUrl: imgBaseUrl,
+                        imageService: imgServiceHint,
+                        imageGenerationSource: imgSource,
+                      });
                       const imageDefaults = resolveConnectionImageDefaults(imgConnFull);
                       const imageSettings = await loadImageGenerationUserSettings(app.db);
                       const styleProfileId =
@@ -9040,8 +9053,8 @@ export async function generateRoutes(app: FastifyInstance) {
 
                       logger.debug(`[illustrator] Starting image generation (${imgWidth}x${imgHeight})...`);
 
-                      // Collect optional character visual context. Prefer full-body
-                      // sprites for references, then fall back to avatar portraits.
+                      // Collect optional character visual context. Prefer avatar
+                      // portraits for references, then fall back to full-body sprites.
                       const useAvatarRefs =
                         typeof chatMeta.illustratorUseAvatarReferences === "boolean"
                           ? chatMeta.illustratorUseAvatarReferences
@@ -9086,7 +9099,7 @@ export async function generateRoutes(app: FastifyInstance) {
                         }
                         if (useAvatarRefs && referenceResolution.referenceImages.length > 0) {
                           illustratorRefImages = referenceResolution.referenceImages;
-                          if (referenceResolution.referenceLine)
+                          if (referenceResolution.referenceLine && !suppressReferencePromptLine)
                             fullPrompt += `\n\n${referenceResolution.referenceLine}`;
                           logger.debug(
                             "[illustrator] Sending %d character reference(s) for: %s",
@@ -9557,6 +9570,12 @@ export async function generateRoutes(app: FastifyInstance) {
 
                       const imagePrompt = (promptResult.content ?? "").trim();
                       if (imagePrompt) {
+                        const suppressReferencePromptLine = isNovelAiImageConnection({
+                          model: imgConnFull.model,
+                          baseUrl: imgConnFull.baseUrl,
+                          imageService: imgConnFull.imageService,
+                          imageGenerationSource: (imgConnFull as any).imageGenerationSource,
+                        });
                         let finalSelfiePrompt = selfiePositivePrompt
                           ? `${imagePrompt}, ${selfiePositivePrompt}`
                           : imagePrompt;
@@ -9585,7 +9604,7 @@ export async function generateRoutes(app: FastifyInstance) {
                           });
                           if (referenceResolution.referenceImages.length > 0) {
                             selfieReferenceImages = referenceResolution.referenceImages;
-                            if (referenceResolution.referenceLine) {
+                            if (referenceResolution.referenceLine && !suppressReferencePromptLine) {
                               finalSelfiePrompt += `\n\n${referenceResolution.referenceLine}`;
                             }
                             logger.debug(

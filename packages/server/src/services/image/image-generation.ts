@@ -4,7 +4,7 @@
 // Calls image generation APIs (OpenAI DALL-E, Pollinations, Stability, etc.)
 // based on a user's configured image_generation connection.
 
-import { createHash } from "crypto";
+import { createHash, createHmac, randomBytes } from "crypto";
 import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from "fs";
 import { join } from "path";
 import { inflateRawSync } from "zlib";
@@ -1268,6 +1268,13 @@ const NOVELAI_SIZE_MULTIPLE = 64;
 const NOVELAI_MIN_DIMENSION = 64;
 const NOVELAI_MAX_DIMENSION = 2048;
 const NOVELAI_MAX_PIXELS = 1024 * 1024;
+const NOVELAI_REFERENCE_MAX_INPUT_PIXELS = 32_000_000;
+const NOVELAI_DIRECTOR_REFERENCE_SIZES = [
+  { width: 1024, height: 1536 },
+  { width: 1536, height: 1024 },
+  { width: 1472, height: 1472 },
+] as const;
+const NOVELAI_REFERENCE_CACHE_HMAC_KEY = randomBytes(32);
 
 function clampNovelAiDimension(value: number): number {
   const rounded = Math.round(value / NOVELAI_SIZE_MULTIPLE) * NOVELAI_SIZE_MULTIPLE;
@@ -1293,6 +1300,10 @@ function isNovelAiV4Model(model: string): boolean {
   return /^nai-diffusion-(?:4(?:-(?:curated-preview|full))?|4-5(?:-(?:curated|full))?)$/i.test(model.trim());
 }
 
+function isNovelAiPreciseReferenceModel(model: string): boolean {
+  return /^nai-diffusion-4-5(?:-(?:curated|full))?$/i.test(model.trim());
+}
+
 function collectNovelAiReferenceImages(request: ImageGenRequest): string[] {
   return [request.referenceImage, ...(request.referenceImages ?? [])]
     .filter((reference): reference is string => typeof reference === "string" && reference.trim().length > 0)
@@ -1308,6 +1319,98 @@ function collectNovelAiReferenceImages(request: ImageGenRequest): string[] {
         );
       }
     });
+}
+
+function selectNovelAiDirectorReferenceSize(width: number, height: number): { width: number; height: number } {
+  const ratio = width / height;
+  return NOVELAI_DIRECTOR_REFERENCE_SIZES.reduce((best, candidate) => {
+    const bestDistance = Math.abs(best.width / best.height - ratio);
+    const candidateDistance = Math.abs(candidate.width / candidate.height - ratio);
+    return candidateDistance < bestDistance ? candidate : best;
+  }, NOVELAI_DIRECTOR_REFERENCE_SIZES[0]);
+}
+
+async function prepareNovelAiDirectorReferenceImages(referenceImages: string[]): Promise<string[]> {
+  if (referenceImages.length === 0) return [];
+
+  const sharpFn = await tryLoadSharp();
+  if (!sharpFn) {
+    throw new Error(
+      "NovelAI precise reference images require server image preprocessing, but the optional sharp dependency is unavailable.",
+    );
+  }
+
+  return Promise.all(
+    referenceImages.map(async (reference, index) => {
+      try {
+        const buffer = Buffer.from(reference, "base64");
+        const metadata = await sharpFn(buffer, { limitInputPixels: NOVELAI_REFERENCE_MAX_INPUT_PIXELS }).metadata();
+        if (!metadata.width || !metadata.height) {
+          throw new Error("image dimensions could not be read");
+        }
+        const size = selectNovelAiDirectorReferenceSize(metadata.width, metadata.height);
+        const resized = await sharpFn(buffer, { limitInputPixels: NOVELAI_REFERENCE_MAX_INPUT_PIXELS })
+          .resize(size.width, size.height, {
+            fit: "contain",
+            background: { r: 0, g: 0, b: 0, alpha: 1 },
+          })
+          .png()
+          .toBuffer();
+        return resized.toString("base64");
+      } catch (err) {
+        const detail = err instanceof Error ? ` ${err.message}` : "";
+        throw new Error(`NovelAI reference image ${index + 1} could not be prepared for precise reference.${detail}`);
+      }
+    }),
+  );
+}
+
+function novelAiReferenceCacheKey(referenceBase64: string): string {
+  return createHmac("sha256", NOVELAI_REFERENCE_CACHE_HMAC_KEY).update(referenceBase64).digest("hex");
+}
+
+function buildNovelAiReferenceFormData(body: Record<string, unknown>, directorReferenceImages: string[]): FormData {
+  const multipartBody = structuredClone(body) as Record<string, unknown>;
+  const parameters =
+    multipartBody.parameters && typeof multipartBody.parameters === "object" && !Array.isArray(multipartBody.parameters)
+      ? (multipartBody.parameters as Record<string, unknown>)
+      : {};
+
+  parameters.director_reference_images_cached = directorReferenceImages.map((reference, index) => {
+    const partName = `director_ref_${index}`;
+    return {
+      cache_secret_key: novelAiReferenceCacheKey(reference),
+      data: partName,
+    };
+  });
+  delete parameters.director_reference_images;
+
+  const formData = new FormData();
+  for (let index = 0; index < directorReferenceImages.length; index++) {
+    formData.append(
+      `director_ref_${index}`,
+      new Blob([Buffer.from(directorReferenceImages[index]!, "base64")], { type: "image/png" }),
+    );
+  }
+  formData.append("request", new Blob([JSON.stringify(multipartBody)], { type: "application/json" }));
+  return formData;
+}
+
+function cloneNovelAiRequestForMetadata(body: Record<string, unknown>): Record<string, unknown> {
+  const metadataBody = structuredClone(body) as Record<string, unknown>;
+  const parameters =
+    metadataBody.parameters && typeof metadataBody.parameters === "object" && !Array.isArray(metadataBody.parameters)
+      ? (metadataBody.parameters as Record<string, unknown>)
+      : null;
+  if (parameters) {
+    if (Array.isArray(parameters.director_reference_images)) {
+      parameters.director_reference_images = parameters.director_reference_images.map(() => "[omitted]");
+    }
+    if (Array.isArray(parameters.reference_image_multiple)) {
+      parameters.reference_image_multiple = parameters.reference_image_multiple.map(() => "[omitted]");
+    }
+  }
+  return metadataBody;
 }
 
 function sanitizeNovelAiV4Prompt(value: string): string {
@@ -1359,6 +1462,10 @@ async function generateNovelAI(baseUrl: string, apiKey: string, request: ImageGe
   );
   const seed = resolveSeed(request.imageDefaults);
   const referenceImages = collectNovelAiReferenceImages(request);
+  if (referenceImages.length > 0 && !isNovelAiPreciseReferenceModel(model)) {
+    throw new Error("NovelAI precise reference images require a V4.5 model such as nai-diffusion-4-5-full.");
+  }
+  const directorReferenceImages = await prepareNovelAiDirectorReferenceImages(referenceImages);
   const size = resolveNovelAiSize(request);
 
   const parameters: Record<string, unknown> = {
@@ -1392,10 +1499,20 @@ async function generateNovelAI(baseUrl: string, apiKey: string, request: ImageGe
       use_order: true,
     };
   }
-  if (isV4 || referenceImages.length > 0) {
-    parameters.reference_image_multiple = referenceImages;
-    parameters.reference_information_extracted_multiple = referenceImages.map(() => 1);
-    parameters.reference_strength_multiple = referenceImages.map(() => 0.6);
+  if (isV4) {
+    parameters.reference_image_multiple = [];
+    parameters.reference_information_extracted_multiple = [];
+    parameters.reference_strength_multiple = [];
+  }
+  if (directorReferenceImages.length > 0) {
+    parameters.director_reference_images = directorReferenceImages;
+    parameters.director_reference_descriptions = directorReferenceImages.map(() => ({
+      caption: { base_caption: "character&style", char_captions: [] },
+      legacy_uc: false,
+    }));
+    parameters.director_reference_information_extracted = directorReferenceImages.map(() => 1);
+    parameters.director_reference_strength_values = directorReferenceImages.map(() => 1);
+    parameters.director_reference_secondary_strength_values = directorReferenceImages.map(() => 0);
   }
 
   const body: Record<string, unknown> = {
@@ -1403,17 +1520,20 @@ async function generateNovelAI(baseUrl: string, apiKey: string, request: ImageGe
     model,
     action: "generate",
     parameters,
+    use_new_shared_trial: true,
   };
+  const metadataBody = cloneNovelAiRequestForMetadata(body);
 
+  const hasReferences = directorReferenceImages.length > 0;
   const resp = await imageFetch(
     url,
     {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
+        ...(hasReferences ? {} : { "Content-Type": "application/json" }),
       },
-      body: JSON.stringify(body),
+      body: hasReferences ? buildNovelAiReferenceFormData(body, directorReferenceImages) : JSON.stringify(body),
       signal: imageRequestSignal(request),
     },
     { allowLocal: request.allowLocalUrls },
@@ -1422,7 +1542,12 @@ async function generateNovelAI(baseUrl: string, apiKey: string, request: ImageGe
   if (!resp.ok) {
     const errText = await resp.text().catch(() => "Unknown error");
     const hint = isV4 ? ` ${NOVELAI_V4_PROMPT_HINT}` : "";
-    throw new Error(`NovelAI image generation failed (${resp.status}): ${sanitizeErrorText(errText)}${hint}`);
+    const referenceDetail = hasReferences
+      ? ` with ${directorReferenceImages.length} precise reference image(s)`
+      : "";
+    throw new Error(
+      `NovelAI image generation failed (${resp.status})${referenceDetail}: ${sanitizeErrorText(errText)}${hint}`,
+    );
   }
 
   // NovelAI returns a zip file containing the image
@@ -1433,7 +1558,7 @@ async function generateNovelAI(baseUrl: string, apiKey: string, request: ImageGe
   if (bytes[0] === 0x50 && bytes[1] === 0x4b) {
     const extracted = extractFirstFileFromZip(bytes);
     if (extracted) {
-      const imageBytes = appendNovelAiGenerationMetadata(Buffer.from(extracted), body);
+      const imageBytes = appendNovelAiGenerationMetadata(Buffer.from(extracted), metadataBody);
       const base64 = imageBytes.toString("base64");
       return { base64, mimeType: "image/png", ext: "png" };
     }
@@ -1441,7 +1566,7 @@ async function generateNovelAI(baseUrl: string, apiKey: string, request: ImageGe
 
   // Check if it's a PNG directly
   if (bytes[0] === 0x89 && bytes[1] === 0x50) {
-    const imageBytes = appendNovelAiGenerationMetadata(Buffer.from(bytes), body);
+    const imageBytes = appendNovelAiGenerationMetadata(Buffer.from(bytes), metadataBody);
     const base64 = imageBytes.toString("base64");
     return { base64, mimeType: "image/png", ext: "png" };
   }

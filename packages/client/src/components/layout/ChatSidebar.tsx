@@ -1402,7 +1402,7 @@ export function ChatSidebar() {
           )}
 
           {modeFolders.length > 0 && activeModeHasChats && (
-            <p className="mari-folder-helper">Drag and drop chats to folders</p>
+            <p className="mari-folder-helper">Drag and drop chats to folders, double-click or double-tap to rename</p>
           )}
 
           {/* Folders (drag-to-reorder) */}
@@ -1603,8 +1603,8 @@ function FolderRow({
           role="button"
           tabIndex={0}
           aria-expanded={isExpanded}
-          aria-label={`${isExpanded ? "Collapse" : "Expand"} folder ${folder.name}. Press F2 to rename.`}
-          title="Double-click or press F2 to rename."
+          aria-label={`${isExpanded ? "Collapse" : "Expand"} folder ${folder.name}. Double-tap or press F2 to rename.`}
+          title="Double-click, double-tap, or press F2 to rename."
           onClick={(e) =>
             handleFolderRenameGesture(folder.id, e, {
               onSingleClick: () => {
