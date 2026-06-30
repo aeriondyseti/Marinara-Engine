@@ -8,6 +8,11 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Fixed
 
+- Fixed continue generation with rewrite agents so continued assistant messages are rewritten from the full merged message instead of being overwritten by only the new continuation text.
+- Added backoff for failed conversation summaries and server-side autonomous generations so permanent 4xx/model errors no longer retry every poll forever, while keeping stored failure metadata sanitized and bounded.
+- Fixed staging updates so Settings can target the current checkout branch, staging applies create/update a real local `staging` branch, and Windows/macOS/Linux/Termux launchers no longer drag staging installs back to stable `main`.
+- Expanded Professor Mari data commands with paginated chat message offsets, full lorebook entry lookup by entry id, entry descriptions in lorebook entry lists, and entry tag support for add/update flows.
+- Polished mobile input controls by using a paperclip attachment icon in Conversation mode, placing Game mode attachments before the address selector, hiding Roleplay's mobile emoji button, and tightening Game/Roleplay composer spacing.
 - Fixed migrated default agent prompts causing roleplay lag by keeping compatible agents batched with a raw JSON result map instead of wrapping JSON-only prompts in `<result>` tags, and made the default-prompt migration stop rewriting already-current named prompt options on every startup.
 - Fixed agent UI flicker by scoping agent processing and failure badges to the chat that owns the run, and stopped ChatArea from repeatedly auto-switching Game chats to the newest session during chat-list refreshes.
 - Reduced background request churn by stopping synced themes/extensions from polling every 15 seconds and slowing Professor Mari workspace status refreshes outside explicit workspace actions.
@@ -16,6 +21,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Hardened prompt regex scripts against polynomial ReDoS by rejecting chained broad unbounded patterns and guarding long server-side replacement runs with a VM timeout.
 - Improved profile/backup ZIP import diagnostics when the selected archive does not contain `marinara-profile.json`.
 - Tightened Android Firefox chat input sizing so the mobile composer grows less rigidly and leaves more room for typed text.
+- Shortened mobile Roleplay and Conversation composer placeholders so command hints do not wrap and pull the input caret upward.
 
 ### Platform Notes
 
