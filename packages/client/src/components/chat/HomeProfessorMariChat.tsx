@@ -1890,10 +1890,16 @@ export function HomeProfessorMariChat({
         });
       }
     });
-    const timer = window.setInterval(() => {
+    const refreshVisibleWorkspaceStatus = () => {
+      if (document.hidden) return;
       void refreshWorkspaceStatus().catch(() => undefined);
-    }, 2000);
-    return () => window.clearInterval(timer);
+    };
+    const timer = window.setInterval(refreshVisibleWorkspaceStatus, 15_000);
+    document.addEventListener("visibilitychange", refreshVisibleWorkspaceStatus);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshVisibleWorkspaceStatus);
+    };
   }, [refreshWorkspaceStatus]);
 
   useEffect(() => {
