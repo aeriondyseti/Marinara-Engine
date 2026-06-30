@@ -19,6 +19,18 @@ const QUICK_FIXES = [
 
 const HOME_FAQ_ITEMS: HomeFaqItem[] = [
   {
+    id: "connect-model",
+    category: "Top Issue",
+    question: "How do I connect Marinara to a model?",
+    answer: "Create a connection first, test it, then select it for the chat before you send a message.",
+    bullets: [
+      "Open Connections from the top bar, create a new connection, choose your provider, then fill in the API key, base URL if needed, and model name.",
+      "Use Test Connection before saving. If the test fails, check the key, provider route, base URL, and model spelling before changing chat settings.",
+      "After saving, pick that connection from the chains icon on the left side of the chat input, or set it in Chat Settings for that chat.",
+      "For local models, make sure the local server or Marinara Local Model sidecar is running first. The bundled Local Model is best for helpers and trackers, not main roleplay generation.",
+    ],
+  },
+  {
     id: "game-mode-model",
     category: "Top Issue",
     question: "What model should I use for Game Mode?",
@@ -597,16 +609,16 @@ export function HomeFaq({
                         aria-expanded={isOpen}
                       >
                         <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-1.5">
+                          <div className="flex items-start gap-1.5">
                             <span
                               className={cn(
-                                "shrink-0 rounded-full border px-1.5 py-0.5 text-[0.5rem] font-medium uppercase tracking-[0.12em]",
+                                "mt-[0.0625rem] shrink-0 rounded-full border px-1.5 py-0.5 text-[0.5rem] font-medium uppercase tracking-[0.12em]",
                                 CATEGORY_STYLES[item.category] ?? CATEGORY_STYLES.Misc,
                               )}
                             >
                               {item.category}
                             </span>
-                            <span className="min-w-0 text-[0.6875rem] font-medium leading-snug text-[var(--foreground)]">
+                            <span className="min-w-0 flex-1 break-words text-[0.6875rem] font-medium leading-snug text-[var(--foreground)]">
                               {item.question}
                             </span>
                           </div>
@@ -773,16 +785,16 @@ export function HomeFaq({
                         aria-expanded={isOpen}
                       >
                         <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
+                          <div className="flex items-start gap-2">
                             <span
                               className={cn(
-                                "shrink-0 rounded-full border px-2 py-0.5 text-[0.5625rem] font-medium uppercase tracking-[0.16em]",
+                                "mt-[0.0625rem] shrink-0 rounded-full border px-2 py-0.5 text-[0.5625rem] font-medium uppercase tracking-[0.16em]",
                                 CATEGORY_STYLES[item.category] ?? CATEGORY_STYLES.Misc,
                               )}
                             >
                               {item.category}
                             </span>
-                            <span className="min-w-0 text-[0.75rem] font-medium leading-relaxed text-[var(--foreground)]">
+                            <span className="min-w-0 flex-1 break-words text-[0.75rem] font-medium leading-relaxed text-[var(--foreground)]">
                               {item.question}
                             </span>
                           </div>
