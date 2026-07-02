@@ -66,7 +66,7 @@ import { createCustomStickersStorage } from "../services/storage/custom-stickers
 import { createCharacterGalleryStorage } from "../services/storage/character-gallery.storage.js";
 import { createPersonaGalleryStorage } from "../services/storage/persona-gallery.storage.js";
 import { localEmbed, isLocalEmbedderAvailable } from "../services/local-embedder.js";
-import { cosineSimilarity } from "../services/lorebook/embeddings.js";
+import { buildLorebookSemanticEmbeddingsById, cosineSimilarity } from "../services/lorebook/embeddings.js";
 import { applyRegexScriptsToPromptMessages } from "../services/regex/regex-application.js";
 import { createPromptOverridesStorage } from "../services/storage/prompt-overrides.storage.js";
 import { resolveConversationSelfieSystemPrompt } from "../services/conversation/selfie-prompt.js";
@@ -168,6 +168,7 @@ import {
   toZonedWallClockDate,
 } from "../services/conversation/timezone.js";
 import {
+  countUserMessagesAfterSummaryAnchor,
   formatConversationDateKey,
   generateMissingConversationSummaries,
   parseConversationDateKey,
@@ -273,6 +274,7 @@ import {
 import { normalizeContextInjections } from "./generate/agent-normalizers.js";
 import {
   buildGenerationPromptPresetCandidates,
+  resolveGenerationPromptPresetChoices,
   type PromptPresetCandidateSource,
 } from "./generate/prompt-preset-selection.js";
 import {
@@ -422,8 +424,6 @@ type LorebookScanSnapshot = {
   totalEntries: number;
 };
 
-type MemoryRecallEmbeddingSource = Awaited<ReturnType<typeof resolveMemoryRecallEmbeddingSource>>;
-
 function emptyLorebookScanSnapshot(): LorebookScanSnapshot {
   return {
     activatedEntries: [],
@@ -440,82 +440,6 @@ function toLorebookScanSnapshot(result: LorebookScanResult | null | undefined): 
     budgetSkippedEntries: result.budgetSkippedEntries,
     totalTokensEstimate: result.totalTokensEstimate,
     totalEntries: result.totalEntries,
-  };
-}
-
-function normalizeLorebookVectorQueryDepth(value: unknown): number {
-  const parsed = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(parsed)) return LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_DEFAULT;
-  return Math.max(0, Math.min(LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_MAX, Math.trunc(parsed)));
-}
-
-function selectLorebookVectorQueryText(messages: Array<{ content: string }>, depth: number): string {
-  const selectedMessages = depth > 0 ? messages.slice(-depth) : messages;
-  return selectedMessages.map((message) => message.content).join("\n").trim();
-}
-
-async function buildLorebookSemanticEmbeddingsById({
-  lorebooks,
-  entries,
-  scanMessages,
-  embeddingSource,
-  signal,
-}: {
-  lorebooks: Lorebook[];
-  entries: LorebookEntry[];
-  scanMessages: Array<{ content: string }>;
-  embeddingSource: MemoryRecallEmbeddingSource | null;
-  signal: AbortSignal;
-}): Promise<{ defaultEmbedding: number[] | null; embeddingsByLorebookId?: Map<string, number[] | null> }> {
-  if (!embeddingSource) return { defaultEmbedding: null };
-  const lorebookIdsWithVectors = new Set(
-    entries
-      .filter(
-        (entry) =>
-          !entry.excludeFromVectorization &&
-          Array.isArray(entry.embedding) &&
-          entry.embedding.length > 0,
-      )
-      .map((entry) => entry.lorebookId),
-  );
-  if (lorebookIdsWithVectors.size === 0) return { defaultEmbedding: null };
-
-  const vectorLorebooks = lorebooks.filter(
-    (lorebook) => !lorebook.excludeFromVectorization && lorebookIdsWithVectors.has(lorebook.id),
-  );
-  if (vectorLorebooks.length === 0) return { defaultEmbedding: null };
-
-  const depths = Array.from(
-    new Set(vectorLorebooks.map((lorebook) => normalizeLorebookVectorQueryDepth(lorebook.vectorQueryDepth))),
-  );
-  const embeddingsByDepth = new Map<number, number[] | null>();
-  for (const depth of depths) {
-    const queryText = selectLorebookVectorQueryText(scanMessages, depth);
-    if (!queryText) {
-      embeddingsByDepth.set(depth, null);
-      continue;
-    }
-    const embeddings = await embedMemoryRecallTexts([queryText], {
-      embeddingSource,
-      signal,
-    });
-    embeddingsByDepth.set(depth, embeddings[0] ?? null);
-  }
-
-  const embeddingsByLorebookId = new Map<string, number[] | null>();
-  for (const lorebook of vectorLorebooks) {
-    embeddingsByLorebookId.set(
-      lorebook.id,
-      embeddingsByDepth.get(normalizeLorebookVectorQueryDepth(lorebook.vectorQueryDepth)) ?? null,
-    );
-  }
-
-  return {
-    defaultEmbedding:
-      embeddingsByDepth.get(LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_DEFAULT) ??
-      Array.from(embeddingsByDepth.values()).find((embedding) => embedding && embedding.length > 0) ??
-      null,
-    embeddingsByLorebookId,
   };
 }
 
@@ -759,13 +683,6 @@ function withoutRetiredChatSummaryAgentIds(chatMetadata: Record<string, unknown>
   return chatMetadata.activeAgentIds.filter((agentId): agentId is string => {
     return typeof agentId === "string" && agentId !== RETIRED_CHAT_SUMMARY_AGENT_ID;
   });
-}
-
-function countUserMessagesAfterAnchor(messages: Array<{ id: string; role: string }>, anchorMessageId: string | null) {
-  if (!anchorMessageId) return Number.POSITIVE_INFINITY;
-  const anchorIndex = messages.findIndex((message) => message.id === anchorMessageId);
-  if (anchorIndex < 0) return Number.POSITIVE_INFINITY;
-  return messages.slice(anchorIndex + 1).filter((message) => message.role === "user").length;
 }
 
 function resolveChatSummaryPromptFromMetadata(chatMetadata: Record<string, unknown>): string {
@@ -1415,7 +1332,9 @@ export async function generateRoutes(app: FastifyInstance) {
 
       // Store attachments in message extra if present
       if (input.attachments?.length && userMsg?.id) {
-        await chats.updateMessageExtra(userMsg.id, { attachments: input.attachments }).catch(releaseActiveGenerationAndRethrow);
+        await chats
+          .updateMessageExtra(userMsg.id, { attachments: input.attachments })
+          .catch(releaseActiveGenerationAndRethrow);
       }
 
       // Snapshot persona info for per-message persona tracking
@@ -1542,8 +1461,10 @@ export async function generateRoutes(app: FastifyInstance) {
     let generationComplete = false;
     let clientDisconnected = false;
     const originalSseWrite = reply.raw.write.bind(reply.raw);
+    const canWriteSse = () =>
+      !clientDisconnected && !reply.raw.destroyed && !reply.raw.writableEnded && !reply.raw.writableFinished;
     reply.raw.write = ((chunk: any, encodingOrCallback?: any, callback?: any) => {
-      if (clientDisconnected || reply.raw.destroyed) return false;
+      if (!canWriteSse()) return false;
       try {
         return originalSseWrite(chunk, encodingOrCallback, callback);
       } catch {
@@ -1553,8 +1474,8 @@ export async function generateRoutes(app: FastifyInstance) {
     const stopSseKeepalive = startSseKeepalive(reply);
 
     const onClose = () => {
-      if (generationComplete) return;
       clientDisconnected = true;
+      if (generationComplete) return;
       if (!shouldAbortOnPassiveGenerationDisconnect({ chatMode: requestChatMode, impersonate: input.impersonate })) {
         logger.info("[generate] Conversation client disconnected; generation will continue for chat: %s", input.chatId);
         return;
@@ -1847,12 +1768,15 @@ export async function generateRoutes(app: FastifyInstance) {
         }
       }
       const selectedPresetDiffersFromChat = !!resolvedPreset && !!presetId && presetId !== chatPromptPresetId;
-      const overrideDefaultChoices =
-        selectedPresetDiffersFromChat && presetSource !== "chat"
-          ? (parsePromptPresetChoices((resolvedPreset as { defaultChoices?: unknown }).defaultChoices) ?? {})
-          : null;
+      const resolvedPresetDefaultChoices =
+        resolvedPreset ? (parsePromptPresetChoices((resolvedPreset as { defaultChoices?: unknown }).defaultChoices) ?? {}) : {};
       const chatChoices: Record<string, string | string[]> =
-        overrideDefaultChoices ?? ((chatMeta.presetChoices ?? {}) as Record<string, string | string[]>);
+        resolveGenerationPromptPresetChoices({
+          presetSource,
+          selectedPresetDiffersFromChat,
+          presetDefaultChoices: resolvedPresetDefaultChoices,
+          chatPresetChoices: (chatMeta.presetChoices ?? {}) as Record<string, string | string[]>,
+        });
       let groupHistoryCharacterNamesByIdPromise: Promise<Map<string, string>> | null = null;
       const getGroupHistoryCharacterNamesById = () => {
         groupHistoryCharacterNamesByIdPromise ??= resolveCharacterNameMap(allCharacterIds, (id) => chars.getById(id));
@@ -2066,7 +1990,8 @@ export async function generateRoutes(app: FastifyInstance) {
         if (followUpIteration === 0) {
           const regexScripts = await getPromptRegexScripts();
           applyRegexScriptsToPromptMessages(mappedMessages, regexScripts, {
-            resolveMacros: (value, randomSeed) => resolveMacros(value, promptMacroContext, { trimResult: false, randomSeed }),
+            resolveMacros: (value, randomSeed) =>
+              resolveMacros(value, promptMacroContext, { trimResult: false, randomSeed }),
             targetCharacterId: promptTargetCharacterId,
           });
           if (regenerateUserSourceMessage) {
@@ -3065,9 +2990,7 @@ export async function generateRoutes(app: FastifyInstance) {
             // Turn-games — conversation mode only, when no game is running yet
             // and at least one other character is present to play with.
             const unoAdvertisable =
-              chatMode === "conversation" &&
-              isConversationCommandEnabled(chatMeta, "uno") &&
-              characterIds.length >= 1;
+              chatMode === "conversation" && isConversationCommandEnabled(chatMeta, "uno") && characterIds.length >= 1;
             const chessAdvertisable =
               chatMode === "conversation" &&
               isConversationCommandEnabled(chatMeta, "chess") &&
@@ -3768,7 +3691,8 @@ export async function generateRoutes(app: FastifyInstance) {
             customThinkingTags = normalizeThinkingTagPairs(params.customThinkingTags);
           }
           customParameters = mergeCustomParameters(customParameters, params.customParameters);
-          if (params.enabledParameters) enabledParameters = { ...(enabledParameters ?? {}), ...params.enabledParameters };
+          if (params.enabledParameters)
+            enabledParameters = { ...(enabledParameters ?? {}), ...params.enabledParameters };
           if (Array.isArray(params.stopSequences)) {
             stopSequences = params.stopSequences.map((value) => value.trim()).filter((value) => value.length > 0);
           }
@@ -4480,10 +4404,7 @@ export async function generateRoutes(app: FastifyInstance) {
 
         if (input.continueMessageId) {
           finalMessages.push({ role: "user" as const, content: CONTINUE_ASSISTANT_MESSAGE_PROMPT });
-          logger.debug(
-            "[generate] Injected continuation prompt for assistant message %s",
-            input.continueMessageId,
-          );
+          logger.debug("[generate] Injected continuation prompt for assistant message %s", input.continueMessageId);
         }
 
         // ── Group chat processing ──
@@ -5252,7 +5173,7 @@ export async function generateRoutes(app: FastifyInstance) {
           baseToolExecutionContext,
           updateChatMetadataForTools,
         } = await resolveGenerationTools({
-          requestBody: req.body as Record<string, unknown>,
+          requestBody: input as Record<string, unknown>,
           chatId: input.chatId,
           chatMetadata: chatMeta,
           chats,
@@ -5733,7 +5654,9 @@ export async function generateRoutes(app: FastifyInstance) {
               if (criticalFailedRegen.length > 0) {
                 const failedNames = criticalFailedRegen.map((r) => r.agentType).join(", ");
                 const firstError = criticalFailedRegen[0]!.error ?? "unknown error";
-                logger.error(`[pre-gen] FATAL: critical agent(s) failed on regen (${failedNames}) — aborting generation`);
+                logger.error(
+                  `[pre-gen] FATAL: critical agent(s) failed on regen (${failedNames}) — aborting generation`,
+                );
                 sendSseEvent(reply, {
                   type: "error",
                   data: `Critical pre-generation agent failed (${failedNames}): ${firstError}. Please try again.`,
@@ -6787,8 +6710,7 @@ export async function generateRoutes(app: FastifyInstance) {
             // Merged group conversations carry multiple characters' turns in one
             // response; attribute each command to its speaker so e.g. a [selfie]
             // renders the character that took it, not always the first one.
-            const useSpeakerAttribution =
-              isGroupChat && groupChatMode === "merged" && chatMode === "conversation";
+            const useSpeakerAttribution = isGroupChat && groupChatMode === "merged" && chatMode === "conversation";
             const speakerParse = useSpeakerAttribution
               ? parseCharacterCommandsBySpeaker(fullResponse, charInfo, targetCharId)
               : null;
@@ -7499,7 +7421,10 @@ export async function generateRoutes(app: FastifyInstance) {
             typeof chatMeta.lastAutomaticSummaryMessageId === "string" && chatMeta.lastAutomaticSummaryMessageId.trim()
               ? chatMeta.lastAutomaticSummaryMessageId.trim()
               : null;
-          const messagesSinceLastSummary = countUserMessagesAfterAnchor(freshMessages, lastAutomaticSummaryMessageId);
+          const messagesSinceLastSummary = countUserMessagesAfterSummaryAnchor(
+            freshMessages,
+            lastAutomaticSummaryMessageId,
+          );
           const interval = clampRoleplaySummaryInterval(chatMeta.summaryRunInterval);
           if (messagesSinceLastSummary < interval) return;
 
@@ -8966,9 +8891,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 const savedNegativePrompt = ((illustratorAgent?.settings?.imageNegativePrompt as string) ?? "").trim();
                 const chatGameImageConnectionId =
                   typeof chatMeta.gameImageConnectionId === "string" ? chatMeta.gameImageConnectionId.trim() : "";
-                const agentImageConnectionId = (
-                  (illustratorAgent?.settings?.imageConnectionId as string) ?? ""
-                ).trim();
+                const agentImageConnectionId = ((illustratorAgent?.settings?.imageConnectionId as string) ?? "").trim();
                 const imageConnectionOverride = chatGameImageConnectionId || agentImageConnectionId;
                 let imgConnFull = imageConnectionOverride
                   ? await connections.getWithKey(imageConnectionOverride)
@@ -11175,9 +11098,10 @@ export async function generateRoutes(app: FastifyInstance) {
           logger.info(
             `[generate] Posted ${collectedOocMessages.length} OOC message(s) to conversation ${chat.connectedChatId}`,
           );
-          reply.raw.write(
-            `data: ${JSON.stringify({ type: "ooc_posted", data: { chatId: chat.connectedChatId, count: collectedOocMessages.length } })}\n\n`,
-          );
+          trySendSseEvent(reply, {
+            type: "ooc_posted",
+            data: { chatId: chat.connectedChatId, count: collectedOocMessages.length },
+          });
         } catch (oocErr) {
           logger.error(oocErr, "[generate] Failed to post OOC messages");
         }
@@ -11218,7 +11142,7 @@ export async function generateRoutes(app: FastifyInstance) {
       stopSseKeepalive();
       reply.raw.off("close", onClose);
       releaseActiveGeneration();
-      if (!clientDisconnected && !reply.raw.destroyed) {
+      if (canWriteSse()) {
         reply.raw.end();
       }
     }

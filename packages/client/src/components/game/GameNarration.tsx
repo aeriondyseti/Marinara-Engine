@@ -233,7 +233,7 @@ function formatTokenEstimate(tokens: number): string {
   return tokens.toLocaleString();
 }
 
-interface NarrationSegment {
+export interface NarrationSegment {
   id: string;
   type: "narration" | "dialogue" | "readable" | "system";
   speaker?: string;
@@ -5768,7 +5768,10 @@ function buildTruncationLines(rawContent: string): TruncationLine[] {
   });
 }
 
-function parseNarrationSegments(message: NarrationMessage, speakerColors: Map<string, string>): NarrationSegment[] {
+export function parseNarrationSegments(
+  message: NarrationMessage,
+  speakerColors: Map<string, string>,
+): NarrationSegment[] {
   // Use stripGmTagsKeepReadables so [Note:] and [Book:] stay inline for position-aware display.
   // Extract them first as placeholders so multi-line readables don't break line-based parsing.
   const withReadables = stripGmTagsKeepReadables(message.content || "");

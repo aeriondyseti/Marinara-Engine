@@ -8,14 +8,14 @@ The result is a visible "chin" strip below the chat input box that shows a diffe
 
 ## The Fix (What We Ship)
 
-**`packages/client/index.html`** uses `content="black"` instead of `content="black-translucent"`, and adds `interactive-widget=resizes-content` to the viewport meta:
+**`packages/client/index.html`** uses `content="black"` instead of `content="black-translucent"` and keeps the viewport in the default keyboard mode:
 
 ```html
 <meta name="apple-mobile-web-app-status-bar-style" content="black" />
-<meta name="viewport" content="..., viewport-fit=cover, interactive-widget=resizes-content" />
+<meta name="viewport" content="..., viewport-fit=cover" />
 ```
 
-In `black` mode, iOS does not apply the bottom restriction. AppShell uses `fixed top-0 left-0 right-0 h-dvh` — no explicit `bottom: 0`, height controlled by the `dvh` unit. With `interactive-widget=resizes-content`, `dvh` shrinks when the keyboard opens (iOS resizes the viewport instead of scrolling it), so the layout compresses cleanly above the keyboard without the UI shooting upward.
+In `black` mode, iOS does not apply the bottom restriction. AppShell uses `fixed inset-0` without a viewport-height override, so the shell paints into the bottom safe-area zone while the browser keeps keyboard focus scrolling in its normal visual viewport path. Do not add `interactive-widget=resizes-content`; on mobile PWAs it can resize the whole chat shell during keyboard animation and leave message scrolling clipped.
 
 **Trade-off:** The status bar is a solid dark bar instead of a transparent glass overlay. `black-translucent` gives a prettier top (glass effect under the status bar) but makes the bottom chin unfixable. This is a hard iOS limitation — you cannot have both.
 
@@ -35,7 +35,7 @@ Switching to `black` mode turned the chin dark (AppShell covers it). That's the 
 
 **Check 1:** Has `apple-mobile-web-app-status-bar-style` been changed back to `black-translucent` in `packages/client/index.html`? Change it back to `black`.
 
-**Check 2:** Is the AppShell `className` still `"mari-app mari-app-background-paint fixed top-0 left-0 right-0 h-dvh flex overflow-hidden"` in `packages/client/src/components/layout/AppShell.tsx`? Do not add `bottom-0` or `inset-0` — that creates an over-constrained layout that makes the UI shoot up when the keyboard opens.
+**Check 2:** Is the AppShell `className` still `"mari-app mari-app-background-paint fixed inset-0 flex overflow-hidden"` in `packages/client/src/components/layout/AppShell.tsx`? Do not combine `inset-0` with `h-screen`, `h-dvh`, or `max-h-screen`; that over-constrains the fixed shell and can make mobile keyboard focus shove the UI around.
 
 **Check 3:** Run the red/green diagnostic to confirm which layer is painting the chin:
 
@@ -78,4 +78,5 @@ Then clear site data on the device (Settings → Safari → Advanced → Website
 - `black` or `default` → solid status bar, chin zone reachable by fixed elements
 - `env(safe-area-inset-bottom)` = ~34px on Face ID iPhones; use it for padding interactive content above the home indicator if needed
 - `dvh`/`lvh` viewport units in `black-translucent` mode equal the safe-content-area height (not physical screen height) — do not attempt to use these to extend AppShell past the safe-content boundary in that mode
+- `interactive-widget=resizes-content` can make iOS/Android PWAs resize the entire fixed chat shell while the keyboard opens; prefer default viewport behavior plus guarded input focus scrolling
 - SillyTavern avoids this entirely by not using `black-translucent`

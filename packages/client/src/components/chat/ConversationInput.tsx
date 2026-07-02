@@ -1746,16 +1746,25 @@ export function ConversationInput({
   );
 
   const ensureInputVisible = useCallback(() => {
-    const scroll = () => inputBarRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    if (typeof window === "undefined" || !window.matchMedia("(max-width: 767px)").matches) return;
+    const scroll = () => {
+      const inputBar = inputBarRef.current;
+      const viewport = window.visualViewport;
+      if (!inputBar || !viewport) return;
+      const rect = inputBar.getBoundingClientRect();
+      const viewportTop = viewport.offsetTop;
+      const viewportBottom = viewportTop + viewport.height;
+      if (rect.top >= viewportTop + 8 && rect.bottom <= viewportBottom - 8) return;
+      inputBar.scrollIntoView({ block: "nearest", inline: "nearest" });
+    };
     requestAnimationFrame(scroll);
-    window.setTimeout(scroll, 260);
   }, []);
 
   useEffect(() => {
     if (mobileHistoryCollapsed || !focusAfterMobileRestoreRef.current) return;
     focusAfterMobileRestoreRef.current = false;
     const focus = () => {
-      textareaRef.current?.focus();
+      textareaRef.current?.focus({ preventScroll: true });
       ensureInputVisible();
     };
     requestAnimationFrame(focus);

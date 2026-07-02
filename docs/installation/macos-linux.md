@@ -63,6 +63,15 @@ pnpm build
 pnpm start
 ```
 
+Manual setup uses the repo's pnpm config, which keeps pnpm's store and virtual store inside short local folders (`.pnpm-store/` and `.pnpm/`) to avoid Linux path-length failures during install.
+
+If an earlier install failed with `ERR_PNPM_ENAMETOOLONG`, remove the partial dependency folders and retry from the repo root:
+
+```bash
+rm -rf node_modules .pnpm .pnpm-store
+./start.sh
+```
+
 Then open **<http://127.0.0.1:7860>**. Everything runs locally.
 File-backed storage is prepared automatically on first server start.
 

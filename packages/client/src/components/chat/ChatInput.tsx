@@ -169,6 +169,7 @@ interface ChatInputProps {
   onPeekPrompt?: () => void;
   combatAgentEnabled?: boolean;
   onStartEncounter?: () => void;
+  interactionsLocked?: boolean;
 }
 
 export const ChatInput = memo(function ChatInput({
@@ -182,6 +183,7 @@ export const ChatInput = memo(function ChatInput({
   onPeekPrompt,
   combatAgentEnabled,
   onStartEncounter,
+  interactionsLocked = false,
 }: ChatInputProps) {
   const [hasInput, setHasInput] = useState(false);
   const [completions, setCompletions] = useState<SlashCommand[]>([]);
@@ -208,6 +210,7 @@ export const ChatInput = memo(function ChatInput({
   const streamingChatId = useChatStore((s) => s.streamingChatId);
   const isStreamingGlobal = useChatStore((s) => s.isStreaming);
   const isStreaming = isStreamingGlobal && streamingChatId === activeChatId;
+  const isInputBusy = isStreaming || interactionsLocked;
   const responseQueue = useChatStore((s) =>
     activeChatId ? (s.responseQueues.get(activeChatId) ?? EMPTY_RESPONSE_QUEUE) : EMPTY_RESPONSE_QUEUE,
   );
@@ -268,7 +271,7 @@ export const ChatInput = memo(function ChatInput({
     mobileHistoryCollapsed &&
     !hasInput &&
     attachments.length === 0 &&
-    !isStreaming &&
+    !isInputBusy &&
     !emojiOpen &&
     !charPickerOpen;
   const activeAgentIds = useMemo(
@@ -485,13 +488,18 @@ export const ChatInput = memo(function ChatInput({
   }, [messagesData]);
   const lastMessageRole = lastMessage?.role ?? null;
 
-  const canRetry = !isStreaming && lastMessageRole === "user";
+  const canRetry = !isInputBusy && lastMessageRole === "user";
   const canContinue =
-    !isStreaming && mode === "roleplay" && groupResponseOrder !== "manual" && lastMessageRole === "assistant";
+    !isInputBusy && mode === "roleplay" && groupResponseOrder !== "manual" && lastMessageRole === "assistant";
   const pendingAttachmentReads = activeChatId ? (pendingAttachmentReadsByChat[activeChatId] ?? 0) : 0;
   const isReadingAttachments = pendingAttachmentReads > 0;
   const hasPendingAttachments = isReadingAttachments || attachments.length > 0;
   const requiresManualGuideTarget = groupResponseOrder === "manual" && activeCharacterNames.length > 1;
+  const inputBusyReason = isStreaming
+    ? "Wait for the current stream to finish."
+    : interactionsLocked
+      ? "Wait for agents to finish."
+      : null;
 
   const removeAttachment = (idx: number) => {
     updateAttachments((prev) => prev.filter((_, i) => i !== idx));
@@ -627,7 +635,7 @@ export const ChatInput = memo(function ChatInput({
   ]);
 
   const handleTogglePushStory = useCallback(() => {
-    if (!narrativeDirectorActive || isStreaming) return;
+    if (!narrativeDirectorActive || isInputBusy) return;
     setPushStoryArmed((current) => {
       const next = !current;
       if (next) {
@@ -641,11 +649,11 @@ export const ChatInput = memo(function ChatInput({
       }
       return next;
     });
-  }, [isStreaming, narrativeDirectorActive, narrativeDirectorMode]);
+  }, [isInputBusy, narrativeDirectorActive, narrativeDirectorMode]);
 
   const handleSend = useCallback(async () => {
     const raw = getValue();
-    if (!activeChatId || isStreaming) return;
+    if (!activeChatId || isInputBusy) return;
     if (isReadingAttachments) {
       toast.info("Still reading attached files. Send will be ready in a moment.");
       return;
@@ -870,7 +878,7 @@ export const ChatInput = memo(function ChatInput({
   }, [
     activeChatId,
     mode,
-    isStreaming,
+    isInputBusy,
     generateWithNarrativeDirector,
     applyToUserInput,
     buildContext,
@@ -957,7 +965,7 @@ export const ChatInput = memo(function ChatInput({
   );
 
   const handleImpersonateQuickButton = useCallback(async () => {
-    if (!activeChatId || isStreaming) return;
+    if (!activeChatId || isInputBusy) return;
     if (hasPendingAttachments) {
       toast.info("Clear or send attachments before using quick impersonate.");
       return;
@@ -965,10 +973,10 @@ export const ChatInput = memo(function ChatInput({
     const text = textareaRef.current?.value?.trim() ?? "";
     if (!text) return;
     await runQuickSlashCommand(`/impersonate ${text}`, "Impersonate failed");
-  }, [activeChatId, isStreaming, hasPendingAttachments, runQuickSlashCommand]);
+  }, [activeChatId, isInputBusy, hasPendingAttachments, runQuickSlashCommand]);
 
   const handlePostOnlyButton = useCallback(async () => {
-    if (!activeChatId || isStreaming) return;
+    if (!activeChatId || isInputBusy) return;
     const submittingChatId = activeChatId;
     if (isReadingAttachments) {
       toast.info("Still reading attached files. Post will be ready in a moment.");
@@ -1074,7 +1082,7 @@ export const ChatInput = memo(function ChatInput({
     }
   }, [
     activeChatId,
-    isStreaming,
+    isInputBusy,
     isReadingAttachments,
     attachments,
     completions,
@@ -1093,7 +1101,7 @@ export const ChatInput = memo(function ChatInput({
   ]);
 
   const handleGuidedGenerationButton = useCallback(async () => {
-    if (!activeChatId || isStreaming) return;
+    if (!activeChatId || isInputBusy) return;
     if (requiresManualGuideTarget) {
       toast.info("Choose a character from the reply picker to guide a specific reply.");
       return;
@@ -1105,20 +1113,20 @@ export const ChatInput = memo(function ChatInput({
     const text = textareaRef.current?.value?.trim() ?? "";
     if (!text) return;
     await runQuickSlashCommand(`/guided ${text}`, "Guided generation failed");
-  }, [activeChatId, isStreaming, requiresManualGuideTarget, hasPendingAttachments, runQuickSlashCommand]);
+  }, [activeChatId, isInputBusy, requiresManualGuideTarget, hasPendingAttachments, runQuickSlashCommand]);
 
   const quickReplyActions = useMemo<QuickReplyAction[]>(() => {
     const actions: QuickReplyAction[] = [];
     const getPostOnlyDisabledReason = () => {
       if (!activeChatId) return "Select or create a chat first.";
-      if (isStreaming) return "Wait for the current stream to finish.";
+      if (inputBusyReason) return inputBusyReason;
       if (isReadingAttachments) return "Still reading attached files.";
       if (!hasInput && attachments.length === 0) return "Type a draft first.";
       return undefined;
     };
     const getGuideDisabledReason = () => {
       if (!activeChatId) return "Select or create a chat first.";
-      if (isStreaming) return "Wait for the current stream to finish.";
+      if (inputBusyReason) return inputBusyReason;
       if (requiresManualGuideTarget) return "Choose a character from the reply picker.";
       if (hasPendingAttachments) return "Clear or post attachments first.";
       if (!hasInput) return "Type a direction first.";
@@ -1126,7 +1134,7 @@ export const ChatInput = memo(function ChatInput({
     };
     const getImpersonateDisabledReason = () => {
       if (!activeChatId) return "Select or create a chat first.";
-      if (isStreaming) return "Wait for the current stream to finish.";
+      if (inputBusyReason) return inputBusyReason;
       if (hasPendingAttachments) return "Clear or post attachments first.";
       if (!hasInput) return "Type a direction first.";
       return undefined;
@@ -1137,7 +1145,7 @@ export const ChatInput = memo(function ChatInput({
         label: "Post only",
         description: "Add your message without a reply",
         icon: <FileText size="0.875rem" />,
-        disabled: !activeChatId || isStreaming || isReadingAttachments || (!hasInput && attachments.length === 0),
+        disabled: !activeChatId || isInputBusy || isReadingAttachments || (!hasInput && attachments.length === 0),
         disabledReason: getPostOnlyDisabledReason(),
         onSelect: handlePostOnlyButton,
       });
@@ -1148,7 +1156,7 @@ export const ChatInput = memo(function ChatInput({
         label: "Guide reply",
         description: "Send as /guided direction",
         icon: <WandSparkles size="0.875rem" />,
-        disabled: !activeChatId || isStreaming || requiresManualGuideTarget || !hasInput || hasPendingAttachments,
+        disabled: !activeChatId || isInputBusy || requiresManualGuideTarget || !hasInput || hasPendingAttachments,
         disabledReason: getGuideDisabledReason(),
         onSelect: handleGuidedGenerationButton,
       });
@@ -1159,7 +1167,7 @@ export const ChatInput = memo(function ChatInput({
         label: "Impersonate",
         description: "Generate as your persona",
         icon: <UserCheck size="0.875rem" />,
-        disabled: !activeChatId || isStreaming || !hasInput || hasPendingAttachments,
+        disabled: !activeChatId || isInputBusy || !hasInput || hasPendingAttachments,
         disabledReason: getImpersonateDisabledReason(),
         onSelect: handleImpersonateQuickButton,
       });
@@ -1167,7 +1175,8 @@ export const ChatInput = memo(function ChatInput({
     return actions;
   }, [
     activeChatId,
-    isStreaming,
+    isInputBusy,
+    inputBusyReason,
     isReadingAttachments,
     hasInput,
     attachments.length,
@@ -1284,7 +1293,7 @@ export const ChatInput = memo(function ChatInput({
   // Character picker: trigger a response from a specific character (manual mode)
   const handleCharacterResponse = useCallback(
     async (characterId: string) => {
-      if (!activeChatId || isStreaming) return;
+      if (!activeChatId || isInputBusy) return;
       setCharPickerOpen(false);
       setCharPickerPos(null);
       if (responseQueue.includes(characterId)) {
@@ -1310,7 +1319,7 @@ export const ChatInput = memo(function ChatInput({
     },
     [
       activeChatId,
-      isStreaming,
+      isInputBusy,
       generateWithNarrativeDirector,
       hasInput,
       guideGenerations,
@@ -1402,16 +1411,25 @@ export const ChatInput = memo(function ChatInput({
   );
 
   const ensureInputVisible = useCallback(() => {
-    const scroll = () => inputBarRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    if (typeof window === "undefined" || !window.matchMedia("(max-width: 767px)").matches) return;
+    const scroll = () => {
+      const inputBar = inputBarRef.current;
+      const viewport = window.visualViewport;
+      if (!inputBar || !viewport) return;
+      const rect = inputBar.getBoundingClientRect();
+      const viewportTop = viewport.offsetTop;
+      const viewportBottom = viewportTop + viewport.height;
+      if (rect.top >= viewportTop + 8 && rect.bottom <= viewportBottom - 8) return;
+      inputBar.scrollIntoView({ block: "nearest", inline: "nearest" });
+    };
     requestAnimationFrame(scroll);
-    window.setTimeout(scroll, 260);
   }, []);
 
   useEffect(() => {
     if (mobileHistoryCollapsed || !focusAfterMobileRestoreRef.current) return;
     focusAfterMobileRestoreRef.current = false;
     const focus = () => {
-      textareaRef.current?.focus();
+      textareaRef.current?.focus({ preventScroll: true });
       ensureInputVisible();
     };
     requestAnimationFrame(focus);
@@ -1481,7 +1499,7 @@ export const ChatInput = memo(function ChatInput({
             <button
               type="button"
               onClick={handleTogglePushStory}
-              disabled={isStreaming}
+              disabled={isInputBusy}
               aria-pressed={pushStoryArmed}
               className={cn(
                 ROLEPLAY_AGENT_ACTION_BUTTON_CLASS,
@@ -1503,7 +1521,7 @@ export const ChatInput = memo(function ChatInput({
             <button
               type="button"
               onClick={() => onStartEncounter?.()}
-              disabled={isStreaming}
+              disabled={isInputBusy}
               className={cn(
                 ROLEPLAY_AGENT_ACTION_BUTTON_CLASS,
                 "text-foreground/50 hover:bg-foreground/10 hover:text-foreground/80 disabled:hover:bg-transparent disabled:hover:text-foreground/50",
@@ -1577,7 +1595,7 @@ export const ChatInput = memo(function ChatInput({
         />
         <button
           onClick={() => fileInputRef.current?.click()}
-          disabled={!activeChatId}
+          disabled={!activeChatId || isInputBusy}
           className={cn(
             "flex h-9 w-9 items-center justify-center rounded-xl transition-all active:scale-90 disabled:cursor-not-allowed disabled:text-foreground/25 disabled:opacity-50 sm:h-8 sm:w-8",
             attachments.length
@@ -1604,7 +1622,7 @@ export const ChatInput = memo(function ChatInput({
           onPaste={handlePaste}
           onFocus={ensureInputVisible}
           placeholder={inputPlaceholder}
-          disabled={!activeChatId}
+          disabled={!activeChatId || isInputBusy}
           rows={1}
           spellCheck
           autoCorrect="on"
@@ -1659,10 +1677,10 @@ export const ChatInput = memo(function ChatInput({
           <button
             type="button"
             onClick={() => void handleTranslateDraft()}
-            disabled={!activeChatId || !hasInput || isStreaming || isTranslatingDraft}
+            disabled={!activeChatId || !hasInput || isInputBusy || isTranslatingDraft}
             className={cn(
               "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition-all duration-200 sm:h-8 sm:w-8",
-              hasInput && !isStreaming && !isTranslatingDraft
+              hasInput && !isInputBusy && !isTranslatingDraft
                 ? "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70 active:scale-90"
                 : "text-foreground/25",
             )}
@@ -1674,7 +1692,7 @@ export const ChatInput = memo(function ChatInput({
 
         {speechToTextEnabled && (
           <SpeechToTextButton
-            disabled={!activeChatId}
+            disabled={!activeChatId || isInputBusy}
             onTranscript={handleSpeechTranscript}
             className="rounded-full"
             iconSize={16}
@@ -1684,7 +1702,7 @@ export const ChatInput = memo(function ChatInput({
         {showQuickRepliesMenu && quickReplyActions.length > 0 && (
           <QuickReplyMenu
             actions={quickReplyActions}
-            disabled={!activeChatId || isReadingAttachments}
+            disabled={!activeChatId || isInputBusy || isReadingAttachments}
           />
         )}
 
@@ -1693,20 +1711,23 @@ export const ChatInput = memo(function ChatInput({
         <button
           onClick={isStreaming ? () => useChatStore.getState().stopGeneration(activeChatId ?? undefined) : handleSend}
           disabled={
-            (!isStreaming && isReadingAttachments) ||
+            (!isStreaming && (isInputBusy || isReadingAttachments)) ||
             (!hasInput && !attachments.length && !isStreaming && !canRetry && !canContinue) ||
             !activeChatId
           }
           className={cn(
             "mari-chat-send-btn flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition-all duration-200 sm:h-8 sm:w-8",
-            isStreaming
+            isInputBusy
               ? "text-foreground/75 hover:bg-foreground/10 hover:text-foreground/90"
-              : (hasInput || attachments.length || canRetry || canContinue) && activeChatId && !isReadingAttachments
+              : (hasInput || attachments.length || canRetry || canContinue) &&
+                  activeChatId &&
+                  !isInputBusy &&
+                  !isReadingAttachments
                 ? "text-foreground/75 hover:bg-foreground/10 hover:text-foreground/90 active:scale-90"
                 : "text-foreground/20",
           )}
         >
-          {isStreaming ? (
+          {isInputBusy ? (
             <StopCircle size="1rem" />
           ) : (
             <Send size="0.9375rem" className={cn(hasInput && "translate-x-[1px]")} />

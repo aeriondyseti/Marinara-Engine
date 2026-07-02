@@ -896,9 +896,15 @@ const stateTransitionSchema = z.object({
 const mapGenerateSchema = z.object({
   chatId: z.string().min(1),
   locationType: z.string().min(1).max(200),
-  context: z.string().max(1000).default(""),
+  context: z.string().max(50000).default(""),
   connectionId: z.string().optional(),
 });
+
+function normalizeMapGenerationContext(context: string): string {
+  const compact = context.replace(/\r\n/g, "\n").replace(/[ \t]+/g, " ").trim();
+  if (compact.length <= 4000) return compact;
+  return compact.slice(-4000).replace(/^[^\n]*\n?/, "").trim() || compact.slice(-4000).trim();
+}
 
 const mapMoveSchema = z.object({
   chatId: z.string().min(1),
@@ -6471,6 +6477,7 @@ export async function gameRoutes(app: FastifyInstance) {
   // ── POST /game/map/generate ──
   app.post("/map/generate", async (req, reply) => {
     const { chatId, locationType, context, connectionId } = mapGenerateSchema.parse(req.body);
+    const mapContext = normalizeMapGenerationContext(context);
     const chats = createChatsStorage(app.db);
     const connections = createConnectionsStorage(app.db);
 
@@ -6488,7 +6495,7 @@ export async function gameRoutes(app: FastifyInstance) {
     );
 
     const messages: ChatMessage[] = [
-      { role: "system", content: buildMapGenerationPrompt(locationType, context) },
+      { role: "system", content: buildMapGenerationPrompt(locationType, mapContext) },
       { role: "user", content: "Generate the map." },
     ];
 
@@ -8050,6 +8057,10 @@ export async function gameRoutes(app: FastifyInstance) {
     chatId: z.string().min(1),
     /** Background tag that didn't resolve (the scene model suggested it). */
     backgroundTag: z.string().max(500).optional(),
+    /** Optional prompt text for the background when the tag is only a cache/asset key. */
+    backgroundDescription: z.string().min(1).max(5000).optional(),
+    /** Force user-requested background generation instead of reusing an existing slug. */
+    forceBackground: z.boolean().optional(),
     /** NPCs needing portraits: [{ name, description }] */
     npcsNeedingAvatars: z
       .array(
@@ -8152,11 +8163,13 @@ export async function gameRoutes(app: FastifyInstance) {
 
     if (input.backgroundTag) {
       const slug = generatedBackgroundSlug(input.backgroundTag);
+      const backgroundDescription =
+        input.backgroundDescription?.trim() || input.backgroundTag.replace(/:/g, " ").replace(/-/g, " ");
       const promptOverride = promptOverrideById.get(gameImagePromptReviewId("background", slug));
       const compiledReviewPrompt = await buildBackgroundProviderPrompt({
         chatId: input.chatId,
         locationSlug: slug,
-        sceneDescription: input.backgroundTag.replace(/:/g, " ").replace(/-/g, " "),
+        sceneDescription: backgroundDescription,
         genre,
         setting,
         currentLocation: latestImageState?.location ?? null,
@@ -8399,6 +8412,8 @@ export async function gameRoutes(app: FastifyInstance) {
             {
               chatId: input.chatId,
               backgroundTag: input.backgroundTag ?? null,
+              backgroundDescriptionChars: input.backgroundDescription?.length ?? 0,
+              forceBackground: input.forceBackground === true,
               npcsNeedingAvatars: input.npcsNeedingAvatars ?? [],
               illustration: input.illustration ?? null,
               illustrationNarrationChars: input.illustrationNarration?.length ?? 0,
@@ -8489,12 +8504,14 @@ export async function gameRoutes(app: FastifyInstance) {
       // ── Generate background ──
       if (!assetAbortSignal.aborted && input.backgroundTag) {
         const slug = generatedBackgroundSlug(input.backgroundTag);
+        const backgroundDescription =
+          input.backgroundDescription?.trim() || input.backgroundTag.replace(/:/g, " ").replace(/-/g, " ");
         const promptOverride = promptOverrideById.get(gameImagePromptReviewId("background", slug));
 
         const tag = await generateBackground({
           chatId: input.chatId,
           locationSlug: slug,
-          sceneDescription: input.backgroundTag.replace(/:/g, " ").replace(/-/g, " "),
+          sceneDescription: backgroundDescription,
           genre,
           setting,
           currentLocation: latestImageState?.location ?? null,
@@ -8517,6 +8534,7 @@ export async function gameRoutes(app: FastifyInstance) {
           size: backgroundSize,
           promptOverride: promptOverride?.prompt,
           negativePromptOverride: promptOverride?.negativePrompt,
+          force: input.forceBackground === true,
           signal: assetAbortSignal,
         });
         if (tag) {

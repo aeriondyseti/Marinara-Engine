@@ -845,19 +845,19 @@ export async function executeAgentBatch(
 
     // Each agent reserves its own configured output budget. The context fitter
     // may still reduce this further if the prompt needs more room.
-  const streamResponses = context.streaming !== false;
-  const capDetails = [
-    provider.maxTokensOverrideValue !== null ? `connection cap=${provider.maxTokensOverrideValue}` : null,
-    modelMaxOutput ? `model cap=${modelMaxOutput}` : null,
-  ].filter(Boolean);
-  const capSuffix = capDetails.length ? `, ${capDetails.join(", ")}` : "";
-  logger.info(
-    "[agent-batch] maxTokens: %d (sum=%d from [%s]%s)",
-    batchMaxTokens,
-    rawBatchMaxTokens,
-    perAgentTokens.join(", "),
-    capSuffix,
-  );
+    const streamResponses = context.streaming !== false;
+    const capDetails = [
+      provider.maxTokensOverrideValue !== null ? `connection cap=${provider.maxTokensOverrideValue}` : null,
+      modelMaxOutput ? `model cap=${modelMaxOutput}` : null,
+    ].filter(Boolean);
+    const capSuffix = capDetails.length ? `, ${capDetails.join(", ")}` : "";
+    logger.info(
+      "[agent-batch] maxTokens: %d (sum=%d from [%s]%s)",
+      batchMaxTokens,
+      rawBatchMaxTokens,
+      perAgentTokens.join(", "),
+      capSuffix,
+    );
 
     logger.debug(`\n[agent-batch] ═══ BATCH PROMPT — [${configs.map((c) => c.type).join(", ")}] — ${model} ═══`);
     for (const msg of messages) {
@@ -1037,7 +1037,9 @@ function buildBatchSystemPrompt(configs: AgentExecConfig[], context: AgentContex
   // ── Output format ──
   parts.push(``);
   parts.push(`─── REQUIRED OUTPUT FORMAT ───`);
-  parts.push(`Return ONLY one valid JSON object using this property layout; replace each null with that agent's output:`);
+  parts.push(
+    `Return ONLY one valid JSON object using this property layout; replace each null with that agent's output:`,
+  );
   parts.push(`{`);
   configs.forEach((config, index) => {
     const comma = index === configs.length - 1 ? "" : ",";
@@ -1081,11 +1083,16 @@ function parseBatchResponse(
     if (!expectedAgentTypes.has(block.agent) || explicitResults.has(block.agent)) continue;
     explicitResults.set(block.agent, block.content.trim());
   }
-  const residualText = removeSpans(responseText, resultBlocks.map((block) => [block.start, block.end] as const));
+  const residualText = removeSpans(
+    responseText,
+    resultBlocks.map((block) => [block.start, block.end] as const),
+  );
 
   for (const config of configs) {
     const matchedOutput =
-      jsonResults?.get(config.type) ?? explicitResults.get(config.type) ?? matchLegacyResultTag(config.type, residualText);
+      jsonResults?.get(config.type) ??
+      explicitResults.get(config.type) ??
+      matchLegacyResultTag(config.type, residualText);
 
     if (matchedOutput !== null) {
       const parsedResult = parseAgentResponse(config, matchedOutput);
@@ -1511,10 +1518,7 @@ function normalizeCustomMusicFolder(value: unknown): string {
 }
 
 function formatLocalMusicTrackName(name: string): string {
-  return name
-    .replace(/[-_]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return name.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function encodeLocalMusicPath(path: string): string {
@@ -1898,7 +1902,9 @@ function buildAgentMessages(
 
   if (context.mainResponse) {
     finalParts.push(`<assistant_response>`);
-    finalParts.push(options.preserveAssistantResponseMarkup ? context.mainResponse : stripHtmlTags(context.mainResponse));
+    finalParts.push(
+      options.preserveAssistantResponseMarkup ? context.mainResponse : stripHtmlTags(context.mainResponse),
+    );
     finalParts.push(`</assistant_response>`);
   }
 
@@ -2150,6 +2156,12 @@ function buildAgentExtras(context: AgentContext, agentTypes: string[] = []): str
     parts.push(`<spotify_dj_constraints>`);
     parts.push(JSON.stringify(context.memory._spotifyDjConstraints));
     parts.push(`</spotify_dj_constraints>`);
+  }
+
+  if (agentTypes.includes("spotify") && context.memory._spotifyDjCurrentPlayback) {
+    parts.push(`<spotify_current_playback>`);
+    parts.push(JSON.stringify(context.memory._spotifyDjCurrentPlayback));
+    parts.push(`</spotify_current_playback>`);
   }
 
   if (agentTypes.includes("youtube") && context.memory._youtubeDjConstraints) {
