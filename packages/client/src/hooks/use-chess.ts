@@ -1,24 +1,25 @@
 // ──────────────────────────────────────────────
-// Hook: Turn-Game (UNO) API
+// Hook: Turn-Game (Chess) API
 // ──────────────────────────────────────────────
+// Mirrors use-uno.ts against the same game-agnostic /turn-games REST surface.
+// Reuses unoKeys' query-key root (one chat has at most one active turn-game,
+// so both boards share the /state resource and invalidation stays coherent).
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ApiError, api } from "../lib/api-client";
 import { chatKeys } from "./use-chats";
 import { useGenerate } from "./use-generate";
-import { turnGameKeys } from "./turn-game-keys";
-import { useUnoGameStore } from "../stores/uno-game.store";
-import type { UnoConfig, UnoPublicView } from "@marinara-engine/shared";
-
-export const unoKeys = turnGameKeys;
+import { useChessGameStore } from "../stores/chess-game.store";
+import { unoKeys } from "./use-uno";
+import type { ChessConfig, ChessMove, ChessPublicView } from "@marinara-engine/shared";
 
 interface StateResponse {
-  view: UnoPublicView;
+  view: ChessPublicView | { gameType?: string };
 }
 
 interface OutcomeResponse {
   ok: boolean;
-  view?: UnoPublicView;
+  view?: ChessPublicView;
   error?: string;
   finished?: boolean;
   winnerSeatId?: string | null;
@@ -26,11 +27,10 @@ interface OutcomeResponse {
   legalMoves?: unknown[];
 }
 
-export interface StartUnoBody {
-  gameType: string;
-  config?: Partial<UnoConfig>;
-  botCharacterIds?: string[];
-  seatOrder?: string[];
+export interface StartChessBody {
+  gameType: "chess";
+  config?: Partial<ChessConfig>;
+  botCharacterIds: string[];
   humanFirst?: boolean;
 }
 
@@ -38,18 +38,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-// The /turn-games REST surface is shared by every game type; only UNO views may
-// reach the UNO store (a chess view rendered as UNO crashes the board).
-function isUnoView(view: unknown): view is UnoPublicView {
-  return isRecord(view) && view.gameType === "uno";
+function isChessView(view: unknown): view is ChessPublicView {
+  return isRecord(view) && view.gameType === "chess";
 }
 
 /**
- * Open a generate request to drive the bot seats, but only when the resulting
- * turn belongs to a bot (not the human, and not a finished game). This is the
- * single bridge that lets the server's bot loop stream into the open chat —
- * fired both after a human move AND right after dealing, since the opening card
- * (skip/reverse) or seat order can hand the first turn to a bot.
+ * Open a generate request to drive the bot seat, but only when the resulting
+ * turn belongs to the bot (not the human, and not a finished game). Fired both
+ * after a human move AND right after starting — with random colors the bot can
+ * draw white and must play the opening move.
  */
 function maybeFireBotTurns(
   qc: ReturnType<typeof useQueryClient>,
@@ -67,10 +64,11 @@ function maybeFireBotTurns(
   generate({ chatId, connectionId: chat?.connectionId ?? null, turnGameBots: true });
 }
 
-/** Fetch the current board for a chat (404 = no active game). Feeds the store. */
-export function useUnoState(chatId: string | null) {
+/** Fetch the current board for a chat (404 = no active game). Feeds the chess store
+ * only when the active turn-game IS chess; other game types are left alone. */
+export function useChessState(chatId: string | null) {
   return useQuery({
-    queryKey: chatId ? unoKeys.state(chatId) : [...unoKeys.all, "state", "none"],
+    queryKey: chatId ? [...unoKeys.state(chatId), "chess"] : [...unoKeys.all, "state", "none", "chess"],
     enabled: !!chatId,
     staleTime: 30_000,
     retry: false,
@@ -78,12 +76,12 @@ export function useUnoState(chatId: string | null) {
       if (!chatId) return null;
       try {
         const res = await api.get<StateResponse>(`/turn-games/${chatId}/state`);
-        if (isUnoView(res?.view)) useUnoGameStore.getState().setUno(res.view, chatId);
-        else if (res?.view) useUnoGameStore.getState().clearUno(chatId); // another game type is active
+        if (isChessView(res?.view)) useChessGameStore.getState().setChess(res.view, chatId);
+        else if (res?.view) useChessGameStore.getState().clearChess(chatId); // another game type is active
         return res;
       } catch (err) {
         if (err instanceof ApiError && err.status === 404) {
-          useUnoGameStore.getState().clearUno(chatId);
+          useChessGameStore.getState().clearChess(chatId);
           return null;
         }
         throw err;
@@ -92,47 +90,47 @@ export function useUnoState(chatId: string | null) {
   });
 }
 
-export function useStartUno(chatId: string) {
+export function useStartChess(chatId: string) {
   const qc = useQueryClient();
   const { generate } = useGenerate();
   return useMutation({
-    mutationFn: (body: StartUnoBody) => api.post<OutcomeResponse>(`/turn-games/${chatId}/start`, body),
+    mutationFn: (body: StartChessBody) => api.post<OutcomeResponse>(`/turn-games/${chatId}/start`, body),
     onSuccess: (res) => {
-      if (isUnoView(res?.view)) useUnoGameStore.getState().setUno(res.view, chatId);
+      if (isChessView(res?.view)) useChessGameStore.getState().setChess(res.view, chatId);
       qc.invalidateQueries({ queryKey: unoKeys.state(chatId) });
-      // If the opening card or seat order hands the first turn to a bot, kick off the bot loop.
+      // If the color draw hands the first move to the bot, kick off the bot loop.
       maybeFireBotTurns(qc, generate, chatId, res);
     },
     onError: (err: unknown) => toast.error(err instanceof Error ? err.message : "Failed to start the game"),
   });
 }
 
-export function useUnoMove(chatId: string) {
+export function useChessMove(chatId: string) {
   const qc = useQueryClient();
   const { generate } = useGenerate();
   return useMutation({
-    mutationFn: (vars: { move: unknown }) => api.post<OutcomeResponse>(`/turn-games/${chatId}/move`, vars),
+    mutationFn: (vars: { move: ChessMove }) => api.post<OutcomeResponse>(`/turn-games/${chatId}/move`, vars),
     onSuccess: (res) => {
-      if (isUnoView(res?.view)) useUnoGameStore.getState().setUno(res.view, chatId);
-      // Open a generate request so the server drives the bot seats over SSE.
+      if (isChessView(res?.view)) useChessGameStore.getState().setChess(res.view, chatId);
+      // Open a generate request so the server drives the bot seat over SSE.
       maybeFireBotTurns(qc, generate, chatId, res);
     },
     onError: (err: unknown) => {
       // The server returns 409 with { error, legalMoves, view } for an illegal move.
-      if (err instanceof ApiError && isRecord(err.payload) && isUnoView(err.payload.view)) {
-        useUnoGameStore.getState().setUno(err.payload.view, chatId);
+      if (err instanceof ApiError && isRecord(err.payload) && isChessView(err.payload.view)) {
+        useChessGameStore.getState().setChess(err.payload.view, chatId);
       }
       toast.error(err instanceof Error ? err.message : "Illegal move");
     },
   });
 }
 
-export function useResignUno(chatId: string) {
+export function useResignChess(chatId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api.post(`/turn-games/${chatId}/resign`, {}),
     onSuccess: () => {
-      useUnoGameStore.getState().clearUno(chatId);
+      useChessGameStore.getState().clearChess(chatId);
       qc.invalidateQueries({ queryKey: unoKeys.state(chatId) });
     },
   });

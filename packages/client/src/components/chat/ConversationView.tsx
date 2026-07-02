@@ -18,6 +18,8 @@ import { ConversationMessage } from "./ConversationMessage";
 import { ConversationInput } from "./ConversationInput";
 import { UnoBoard } from "./UnoBoard";
 import { UnoSetup } from "./UnoSetup";
+import { ChessBoard } from "./ChessBoard";
+import { ChessSetup } from "./ChessSetup";
 import { SceneBanner, EndSceneBar } from "./SceneBanner";
 import { ChatBranchSelector } from "./ChatBranchSelector";
 import { ActiveLorebookEntriesButton } from "./ActiveLorebookEntriesButton";
@@ -27,8 +29,10 @@ import { TranscriptWindowControls } from "./TranscriptWindowControls";
 import { PinnedImageOverlay } from "./PinnedImageOverlay";
 import { useChatStore } from "../../stores/chat.store";
 import { useUnoGameStore } from "../../stores/uno-game.store";
+import { useChessGameStore } from "../../stores/chess-game.store";
 import { useUIStore } from "../../stores/ui.store";
 import { playConfiguredNotificationPing } from "../../lib/notification-sound";
+import { useRenderTimer } from "../../lib/perf-diagnostics";
 import { messageHasPendingPostProcessing } from "../../lib/chat-message-extra";
 import { getTranscriptRenderWindow, TRANSCRIPT_RENDER_WINDOW_STEP } from "../../lib/transcript-render-window";
 import { useThrottledStreamBuffer } from "../../hooks/use-throttled-stream-buffer";
@@ -273,11 +277,15 @@ export function ConversationView({
   onConcludeScene,
   onAbandonScene,
 }: ConversationViewProps) {
+  useRenderTimer("convo-messages"); // [#3104 diagnostic]
   const streamingChatId = useChatStore((s) => s.streamingChatId);
   const isStreaming = useChatStore((s) => s.isStreaming) && streamingChatId === chatId;
   const unoGameActive = useUnoGameStore((s) => s.current?.chatId === chatId && s.current?.status !== "finished");
   const unoSetupOpen = useUnoGameStore((s) => s.setupChatId === chatId);
   const closeUnoSetup = useUnoGameStore((s) => s.closeSetup);
+  const chessGameActive = useChessGameStore((s) => s.current?.chatId === chatId && s.current?.status !== "finished");
+  const chessSetupOpen = useChessGameStore((s) => s.setupChatId === chatId);
+  const closeChessSetup = useChessGameStore((s) => s.closeSetup);
   const isStreamCommitted = useChatStore((s) => s.committedStreamChatIds.has(chatId));
   const hasLiveStream = isStreaming && !isStreamCommitted;
   const streamBuffer = useThrottledStreamBuffer();
@@ -1161,7 +1169,7 @@ export function ConversationView({
         )}
 
         {/* Scene banner — inline at bottom of messages (origin variant only); hidden during a turn-game */}
-        {sceneInfo?.variant === "origin" && !unoGameActive && (
+        {sceneInfo?.variant === "origin" && !unoGameActive && !chessGameActive && (
           <SceneBanner variant="origin" sceneChatId={sceneInfo.sceneChatId} sceneChatName={sceneInfo.sceneChatName} />
         )}
 
@@ -1192,13 +1200,18 @@ export function ConversationView({
         />
       )}
 
-      {/* ── Turn-game board (UNO, etc.) — self-hides when no game is active ── */}
+      {/* ── Turn-game boards (UNO, chess) — each self-hides when no game is active ── */}
       <UnoBoard chatId={chatId} />
-      {/* Setup modal mounted once here (stable position) so it never double-renders.
-          Keyed by chatId so its internal selection/house-rule state resets on a
-          chat switch (matches ConversationInput below) — otherwise stale selected
-          ids would inflate botCount and could deal an empty botCharacterIds list. */}
-      <UnoSetup key={chatId} chatId={chatId} open={unoSetupOpen} onClose={closeUnoSetup} />
+      <ChessBoard chatId={chatId} />
+      {/* Setup modals mounted once here (stable position) so they never double-render.
+          Keyed by chatId so their internal selection state resets on a chat switch
+          (matches ConversationInput below) — otherwise stale selected ids would
+          inflate botCount and could deal an empty botCharacterIds list. */}
+      {/* Keys must be unique across this whole children list — ConversationInput
+          below is also keyed by chatId, and duplicate sibling keys make React
+          duplicate/orphan the setup modals (stuck un-closable "Start UNO"). */}
+      <UnoSetup key={`uno-${chatId}`} chatId={chatId} open={unoSetupOpen} onClose={closeUnoSetup} />
+      <ChessSetup key={`chess-${chatId}`} chatId={chatId} open={chessSetupOpen} onClose={closeChessSetup} />
 
       {/* ── Input area ── */}
       <ConversationInput

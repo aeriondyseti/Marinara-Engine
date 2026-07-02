@@ -62,6 +62,7 @@ import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { spriteKeys, type SpriteInfo } from "../../hooks/use-characters";
 import { lorebookKeys } from "../../hooks/use-lorebooks";
 import { api, getJsonRepairRequest, type JsonRepairRequest } from "../../lib/api-client";
+import { useRenderTimer } from "../../lib/perf-diagnostics";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import { CHAT_FLOATING_UI_DISMISS_EVENT } from "../../lib/chat-floating-ui-events";
 import { cn, parseAvatarCropJson, type AvatarCrop, type LegacyAvatarCrop, type AvatarCropValue } from "../../lib/utils";
@@ -180,6 +181,7 @@ type GameAssetGenerationPayload = {
   npcsNeedingAvatars?: Array<{ name: string; description: string; gender?: string | null; pronouns?: string | null }>;
   forceNpcAvatarNames?: string[];
   illustration?: import("@marinara-engine/shared").SceneIllustrationRequest;
+  illustrationNarration?: string;
   useAvatarReferences?: boolean;
   includeCharacterAppearance?: boolean;
   forceIllustration?: boolean;
@@ -1982,6 +1984,7 @@ function GameSurfaceComponent({
   selectedMessageIds,
   isMessagesLoading,
 }: GameSurfaceProps) {
+  useRenderTimer("game-surface"); // [#3104 diagnostic]
   // Sync game metadata → store
   useSyncGameState(activeChatId, chatMeta);
 
@@ -4510,7 +4513,10 @@ function GameSurfaceComponent({
     [clearFailedNpcAvatars, fetchManifest, installGeneratedIllustration],
   );
 
-  async function applySceneResult(result: import("@marinara-engine/shared").SceneAnalysis, msg: { id: string }) {
+  async function applySceneResult(
+    result: import("@marinara-engine/shared").SceneAnalysis,
+    msg: { id: string; content?: string | null },
+  ) {
     setSceneAnalysisFailed(false);
     // NOTE: Game state transitions are owned exclusively by the GM model via [state: ...] tags.
     // The scene model no longer emits stateChange to avoid conflicting state flips.
@@ -4657,6 +4663,7 @@ function GameSurfaceComponent({
           chatId: activeChatId,
           backgroundTag: unresolvedBg || undefined,
           illustration: pendingIllustration ?? undefined,
+          illustrationNarration: pendingIllustration && messageTags ? messageTags.cleanContent : undefined,
           npcsNeedingAvatars: npcsNeedingAvatars.length > 0 ? npcsNeedingAvatars : undefined,
           debugMode: useUIStore.getState().debugMode,
         };
@@ -4838,11 +4845,12 @@ function GameSurfaceComponent({
     }
 
     const msg = latestAssistantMsgRef.current;
-    const narration = msg?.content ? parseGmTags(msg.content).cleanContent.trim() : "";
-    if (!narration) {
+    const fullNarration = msg?.content ? parseGmTags(msg.content).cleanContent.trim() : "";
+    if (!fullNarration) {
       toast.error("The GM needs to write a scene before Illustrator can draw it.");
       return;
     }
+    const promptNarration = fullNarration.slice(0, 5000);
 
     const setupConfig = chatMeta.gameSetupConfig as Record<string, unknown> | null;
     const location = gameSnapshot?.location ? `Location: ${gameSnapshot.location}` : null;
@@ -4856,7 +4864,7 @@ function GameSurfaceComponent({
     const characters = visibleCharacters.length > 0 ? visibleCharacters : trackedNpcNames;
     const prompt = [
       "Create a cinematic game scene illustration for the current moment.",
-      `Narration: ${narration}`,
+      `Narration: ${promptNarration}`,
       location,
       weather,
       time,
@@ -4868,7 +4876,7 @@ function GameSurfaceComponent({
     ]
       .filter(Boolean)
       .join("\n")
-      .slice(0, 1200);
+      .slice(0, 5000);
     const slugBase = backgroundOptionKey(
       [gameSnapshot?.location, msg?.id, Date.now().toString(36)].filter(Boolean).join("-"),
     ).slice(0, 72);
@@ -4881,6 +4889,7 @@ function GameSurfaceComponent({
         reason: "Manual Gallery Illustrate request",
         slug: slugBase || undefined,
       },
+      illustrationNarration: fullNarration,
       forceIllustration: true,
       debugMode: useUIStore.getState().debugMode,
     };
@@ -6576,6 +6585,10 @@ function GameSurfaceComponent({
           ) {
             const illustrationPrompt = visuals?.illustrationPrompt?.trim() || "";
             const backgroundPrompt = visuals?.backgroundPrompt?.trim() || "";
+            const sourceNarration =
+              latestAssistantMsgRef.current?.id === messageId && latestAssistantMsgRef.current.content
+                ? parseGmTags(latestAssistantMsgRef.current.content).cleanContent.trim()
+                : "";
             const assetPayload = {
               chatId: activeChatId,
               backgroundTag: backgroundPrompt ? `boss fight: ${backgroundPrompt}` : undefined,
@@ -6591,6 +6604,7 @@ function GameSurfaceComponent({
                       ].slice(0, 6),
                     }
                   : undefined,
+              illustrationNarration: illustrationPrompt.length >= 40 && sourceNarration ? sourceNarration : undefined,
               npcsNeedingAvatars: shouldGenerateEnemyAvatars ? enemyAvatarRequests : undefined,
               debugMode: useUIStore.getState().debugMode,
             };

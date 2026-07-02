@@ -42,7 +42,7 @@ import {
   type SpriteInfo,
 } from "../../hooks/use-characters";
 import { usePageActivity } from "../../hooks/use-page-activity";
-import { useRenderTimer } from "../../lib/perf-diagnostics";
+import { useRenderTimer, useWhyRender } from "../../lib/perf-diagnostics";
 import { usePresenceClock } from "../../hooks/use-presence-clock";
 import { api, ApiError } from "../../lib/api-client";
 import { getChatDisplayName, getConnectedChatDisplayName, parseChatMetadata } from "../../lib/chat-display";
@@ -764,6 +764,32 @@ export function ChatArea() {
     () => chatCharIds.map((id) => characterMap.get(id)?.name).filter((n): n is string => !!n),
     [characterMap, chatCharIds],
   );
+
+  // [#3104 diagnostic] Re-render driver probe: names which source input changed
+  // on each ChatArea render (and flags IDLE re-renders = a loop). Inert unless
+  // localStorage.mariPerfVerbose = "1".
+  useWhyRender("chat-area", () => ({
+    activeChatId,
+    chatMode,
+    isStreaming,
+    isLoading,
+    chatDetail,
+    allChats,
+    msgPages: msgData?.pages,
+    messages,
+    messageCountData,
+    characterMap,
+    presenceNow,
+    agentProcessing,
+    failedAgentTypes,
+    chatBackground,
+    weatherEffects,
+    messagesPerPage,
+    regenerateMessageId,
+    streamingChatId,
+    isPageActive,
+    pendingNewChatMode,
+  }));
 
   const gameCharacters = useMemo(() => {
     if (!isGameChat || !gameLibraryCharacters) return [];

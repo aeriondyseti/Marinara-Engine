@@ -12,6 +12,7 @@ import { formatGenerationParameterError } from "../lib/generation-parameter-erro
 import { requestChatScrollToBottom } from "../lib/chat-scroll-events";
 import { agentKeys } from "./use-agents";
 import { discardPendingGameStatePatch } from "./use-game-state-patcher";
+import { turnGameKeys } from "./turn-game-keys";
 import type { PendingAgentWriteApproval, PendingCardUpdate } from "../stores/agent.store";
 import type { DelayedCharacterInfo } from "../stores/chat.store";
 import {
@@ -377,6 +378,7 @@ import { useAgentStore } from "../stores/agent.store";
 import { useGameModeStore } from "../stores/game-mode.store";
 import { useGameStateStore } from "../stores/game-state.store";
 import { useUnoGameStore } from "../stores/uno-game.store";
+import { useChessGameStore } from "../stores/chess-game.store";
 import { useTranslationStore } from "../stores/translation.store";
 import { useUIStore } from "../stores/ui.store";
 import {
@@ -1723,8 +1725,25 @@ export function useGenerate() {
             }
 
             case "turn_game_state_patch": {
-              if (!isActiveChat()) break;
-              useUnoGameStore.getState().setUno(event.data as never, params.chatId);
+              // The payload carries a gameType discriminator — route it to the matching
+              // board store only; a view from one game rendered by another board crashes.
+              const turnGameType = (event.data as { gameType?: string } | null)?.gameType;
+              if (!isActiveChat()) {
+                // A background chat's board can't be painted, but a silently
+                // dropped patch leaves a stale snapshot that blocks re-hydration
+                // on switch-back (the state query is disabled while a snapshot
+                // exists). Drop the snapshot and mark the query stale so
+                // returning to the chat refetches the board.
+                if (turnGameType === "chess") useChessGameStore.getState().clearChess(params.chatId);
+                else if (turnGameType === "uno") useUnoGameStore.getState().clearUno(params.chatId);
+                void qc.invalidateQueries({ queryKey: turnGameKeys.state(params.chatId) });
+                break;
+              }
+              if (turnGameType === "chess") {
+                useChessGameStore.getState().setChess(event.data as never, params.chatId);
+              } else if (turnGameType === "uno") {
+                useUnoGameStore.getState().setUno(event.data as never, params.chatId);
+              }
               break;
             }
 
@@ -2762,8 +2781,25 @@ export function useGenerate() {
               break;
             }
             case "turn_game_state_patch": {
-              if (!isActiveChat()) break;
-              useUnoGameStore.getState().setUno(event.data as never, chatId);
+              // The payload carries a gameType discriminator — route it to the matching
+              // board store only; a view from one game rendered by another board crashes.
+              const turnGameType = (event.data as { gameType?: string } | null)?.gameType;
+              if (!isActiveChat()) {
+                // A background chat's board can't be painted, but a silently
+                // dropped patch leaves a stale snapshot that blocks re-hydration
+                // on switch-back (the state query is disabled while a snapshot
+                // exists). Drop the snapshot and mark the query stale so
+                // returning to the chat refetches the board.
+                if (turnGameType === "chess") useChessGameStore.getState().clearChess(chatId);
+                else if (turnGameType === "uno") useUnoGameStore.getState().clearUno(chatId);
+                void qc.invalidateQueries({ queryKey: turnGameKeys.state(chatId) });
+                break;
+              }
+              if (turnGameType === "chess") {
+                useChessGameStore.getState().setChess(event.data as never, chatId);
+              } else if (turnGameType === "uno") {
+                useUnoGameStore.getState().setUno(event.data as never, chatId);
+              }
               break;
             }
             case "game_map_update": {
