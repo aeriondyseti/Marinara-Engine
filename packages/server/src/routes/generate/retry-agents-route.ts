@@ -1024,6 +1024,9 @@ async function resolveRetryAgents(args: {
       customParameters: Record<string, unknown>;
       maxOutputTokens: number | null;
       maxParallelJobs: number;
+      enableCaching: boolean;
+      anthropicExtendedCacheTtl: boolean;
+      cachingAtDepth: number;
     } | null;
     unavailableReason?: string;
     connectionName?: string;
@@ -1064,6 +1067,9 @@ async function resolveRetryAgents(args: {
         customParameters: parseStoredGenerationParameters(storedConn.defaultParameters)?.customParameters ?? {},
         maxOutputTokens: knownModel?.maxOutput && knownModel.maxOutput > 0 ? Math.floor(knownModel.maxOutput) : null,
         maxParallelJobs: Number(storedConn.maxParallelJobs) || 1,
+        enableCaching: storedConn.enableCaching === "true",
+        anthropicExtendedCacheTtl: storedConn.anthropicExtendedCacheTtl === "true",
+        cachingAtDepth: Number(storedConn.cachingAtDepth) || 5,
       },
     };
   };
@@ -1140,6 +1146,9 @@ async function resolveRetryAgents(args: {
           customParameters: {},
           maxOutputTokens: null,
           maxParallelJobs: 1,
+          enableCaching: false,
+          anthropicExtendedCacheTtl: false,
+          cachingAtDepth: 5,
         },
       };
     }
@@ -1214,6 +1223,9 @@ async function resolveRetryAgents(args: {
         settings,
         customParameters: agentConnection.entry.customParameters,
         maxOutputTokens: agentConnection.entry.maxOutputTokens,
+        enableCaching: agentConnection.entry.enableCaching,
+        anthropicExtendedCacheTtl: agentConnection.entry.anthropicExtendedCacheTtl,
+        cachingAtDepth: agentConnection.entry.cachingAtDepth,
         provider: agentConnection.entry.provider,
         model: agentConnection.entry.model,
         maxParallelJobs: agentConnection.entry.maxParallelJobs,
@@ -1285,6 +1297,9 @@ async function resolveRetryAgents(args: {
         settings,
         customParameters: builtInConnection.entry.customParameters,
         maxOutputTokens: builtInConnection.entry.maxOutputTokens,
+        enableCaching: builtInConnection.entry.enableCaching,
+        anthropicExtendedCacheTtl: builtInConnection.entry.anthropicExtendedCacheTtl,
+        cachingAtDepth: builtInConnection.entry.cachingAtDepth,
         provider: builtInConnection.entry.provider,
         model: builtInConnection.entry.model,
         maxParallelJobs: builtInConnection.entry.maxParallelJobs,

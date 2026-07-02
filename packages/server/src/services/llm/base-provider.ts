@@ -101,6 +101,8 @@ export interface ChatOptions {
   tools?: LLMToolDefinition[];
   /** Enable provider-native prompt caching when supported */
   enableCaching?: boolean;
+  /** Anthropic only: use 1-hour prompt-cache TTL instead of the default 5-minute TTL */
+  anthropicExtendedCacheTtl?: boolean;
   /** Anthropic cache breakpoint depth from the newest message. 0 = newest message. */
   cachingAtDepth?: number;
   /** Callback for streaming thinking/reasoning content */

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   applyRegexReplacement,
+  buildNarratorInstructionMessage,
   compileChatSummaryEntries,
   compileImagePrompt,
   createRegexScriptSchema,
@@ -34,6 +35,7 @@ import type { DB } from "../../packages/server/src/db/connection.js";
 import { escapeXmlText } from "../../packages/server/src/services/prompt/prompt-escaping.js";
 import {
   appendNonLeadingSystemMessagesToLastUser,
+  buildGenerationGuideInstruction,
   appendSeparateAgentInjectionMessage,
   shouldEnableAgentsForGeneration,
   shouldInjectIdentityFallback,
@@ -316,6 +318,26 @@ const cases: RegressionCase[] = [
       });
 
       assert.equal(resolved, "Profile: Dottore keeps notes for Mari.");
+    },
+  },
+  {
+    name: "/guided narrator instructions resolve prompt macros",
+    run() {
+      const instruction = buildGenerationGuideInstruction(
+        buildNarratorInstructionMessage("Steer the scene toward {{char}} reassuring {{user}}."),
+        {
+          user: "Mari",
+          char: "Dottore",
+          characters: ["Dottore"],
+          variables: {},
+        },
+      );
+
+      assert.ok(instruction);
+      assert.match(instruction, /^Take the following into special consideration for your next message:/);
+      assert.match(instruction, /Dottore reassuring Mari/);
+      assert.equal(instruction.includes("{{user}}"), false);
+      assert.equal(instruction.includes("{{char}}"), false);
     },
   },
   {

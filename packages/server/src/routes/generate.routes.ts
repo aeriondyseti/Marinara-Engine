@@ -203,6 +203,7 @@ import {
   appendReadableAttachmentsToContent,
   extractFileAttachmentInputs,
   getAttachmentFilename,
+  buildGenerationGuideInstruction,
   buildUserMessageRegenerationPromptFromSource,
   buildLockedPlayerStatsArrayPatch,
   buildLockedPersonaTrackerPatch,
@@ -1036,6 +1037,9 @@ type ImageCaptionConnection = {
   maxTokensOverride?: number | null;
   claudeFastMode?: string | null;
   treatAsLocalEndpoint?: string | null;
+  enableCaching?: string | null;
+  anthropicExtendedCacheTtl?: string | null;
+  cachingAtDepth?: number | null;
 };
 
 type ImageCaptioningRuntime = {
@@ -1136,6 +1140,9 @@ async function generateImageCaptionForAttachment(
         model: imageCaptioning.connection.model,
         temperature: 0.2,
         maxTokens: applyProviderMaxTokensOverride(imageCaptioning.provider, IMAGE_CAPTION_MAX_TOKENS),
+        enableCaching: imageCaptioning.connection.enableCaching === "true",
+        anthropicExtendedCacheTtl: imageCaptioning.connection.anthropicExtendedCacheTtl === "true",
+        cachingAtDepth: imageCaptioning.connection.cachingAtDepth ?? 5,
         stream: false,
         signal,
       },
@@ -4143,6 +4150,9 @@ export async function generateRoutes(app: FastifyInstance) {
           chatCustomParameters: connectionParams?.customParameters ?? {},
           chatMaxOutputTokens: chatConnectionMaxOutputTokens,
           chatMaxParallelJobs: chatConnectionMaxParallelJobs,
+          chatEnableCaching: conn.enableCaching === "true",
+          chatAnthropicExtendedCacheTtl: conn.anthropicExtendedCacheTtl === "true",
+          chatCachingAtDepth: conn.cachingAtDepth ?? 5,
           activeMusicPlayerSource,
           chatMetadata: chatMeta,
           resolveBaseUrl,
@@ -6631,6 +6641,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   stop: stopSequences.length ? stopSequences : undefined,
                   tools: toolDefs,
                   enableCaching: conn.enableCaching === "true",
+                  anthropicExtendedCacheTtl: conn.anthropicExtendedCacheTtl === "true",
                   cachingAtDepth: conn.cachingAtDepth ?? 5,
                   enableThinking,
                   captureReasoning,
@@ -6786,6 +6797,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   minP: minP || undefined,
                   stop: stopSequences.length ? stopSequences : undefined,
                   enableCaching: conn.enableCaching === "true",
+                  anthropicExtendedCacheTtl: conn.anthropicExtendedCacheTtl === "true",
                   cachingAtDepth: conn.cachingAtDepth ?? 5,
                   enableThinking,
                   captureReasoning,
@@ -6842,6 +6854,7 @@ export async function generateRoutes(app: FastifyInstance) {
               stop: stopSequences.length ? stopSequences : undefined,
               stream: input.streaming,
               enableCaching: conn.enableCaching === "true",
+              anthropicExtendedCacheTtl: conn.anthropicExtendedCacheTtl === "true",
               cachingAtDepth: conn.cachingAtDepth ?? 5,
               enableThinking,
               captureReasoning,
@@ -7467,20 +7480,7 @@ export async function generateRoutes(app: FastifyInstance) {
         // (firstSavedMsg/lastSavedMsg/collectedCommands/collectedOocMessages
         // are declared above the follow-up loop so they survive iterations.)
 
-        const rawGenerationGuide = typeof input.generationGuide === "string" ? input.generationGuide.trim() : "";
-        const normalizedGenerationGuide = rawGenerationGuide
-          ? resolveMacros(
-              rawGenerationGuide,
-              {
-                ...promptMacroContext,
-                variables: { ...promptMacroContext.variables },
-              },
-              { trimResult: false },
-            ).trim()
-          : "";
-        const generationGuideInstruction = normalizedGenerationGuide
-          ? `Take the following into special consideration for your next message: ${normalizedGenerationGuide}`
-          : null;
+        const generationGuideInstruction = buildGenerationGuideInstruction(input.generationGuide, promptMacroContext);
         const filterManualTargetProfileBlocks = (messages: typeof finalMessages, targetCharId: string) => {
           if (groupResponseOrder !== "manual") return messages;
           const otherNames = charInfo.filter((c) => c.id !== targetCharId).map((c) => c.name);

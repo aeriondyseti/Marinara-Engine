@@ -380,6 +380,7 @@ type ConnectionRowData = {
   isDefault?: boolean | string;
   defaultForAgents?: boolean | string;
   enableCaching?: boolean | string;
+  anthropicExtendedCacheTtl?: boolean | string;
   cachingAtDepth?: number;
   embeddingModel?: string | null;
   embeddingBaseUrl?: string | null;

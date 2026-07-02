@@ -63,6 +63,7 @@ type WorkspaceConnection = Pick<
   | "claudeFastMode"
   | "treatAsLocalEndpoint"
   | "enableCaching"
+  | "anthropicExtendedCacheTtl"
   | "cachingAtDepth"
 > & { provider: string; isLocalSidecar?: boolean };
 type PromptEventSink = (event: MariWorkspacePromptEvent) => void;
@@ -1603,6 +1604,7 @@ ${sections.join("\n\n")}
       maxTokens: normalizeMariMaxTokens(defaultParameters?.maxTokens) ?? resolveMariMaxOutputTokens(connection),
       maxContext: connection.maxContext,
       enableCaching: bool(connection.enableCaching),
+      anthropicExtendedCacheTtl: bool(connection.anthropicExtendedCacheTtl),
       cachingAtDepth: connection.cachingAtDepth ?? 5,
       serviceTier: normalizeServiceTier(defaultParameters?.serviceTier),
       openrouterProvider: connection.openrouterProvider,
@@ -2077,6 +2079,7 @@ ${sections.join("\n\n")}
       claudeFastMode: "false",
       treatAsLocalEndpoint: "true",
       enableCaching: "false",
+      anthropicExtendedCacheTtl: "false",
       cachingAtDepth: 5,
       isLocalSidecar: true,
     };

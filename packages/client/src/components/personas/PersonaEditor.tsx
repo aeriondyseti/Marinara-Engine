@@ -904,28 +904,6 @@ export function PersonaEditor() {
             <p className="mari-editor-meta text-[0.625rem]">
               {formData.creator ? `by ${formData.creator}` : "No creator"} · v{formData.personaVersion || "1.0"}
             </p>
-            {personaId && (
-              <div className="mt-2 flex max-w-full flex-wrap items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/70 px-2 py-1.5">
-                <span className="text-[0.625rem] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
-                  Persona ID
-                </span>
-                <code className="min-w-0 flex-1 break-all rounded-md bg-[var(--background)] px-2 py-1 text-[0.6875rem] text-[var(--foreground)]">
-                  {personaId}
-                </code>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void navigator.clipboard?.writeText(personaId);
-                    toast.success("Persona ID copied");
-                  }}
-                  className="mari-editor-action inline-flex h-7 px-2 text-[0.6875rem]"
-                  title="Copy persona ID"
-                >
-                  <Copy size="0.75rem" />
-                  Copy
-                </button>
-              </div>
-            )}
           </div>
         </div>
 
@@ -2257,6 +2235,29 @@ function PersonaMetadataTab({
         subtitle="Basic persona info — name, creator, version, avatar, tags."
         helpText={PERSONA_METADATA_HELP}
       />
+
+      {personaId && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--secondary)]/70 px-3 py-2">
+          <span className="text-[0.625rem] font-semibold uppercase tracking-wide text-[var(--muted-foreground)]">
+            Persona ID
+          </span>
+          <code className="min-w-0 flex-1 break-all rounded-lg bg-[var(--background)] px-2 py-1 text-[0.6875rem] text-[var(--foreground)]">
+            {personaId}
+          </code>
+          <button
+            type="button"
+            onClick={() => {
+              void navigator.clipboard?.writeText(personaId);
+              toast.success("Persona ID copied");
+            }}
+            className="mari-editor-action inline-flex h-8 px-2 text-[0.6875rem]"
+            title="Copy persona ID"
+          >
+            <Copy size="0.75rem" />
+            Copy
+          </button>
+        </div>
+      )}
 
       {avatarPreview && (
         <AvatarCropWidget

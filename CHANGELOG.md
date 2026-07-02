@@ -6,6 +6,17 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ## [2.0.9]
 
+### Added
+
+- Added Chess as a Conversation-mode table game, including setup UI, move validation, board state, and model/bot play support.
+- Added Image Captioning in Advanced Parameters so chats can describe image attachments through a chosen vision-capable connection before sending them to non-vision models.
+- Added an Anthropic connection toggle for extended 1-hour prompt-cache TTLs when users want cached context to survive longer between turns.
+
+### Changed
+
+- Converted Immersive HTML from static main-prompt injection into a Roleplay post-processing rewrite agent that works alongside Prose Guardian and Continuity Checker, preserving story meaning while adding diegetic HTML/CSS/JS visuals (#3094).
+- Increased default image-generation and ComfyUI polling timeouts so slower image editing and local/remote workflows have more room to finish.
+
 ### Fixed
 
 - Fixed continue generation with rewrite agents so continued assistant messages are rewritten from the full merged message instead of being overwritten by only the new continuation text.
@@ -23,7 +34,6 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Tightened Android Firefox chat input sizing so the mobile composer grows less rigidly and leaves more room for typed text.
 - Shortened mobile Roleplay and Conversation composer placeholders so command hints do not wrap and pull the input caret upward.
 - Fixed XML prompt wrapping so user-authored `>` characters, including Markdown blockquotes, reach the model as typed while `<` and `&` remain escaped for prompt-boundary safety (#3108).
-- Converted Immersive HTML from static main-prompt injection into a Roleplay post-processing visual enhancer that can add diegetic HTML/CSS/JS without changing story meaning (#3094).
 - Fixed legacy Immersive HTML built-in configs so stock saved prompts, descriptions, phases, and result settings migrate to the new post-processing defaults instead of showing the old static prompt.
 - Added hold-until-rewrite support for Immersive HTML, pinned it to JSON text-rewrite parsing, counted it as a real post-processing call in agent load estimates, and bundled Prose Guardian, Continuity Checker, and Immersive HTML into one rewrite pass when multiple built-in rewrite agents are active.
 - Added mobile chat composer minimization while scrolling through older messages, with automatic restore near the bottom, on downward scroll, or when the minimized input is tapped (#3091).
@@ -32,6 +42,8 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Reduced tracker-panel freezes on chats with world-state/character-tracker agents by scoping tracker character/persona lookups to the active chat and containing off-screen tracker card rendering (#3104).
 - Reduced ChatArea render stalls by scoping chat character/persona, creator-notes CSS, and Conversation emoji/sticker lookups to the active chat instead of full libraries.
 - Lowered the mounted transcript render window in Conversation and Roleplay modes so long loaded chats keep fewer message components mounted at once.
+- Fixed giant imported libraries by paging character, persona, lorebook, full-library, and chat sidebar lists in 100-item batches with Load More controls, while keeping search routed across the full matching data set (#3153).
+- Fixed Debug Mode and Peek Prompt previews for `/guided` so the generated narrator instruction resolves macros like `{{user}}` the same way the real generation request does (#2906).
 
 ### Platform Notes
 
