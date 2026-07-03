@@ -3201,6 +3201,41 @@ function optionalTrimmedString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function normalizePortraitAppearancePart(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function addPortraitAppearancePart(parts: string[], value: unknown, label?: string): void {
+  const trimmed = optionalTrimmedString(value);
+  if (!trimmed) return;
+
+  const part = label ? `${label}: ${trimmed}` : trimmed;
+  const normalized = normalizePortraitAppearancePart(part);
+  if (!normalized || parts.some((existing) => normalizePortraitAppearancePart(existing) === normalized)) return;
+  parts.push(part);
+}
+
+function addPortraitAppearanceNotes(parts: string[], notes: unknown): void {
+  if (!Array.isArray(notes)) return;
+
+  const noteText = notes
+    .map((note) => optionalTrimmedString(note))
+    .filter((note): note is string => Boolean(note))
+    .join("; ");
+  addPortraitAppearancePart(parts, noteText, "Notable details");
+}
+
+function addPresentCharacterPortraitAppearance(
+  parts: string[],
+  presentCharacter: Record<string, unknown> | null,
+): void {
+  if (!presentCharacter) return;
+
+  addPortraitAppearancePart(parts, presentCharacter.appearance);
+  addPortraitAppearancePart(parts, presentCharacter.outfit, "Current outfit");
+  addPortraitAppearancePart(parts, presentCharacter.mood, "Current expression or mood");
+}
+
 function findNpcRecordByName(npcs: GameNpc[], name: string): GameNpc | null {
   const normalizedName = normalizeJournalMatch(name);
   if (!normalizedName) return null;
@@ -3222,12 +3257,24 @@ function resolveNpcPortraitAppearance(
   metadataNpc: GameNpc | null,
   presentCharacter: Record<string, unknown> | null,
 ): string {
-  return (
-    optionalTrimmedString(npc.description) ??
-    optionalTrimmedString(metadataNpc?.description) ??
-    optionalTrimmedString(presentCharacter?.appearance) ??
-    ""
-  );
+  const parts: string[] = [];
+  const metadataDescriptionIsCanonical =
+    metadataNpc?.descriptionSource === "model" || metadataNpc?.descriptionSource === "library";
+
+  if (metadataDescriptionIsCanonical) {
+    addPortraitAppearancePart(parts, metadataNpc?.description);
+  }
+
+  addPortraitAppearancePart(parts, npc.description);
+
+  if (!metadataDescriptionIsCanonical) {
+    addPortraitAppearancePart(parts, metadataNpc?.description);
+  }
+
+  addPresentCharacterPortraitAppearance(parts, presentCharacter);
+  addPortraitAppearanceNotes(parts, metadataNpc?.notes);
+
+  return parts.join(" ");
 }
 
 function hasReadableAvatar(avatarUrl: string | null | undefined): avatarUrl is string {

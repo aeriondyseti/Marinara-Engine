@@ -286,7 +286,7 @@ function NpcDefaultVoicePool({
         </div>
       ) : (
         <p className="rounded-lg border border-dashed border-[var(--border)] px-2.5 py-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-          No ElevenLabs voices loaded yet.
+          No provider voices loaded yet.
         </p>
       )}
       {note && <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">{note}</p>}
@@ -566,19 +566,25 @@ export function TTSConfigCard() {
   }, [elevenLabsMatchedFemaleVoiceOptions, npcDefaultFemaleVoices, voiceOptions]);
   const maleNpcVoiceFallbackNote =
     voiceOptions.length > 0 && elevenLabsMatchedMaleVoiceOptions.length === 0
-      ? "No male-labeled defaults were detected, so choose male voices manually here."
+      ? "No male-labeled defaults were detected, so this pool uses the provider voice list."
       : undefined;
   const femaleNpcVoiceFallbackNote =
     voiceOptions.length > 0 && elevenLabsMatchedFemaleVoiceOptions.length === 0
-      ? "No female-labeled defaults were detected, so choose female voices manually here."
+      ? "No female-labeled defaults were detected, so this pool uses the provider voice list."
       : undefined;
   const defaultMaleVoiceIds = useMemo(
-    () => elevenLabsMatchedMaleVoiceOptions.map((option) => option.id),
-    [elevenLabsMatchedMaleVoiceOptions],
+    () =>
+      (elevenLabsMatchedMaleVoiceOptions.length > 0 ? elevenLabsMatchedMaleVoiceOptions : voiceOptions).map(
+        (option) => option.id,
+      ),
+    [elevenLabsMatchedMaleVoiceOptions, voiceOptions],
   );
   const defaultFemaleVoiceIds = useMemo(
-    () => elevenLabsMatchedFemaleVoiceOptions.map((option) => option.id),
-    [elevenLabsMatchedFemaleVoiceOptions],
+    () =>
+      (elevenLabsMatchedFemaleVoiceOptions.length > 0 ? elevenLabsMatchedFemaleVoiceOptions : voiceOptions).map(
+        (option) => option.id,
+      ),
+    [elevenLabsMatchedFemaleVoiceOptions, voiceOptions],
   );
   const characterOptions = useMemo<CharacterOption[]>(() => {
     return ((characters ?? []) as Array<{ id?: string; data?: unknown; comment?: string | null }>)
@@ -1144,46 +1150,44 @@ export function TTSConfigCard() {
             </FieldRow>
           )}
 
-          {source === "elevenlabs" && (
-            <FieldRow
-              label="Random NPC Voices"
-              help="When enabled, tracked game NPCs without a character-specific voice use a stable random ElevenLabs default voice matched to inferred male/female presentation."
-            >
-              <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-2">
-                <ToggleRow
-                  label="Use default voices for random NPCs"
-                  checked={npcDefaultVoicesEnabled}
-                  onChange={toggleNpcDefaultVoices}
-                />
-                {npcDefaultVoicesEnabled && (
-                  <div className="space-y-3 pt-1">
-                    <NpcDefaultVoicePool
-                      label="Male NPC defaults"
-                      options={elevenLabsNpcMaleVoiceOptions}
-                      selected={npcDefaultMaleVoices}
-                      onToggle={(voiceId, checked) => toggleNpcDefaultVoice("male", voiceId, checked)}
-                      note={maleNpcVoiceFallbackNote}
-                    />
-                    <NpcDefaultVoicePool
-                      label="Female NPC defaults"
-                      options={elevenLabsNpcFemaleVoiceOptions}
-                      selected={npcDefaultFemaleVoices}
-                      onToggle={(voiceId, checked) => toggleNpcDefaultVoice("female", voiceId, checked)}
-                      note={femaleNpcVoiceFallbackNote}
-                    />
-                    <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
-                      NPCs with unclear gender use a stable pick from both pools. Assigned character voices still win.
+          <FieldRow
+            label="Random NPC Voices"
+            help="When enabled, tracked game NPCs without a character-specific voice use a stable random provider voice. If voice metadata is available, Marinara prefers matching male/female pools."
+          >
+            <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--secondary)]/40 p-2">
+              <ToggleRow
+                label="Use default voices for random NPCs"
+                checked={npcDefaultVoicesEnabled}
+                onChange={toggleNpcDefaultVoices}
+              />
+              {npcDefaultVoicesEnabled && (
+                <div className="space-y-3 pt-1">
+                  <NpcDefaultVoicePool
+                    label="Male NPC defaults"
+                    options={elevenLabsNpcMaleVoiceOptions}
+                    selected={npcDefaultMaleVoices}
+                    onToggle={(voiceId, checked) => toggleNpcDefaultVoice("male", voiceId, checked)}
+                    note={maleNpcVoiceFallbackNote}
+                  />
+                  <NpcDefaultVoicePool
+                    label="Female NPC defaults"
+                    options={elevenLabsNpcFemaleVoiceOptions}
+                    selected={npcDefaultFemaleVoices}
+                    onToggle={(voiceId, checked) => toggleNpcDefaultVoice("female", voiceId, checked)}
+                    note={femaleNpcVoiceFallbackNote}
+                  />
+                  <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+                    NPCs with unclear gender use a stable pick from both pools. Assigned character voices still win.
+                  </p>
+                  {!voicesFromProvider && (
+                    <p className="text-[0.625rem] leading-relaxed text-amber-300/80">
+                      Save and enable this TTS provider, then refresh voices to load provider voice options.
                     </p>
-                    {!voicesFromProvider && (
-                      <p className="text-[0.625rem] leading-relaxed text-amber-300/80">
-                        Save the ElevenLabs connection and refresh voices to load the provider's default voice list.
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
-            </FieldRow>
-          )}
+                  )}
+                </div>
+              )}
+            </div>
+          </FieldRow>
 
           {/* Speed */}
           <FieldRow label={speedLabel} help={speedHelp}>

@@ -48,6 +48,7 @@ import { fitMessagesForModelAccess } from "../../packages/server/src/services/ge
 import { assemblePrompt, type AssemblerInput } from "../../packages/server/src/services/prompt/index.js";
 import { executeToolCalls } from "../../packages/server/src/services/tools/tool-executor.js";
 import type { LLMToolCall } from "../../packages/server/src/services/llm/base-provider.js";
+import { resolveTTSVoiceForSpeaker } from "../../packages/client/src/lib/tts-dialogue.js";
 
 type RegressionCase = {
   name: string;
@@ -208,6 +209,73 @@ const cases: RegressionCase[] = [
 
       assert.equal(results[0]?.success, true);
       assert.equal(savedContent, longContent);
+    },
+  },
+  {
+    name: "npc default TTS voice pools work for non-ElevenLabs providers",
+    run() {
+      const baseConfig: Parameters<typeof resolveTTSVoiceForSpeaker>[0] = {
+        source: "openai",
+        voice: "alloy",
+        voiceMode: "per-character",
+        voiceAssignments: [],
+        npcDefaultVoicesEnabled: true,
+        npcDefaultMaleVoices: ["ash", "verse"],
+        npcDefaultFemaleVoices: ["nova", "shimmer"],
+      };
+
+      const maleVoice = resolveTTSVoiceForSpeaker(baseConfig, "Captain Mora", undefined, {
+        name: "Captain Mora",
+        gender: "male",
+      });
+      assert.ok(["ash", "verse"].includes(maleVoice));
+
+      const sharedPoolVoice = resolveTTSVoiceForSpeaker(
+        {
+          ...baseConfig,
+          npcDefaultMaleVoices: ["ash", "nova"],
+          npcDefaultFemaleVoices: ["ash", "nova"],
+        },
+        "Captain Mora",
+        undefined,
+        {
+          name: "Captain Mora",
+          gender: "male",
+        },
+      );
+      assert.ok(["ash", "nova"].includes(sharedPoolVoice));
+
+      const fallbackVoice = resolveTTSVoiceForSpeaker(
+        {
+          ...baseConfig,
+          npcDefaultMaleVoices: [],
+          npcDefaultFemaleVoices: [],
+        },
+        "Captain Mora",
+        undefined,
+        {
+          name: "Captain Mora",
+          gender: "male",
+        },
+      );
+      assert.equal(fallbackVoice, "alloy");
+
+      const emptyElevenLabsVoice = resolveTTSVoiceForSpeaker(
+        {
+          ...baseConfig,
+          source: "elevenlabs",
+          voice: "",
+          npcDefaultMaleVoices: [],
+          npcDefaultFemaleVoices: [],
+        },
+        "Captain Mora",
+        undefined,
+        {
+          name: "Captain Mora",
+          gender: "male",
+        },
+      );
+      assert.equal(emptyElevenLabsVoice, "");
     },
   },
   {

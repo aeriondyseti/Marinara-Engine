@@ -158,22 +158,23 @@ function resolveNpcDefaultVoice(
   >,
   npcHint?: TTSNpcVoiceHint | null,
 ): string {
-  if (config.source !== "elevenlabs" || !config.npcDefaultVoicesEnabled || !npcHint) return "";
+  if (!config.npcDefaultVoicesEnabled || !npcHint) return "";
 
   const maleVoices = (config.npcDefaultMaleVoices ?? []).filter(Boolean);
   const femaleVoices = (config.npcDefaultFemaleVoices ?? []).filter(Boolean);
+  const combinedVoices = [...new Set([...femaleVoices, ...maleVoices])];
   const gender = inferTTSNpcVoiceGender(npcHint);
   const poolsAreUnpartitioned = sameVoicePool(maleVoices, femaleVoices);
   const pool =
     gender === "female"
       ? !poolsAreUnpartitioned && femaleVoices.length > 0
         ? femaleVoices
-        : []
+        : combinedVoices
       : gender === "male"
         ? !poolsAreUnpartitioned && maleVoices.length > 0
           ? maleVoices
-          : []
-        : [...new Set([...femaleVoices, ...maleVoices])];
+          : combinedVoices
+        : combinedVoices;
 
   if (pool.length === 0) return "";
   const seed = normalizeTTSCharacterName(npcHint.name) || npcHint.name;
