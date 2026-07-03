@@ -49,6 +49,7 @@ import {
   Music2,
   ShieldCheck,
   Loader2,
+  Wrench,
 } from "lucide-react";
 import {
   ROLEPLAY_POPOVER_CLOSE_BUTTON,
@@ -68,7 +69,7 @@ import { DiscordMirrorControls } from "../../features/chat-settings/sections/Dis
 import { FunctionCallingSection } from "../../features/chat-settings/sections/FunctionCallingSection";
 import { GameExtraPromptSection } from "../../features/chat-settings/sections/GameExtraPromptSection";
 import { ImpersonateSection } from "../../features/chat-settings/sections/ImpersonateSection";
-import { LorebooksSection, type ActiveLorebookView } from "../../features/chat-settings/sections/LorebooksSection";
+import { LorebooksSection } from "../../features/chat-settings/sections/LorebooksSection";
 import { PromptPresetSection } from "../../features/chat-settings/sections/PromptPresetSection";
 import { SceneInstructionsSection } from "../../features/chat-settings/sections/SceneInstructionsSection";
 import { TranslationSection } from "../../features/chat-settings/sections/TranslationSection";
@@ -80,6 +81,7 @@ import { Modal } from "../ui/Modal";
 import { ChoiceSelectionModal } from "../presets/ChoiceSelectionModal";
 import { SecretPlotPanel } from "../agents/SecretPlotPanel";
 import { SummariesEditorModal } from "./SummariesEditorModal";
+import { AgentSuiteModal } from "./AgentSuiteModal";
 import { useCharacters, usePersonas, useCharacterGroups, type SpriteInfo } from "../../hooks/use-characters";
 import { useLorebooks, useEntriesAcrossLorebooks } from "../../hooks/use-lorebooks";
 import { useDefaultPreset, usePresetFull, usePresets } from "../../hooks/use-presets";
@@ -112,6 +114,12 @@ import {
   appendLocalSidecarConnectionOption,
   filterLanguageGenerationConnections,
 } from "../../lib/connection-filters";
+import {
+  deriveActiveLorebookViews,
+  getChatActiveLorebookIds,
+  getChatExcludedLorebookIds,
+  type ActiveLorebookView,
+} from "../../lib/chat-lorebooks";
 import { getConnectedChatDisplayName } from "../../lib/chat-display";
 import { getTouchReorderDropIndex } from "../../lib/touch-reorder";
 import {
@@ -599,20 +607,6 @@ function getChatActiveAgentIds(chat: Chat): string[] {
   return Array.isArray(activeIds) ? activeIds.filter((id): id is string => typeof id === "string") : [];
 }
 
-function getChatActiveLorebookIds(chat: Chat): string[] {
-  const metadata = typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {});
-  const activeIds =
-    metadata && typeof metadata === "object" ? (metadata as { activeLorebookIds?: unknown }).activeLorebookIds : [];
-  return Array.isArray(activeIds) ? activeIds.filter((id): id is string => typeof id === "string") : [];
-}
-
-function getChatExcludedLorebookIds(chat: Chat): string[] {
-  const metadata = typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {});
-  const excludedIds =
-    metadata && typeof metadata === "object" ? (metadata as { excludedLorebookIds?: unknown }).excludedLorebookIds : [];
-  return Array.isArray(excludedIds) ? excludedIds.filter((id): id is string => typeof id === "string") : [];
-}
-
 export function ChatSettingsDrawer({
   chat,
   open,
@@ -630,6 +624,8 @@ export function ChatSettingsDrawer({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const scheduleControlsRef = useRef<HTMLDivElement | null>(null);
   const modePromptDefaultAppliedRef = useRef<string | null>(null);
+  const agentSuiteCloseGuardRef = useRef<(() => Promise<boolean>) | null>(null);
+  const drawerClosingRef = useRef(false);
   const updateChat = useUpdateChat();
   const updateMeta = useUpdateChatMetadata();
   const updateGameWidgets = useUpdateGameWidgets();
@@ -867,18 +863,12 @@ export function ChatSettingsDrawer({
     typeof metadata.autonomousDailyCapOverride === "number" && Number.isFinite(metadata.autonomousDailyCapOverride)
       ? Math.max(1, Math.floor(metadata.autonomousDailyCapOverride))
       : null;
-  const activeLorebookIds = useMemo<string[]>(
-    () => (Array.isArray(metadata.activeLorebookIds) ? metadata.activeLorebookIds : []),
-    [metadata.activeLorebookIds],
-  );
+  const activeLorebookIds = useMemo(() => getChatActiveLorebookIds({ metadata: chat.metadata }), [chat.metadata]);
   const readLatestActiveLorebookIds = useCallback(() => {
     const latestChat = qc.getQueryData<Chat>(chatKeys.detail(chat.id));
     return latestChat ? getChatActiveLorebookIds(latestChat) : [...activeLorebookIds];
   }, [activeLorebookIds, chat.id, qc]);
-  const excludedLorebookIds = useMemo<string[]>(
-    () => (Array.isArray(metadata.excludedLorebookIds) ? metadata.excludedLorebookIds : []),
-    [metadata.excludedLorebookIds],
-  );
+  const excludedLorebookIds = useMemo(() => getChatExcludedLorebookIds({ metadata: chat.metadata }), [chat.metadata]);
   const readLatestExcludedLorebookIds = useCallback(() => {
     const latestChat = qc.getQueryData<Chat>(chatKeys.detail(chat.id));
     return latestChat ? getChatExcludedLorebookIds(latestChat) : [...excludedLorebookIds];
@@ -887,50 +877,18 @@ export function ChatSettingsDrawer({
   const gameLorebookKeeperLorebookId =
     typeof metadata.gameLorebookKeeperLorebookId === "string" ? metadata.gameLorebookKeeperLorebookId : null;
   const activeLorebooks = useMemo<ActiveLorebookView[]>(() => {
-    const pinnedIds = new Set(activeLorebookIds);
-    const excludedIds = new Set(excludedLorebookIds);
-    const lorebookList = (lorebooks ?? []) as Lorebook[];
-
-    return lorebookList.flatMap((lorebook) => {
-      if (
-        isGame &&
-        !gameLorebookKeeperEnabled &&
-        (lorebook.id === gameLorebookKeeperLorebookId || lorebook.sourceAgentId === "game-lorebook-keeper")
-      ) {
-        return [];
-      }
-
-      const reasons: ActiveLorebookView["activeReasons"] = [];
-      const isPinned = pinnedIds.has(lorebook.id);
-
-      if (lorebook.enabled !== false && isLorebookScopeActiveForChat(lorebook.scope, chat.id)) {
-        if (isPinned) reasons.push("Chat");
-        if (lorebook.isGlobal) reasons.push("Global");
-        if (
-          lorebook.characterIds?.some((id) => chatCharIds.includes(id)) ||
-          (lorebook.characterId && chatCharIds.includes(lorebook.characterId))
-        ) {
-          reasons.push("Character");
-        }
-        if (
-          chat.personaId &&
-          (lorebook.personaIds?.includes(chat.personaId) || lorebook.personaId === chat.personaId)
-        ) {
-          reasons.push("Persona");
-        }
-        if (lorebook.chatId === chat.id && !reasons.includes("Chat")) reasons.push("Chat");
-      }
-
-      return reasons.length > 0
-        ? [{ ...lorebook, activeReasons: reasons, isPinned, isExcluded: excludedIds.has(lorebook.id) }]
-        : [];
+    return deriveActiveLorebookViews({
+      activeLorebookIds,
+      chat,
+      excludedLorebookIds,
+      excludeGameLorebookKeeper: isGame && !gameLorebookKeeperEnabled,
+      gameLorebookKeeperLorebookId,
+      lorebooks: (lorebooks ?? []) as Lorebook[],
     });
   }, [
     activeLorebookIds,
     excludedLorebookIds,
-    chat.id,
-    chat.personaId,
-    chatCharIds,
+    chat,
     gameLorebookKeeperEnabled,
     gameLorebookKeeperLorebookId,
     isGame,
@@ -1162,6 +1120,13 @@ export function ChatSettingsDrawer({
   const visibleActiveAgentIds = useMemo(
     () => activeAgentIds.filter((agentId) => availableAgents.some((agent) => agent.id === agentId)),
     [activeAgentIds, availableAgents],
+  );
+  const agentSuiteAgents = useMemo(
+    () =>
+      visibleActiveAgentIds
+        .map((agentId) => availableAgents.find((agent) => agent.id === agentId))
+        .filter((agent): agent is AvailableAgent => !!agent),
+    [availableAgents, visibleActiveAgentIds],
   );
   const getAgentDisplayMeta = useCallback(
     (agentId: string, fallback: { name: string; description: string }) => {
@@ -2278,7 +2243,26 @@ export function ChatSettingsDrawer({
   const [showPersonaPicker, setShowPersonaPicker] = useState(false);
   const [showConnectionPicker, setShowConnectionPicker] = useState(false);
   const [showSummariesModal, setShowSummariesModal] = useState(false);
+  const [showAgentSuiteModal, setShowAgentSuiteModal] = useState(false);
   const [showMemoriesModal, setShowMemoriesModal] = useState(false);
+  const handleAgentSuiteCloseGuardChange = useCallback((guard: (() => Promise<boolean>) | null) => {
+    agentSuiteCloseGuardRef.current = guard;
+  }, []);
+  const requestClose = useCallback(() => {
+    if (drawerClosingRef.current) return;
+    drawerClosingRef.current = true;
+    void (async () => {
+      try {
+        const canCloseAgentSuite =
+          !showAgentSuiteModal || (await (agentSuiteCloseGuardRef.current?.() ?? Promise.resolve(true)));
+        if (!canCloseAgentSuite) return;
+        setShowAgentSuiteModal(false);
+        onClose();
+      } finally {
+        drawerClosingRef.current = false;
+      }
+    })();
+  }, [onClose, showAgentSuiteModal]);
   // Session-ephemeral: did the user change Day Rollover Hour in this drawer mount?
   // Used to gate the "transitional duplication" warning so it only appears
   // immediately after a change (when the warning is operationally useful) and
@@ -3034,12 +3018,12 @@ export function ChatSettingsDrawer({
       if (!(target instanceof Node)) return;
       if (panelRef.current?.contains(target)) return;
       if (target instanceof Element && target.closest("[data-chat-floating-panel]")) return;
-      onClose();
+      requestClose();
     };
 
     document.addEventListener("pointerdown", handlePointerDown, true);
     return () => document.removeEventListener("pointerdown", handlePointerDown, true);
-  }, [onClose, open]);
+  }, [open, requestClose]);
 
   if (!open) return null;
   const anchoredOnMobile = !!anchor && typeof window !== "undefined" && window.innerWidth < 768;
@@ -3079,7 +3063,7 @@ export function ChatSettingsDrawer({
           </h3>
           <button
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
             aria-label="Close chat settings"
             className={ROLEPLAY_POPOVER_CLOSE_BUTTON}
           >
@@ -5345,6 +5329,18 @@ export function ChatSettingsDrawer({
                     </div>
                   </button>
                 )}
+                <button
+                  onClick={() => setShowAgentSuiteModal(true)}
+                  className="flex w-full items-center justify-between rounded-lg bg-[var(--secondary)] px-3 py-2.5 text-left transition-all hover:bg-[var(--accent)]"
+                >
+                  <div className="flex-1 min-w-0">
+                    <span className="text-[0.6875rem] font-medium">Agent Suite</span>
+                    <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                      View and edit everything agents have stored in this chat — manually or with AI.
+                    </p>
+                  </div>
+                  <Wrench size="0.875rem" className="shrink-0 text-[var(--muted-foreground)]" />
+                </button>
                 {roleplayAgentMenuLinks.length > 0 && (
                   <div className="rounded-lg bg-[var(--background)]/45 px-2.5 py-2 ring-1 ring-[var(--border)]">
                     <div className="mb-1.5 flex items-center gap-1.5 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
@@ -7177,6 +7173,15 @@ export function ChatSettingsDrawer({
 
       {/* Automatic summarization editor */}
       <SummariesEditorModal chat={chat} open={showSummariesModal} onClose={() => setShowSummariesModal(false)} />
+
+      {/* Agent Suite — stored agent data viewer/editor */}
+      <AgentSuiteModal
+        chat={chat}
+        open={showAgentSuiteModal}
+        onClose={() => setShowAgentSuiteModal(false)}
+        onCloseGuardChange={handleAgentSuiteCloseGuardChange}
+        agents={agentSuiteAgents}
+      />
 
       {/* Memory recall chunk viewer */}
       <MemoryRecallMemoriesModal

@@ -1323,8 +1323,40 @@ export class ProfessorMariWorkspaceService {
 
     const workspaceTrace: MariWorkspaceTraceItem[] = [];
     let assistantText = "";
+    let streamedVisibleText = "";
     let thinkingText = "";
     let totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    const commandResultsForContinuity: WorkspaceCommandResult[] = [];
+    let assistantMessagePersisted = false;
+
+    const persistAssistantMessage = async () => {
+      const persistedText = assistantText.trim();
+      if (!persistedText || assistantMessagePersisted) return null;
+
+      const message = await chatStorage.createMessage({
+        chatId: args.chatId,
+        role: "assistant",
+        characterId: PROFESSOR_MARI_ID,
+        content: persistedText,
+      });
+      if (!message) return null;
+      assistantMessagePersisted = true;
+
+      const extraUpdate: Record<string, unknown> = {};
+      const storedTrace = sanitizeTraceForStorage(workspaceTrace);
+      if (thinkingText.trim()) extraUpdate.thinking = thinkingText;
+      if (storedTrace.length > 0) extraUpdate.mariWorkspaceTimeline = storedTrace;
+      const continuity = buildWorkspaceContinuitySnapshot({
+        userText: args.text,
+        assistantText: persistedText,
+        commandResults: commandResultsForContinuity,
+      });
+      if (continuity) extraUpdate.mariWorkspaceContinuity = continuity;
+      extraUpdate.generationInfo = { provider: connection.provider, model: connection.model, usage: totalUsage };
+      await chatStorage.updateMessageExtra(message.id, extraUpdate);
+      await chatStorage.updateSwipeExtra(message.id, 0, extraUpdate);
+      return message;
+    };
 
     try {
       await this.ensureMariCliShim();
@@ -1335,14 +1367,17 @@ export class ProfessorMariWorkspaceService {
         appendTraceThinking(workspaceTrace, delta);
         args.onEvent({ type: "thinking", data: delta });
       });
-      const commandResultsForContinuity: WorkspaceCommandResult[] = [];
       const repeatedFailureCounts = new Map<string, number>();
       let protocolRepairRounds = 0;
 
       for (let round = 0; round < MAX_COMMAND_ROUNDS; round += 1) {
         if (controller.signal.aborted) throw new Error("aborted");
-        const onToken = (chunk: string) => args.onEvent({ type: "token", data: chunk });
-      const result = await this.chatCompleteWorkspace(provider, messages, baseOptions, onToken);
+        streamedVisibleText = "";
+        const onToken = (chunk: string) => {
+          streamedVisibleText += chunk;
+          args.onEvent({ type: "token", data: chunk });
+        };
+        const result = await this.chatCompleteWorkspace(provider, messages, baseOptions, onToken);
         const usage = mapUsage(result.usage);
         totalUsage = {
           promptTokens: totalUsage.promptTokens + usage.promptTokens,
@@ -1406,6 +1441,7 @@ export class ProfessorMariWorkspaceService {
           assistantText = appendVisibleText(assistantText, action.visibleText);
           appendTraceText(workspaceTrace, `${action.visibleText}\n`);
         }
+        streamedVisibleText = "";
 
         messages.push({ role: "assistant", content: action.assistantHistoryContent });
 
@@ -1474,6 +1510,7 @@ export class ProfessorMariWorkspaceService {
             args.onEvent({ type: "status", data: { content, kind: "info", level: "warning" } });
             for (const chunk of chunkText(content)) args.onEvent({ type: "token", data: chunk });
           }
+          streamedVisibleText = "";
         }
       }
 
@@ -1489,36 +1526,32 @@ export class ProfessorMariWorkspaceService {
         for (const chunk of chunkText(content)) args.onEvent({ type: "token", data: chunk });
       }
 
-      const persistedText = assistantText.trim();
-      if (persistedText) {
-        const message = await chatStorage.createMessage({
-          chatId: args.chatId,
-          role: "assistant",
-          characterId: PROFESSOR_MARI_ID,
-          content: persistedText,
-        });
-        if (message) {
-          const extraUpdate: Record<string, unknown> = {};
-          const storedTrace = sanitizeTraceForStorage(workspaceTrace);
-          if (thinkingText.trim()) extraUpdate.thinking = thinkingText;
-          if (storedTrace.length > 0) extraUpdate.mariWorkspaceTimeline = storedTrace;
-          const continuity = buildWorkspaceContinuitySnapshot({
-            userText: args.text,
-            assistantText: persistedText,
-            commandResults: commandResultsForContinuity,
-          });
-          if (continuity) extraUpdate.mariWorkspaceContinuity = continuity;
-          extraUpdate.generationInfo = { provider: connection.provider, model: connection.model, usage: totalUsage };
-          await chatStorage.updateMessageExtra(message.id, extraUpdate);
-          await chatStorage.updateSwipeExtra(message.id, 0, extraUpdate);
-        }
-      }
+      await persistAssistantMessage();
       args.onEvent({ type: "metadata", data: { connection: connectionSummary(connection) ?? undefined } });
     } catch (err) {
       if (controller.signal.aborted) {
-        const content = "Professor Mari workspace run was cancelled.";
+        if (streamedVisibleText.trim()) {
+          assistantText = appendVisibleText(assistantText, streamedVisibleText);
+          streamedVisibleText = "";
+        }
+        const hadPartialWorkspaceState =
+          assistantText.trim().length > 0 || thinkingText.trim().length > 0 || workspaceTrace.length > 0;
+        const content = assistantText.trim()
+          ? "Professor Mari workspace run was cancelled after saving the partial response."
+          : "Professor Mari workspace run was cancelled.";
         appendTraceStatus(workspaceTrace, content);
         args.onEvent({ type: "status", data: { content, kind: "info", level: "warning" } });
+        if (!assistantText.trim() && hadPartialWorkspaceState) {
+          assistantText = appendVisibleText(assistantText, content);
+        }
+        try {
+          await persistAssistantMessage();
+        } catch (saveErr) {
+          logger.error(
+            saveErr instanceof Error ? saveErr : new Error(String(saveErr)),
+            "[Professor Mari] Failed to persist aborted workspace response",
+          );
+        }
       } else {
         this.lastError = err instanceof Error ? err.message : String(err);
         throw err;

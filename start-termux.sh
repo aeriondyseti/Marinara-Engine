@@ -298,7 +298,11 @@ if [ ! -d "node_modules" ] || [ "$TERMUX_FORCE_INSTALL" = "1" ] || ! node script
     echo "  [..] Installing dependencies${TERMUX_FORCE_INSTALL:+ (refreshing for platform fix)}..."
     echo "       This may take several minutes on mobile."
     echo ""
-    run_pnpm install
+    if [ "$TERMUX_FORCE_INSTALL" = "1" ]; then
+        run_pnpm install --force
+    else
+        run_pnpm install
+    fi
 fi
 
 # ── Build if needed ──

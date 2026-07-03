@@ -13,6 +13,7 @@ import {
   getBackgroundRemoverStatus,
   tryRemoveBackgroundWithBackgroundRemover,
 } from "../services/image/background-remover.service.js";
+import { logger } from "../lib/logger.js";
 
 // sharp is an optional dependency — native prebuilds don't exist for all platforms
 // (e.g. Android/Termux). Lazy-load so the server boots even when sharp is missing;
@@ -32,7 +33,11 @@ async function getSharp(): Promise<SharpFn> {
     const mod = await import("sharp");
     _sharp = (mod.default ?? mod) as SharpFn;
     return _sharp;
-  } catch {
+  } catch (error) {
+    logger.warn(
+      error instanceof Error ? error : new Error(String(error)),
+      "[sprites] Image processing unavailable because sharp could not be loaded",
+    );
     _sharpLoadError = new Error(
       "Image processing is unavailable on this platform (native 'sharp' module could not be loaded). " +
         "Sprite generation and background removal are disabled.",
@@ -77,7 +82,6 @@ import {
   type ImageGenerationDefaultsProfile,
   type ImageStyleProfileSettings,
 } from "@marinara-engine/shared";
-import { logger } from "../lib/logger.js";
 
 const SPRITES_ROOT = join(DATA_DIR, "sprites");
 const ROUTE_DIR = dirname(fileURLToPath(import.meta.url));

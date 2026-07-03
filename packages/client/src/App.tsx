@@ -903,6 +903,10 @@ export function App() {
       <AppDialogRenderer />
       <CsrfOriginWarningBanner />
       <div
+        // Interacting with a toast (including its close button) must not count
+        // as an outside click for chat floating panels — otherwise dismissing
+        // a toast closes the settings/gallery drawer (and any modal inside it).
+        data-chat-floating-panel
         onClickCapture={(event) => {
           if (!(event.target instanceof Element)) return;
           if (event.target.closest("[data-close-button],button[aria-label^='Close'],button[aria-label^='Dismiss']")) {

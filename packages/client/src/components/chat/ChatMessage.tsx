@@ -1450,7 +1450,10 @@ export const ChatMessage = memo(function ChatMessage({
       primaryCharacter: primaryCharInfo ?? { name: charName },
       characters: macroCharacters,
     };
-    const macroRandomSeed = `${message.id}:${message.content}`;
+    // #3164: seed display randomness by message identity, not content — a
+    // content-based seed re-rolls every {{random}}/{{roll}} on each streamed
+    // chunk (visible churn) and on every edit. Swipes keep distinct picks.
+    const macroRandomSeed = `${message.id}:${message.activeSwipeIndex ?? 0}`;
     const resolveDisplayMacros = createMessageMacroResolver(macroContext, { randomSeed: macroRandomSeed });
     const text =
       isUser || isSystem
@@ -1470,6 +1473,7 @@ export const ChatMessage = memo(function ChatMessage({
     isSystem,
     isUser,
     macroCharacters,
+    message.activeSwipeIndex,
     message.content,
     messageDepth,
     message.id,

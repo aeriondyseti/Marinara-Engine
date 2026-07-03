@@ -13,7 +13,9 @@ function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: PACKAGE_ROOT,
     env: { ...process.env, ...options.env },
-    shell: process.platform === "win32",
+    // The shell is only needed to resolve .cmd shims (tsc) on Windows; it
+    // breaks unquoted paths with spaces, e.g. "C:\Program Files\nodejs\node.exe".
+    shell: options.shell ?? process.platform === "win32",
     stdio: "inherit",
   });
   if (result.status !== 0) {
@@ -66,5 +68,5 @@ if (LOW_MEMORY_BUILD) {
   run("tsc", []);
 }
 
-run(process.execPath, [resolve(__dirname, "write-build-meta.mjs")]);
+run(process.execPath, [resolve(__dirname, "write-build-meta.mjs")], { shell: false });
 copyRuntimeAssets();

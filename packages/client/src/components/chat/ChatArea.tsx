@@ -354,6 +354,42 @@ function toCharacterMapValue(char: CharacterRow): CharacterMapValue {
   }
 }
 
+// [#3164] Value comparators so the characterMap memo can keep its previous
+// identity when a rebuild produced equal contents. A new map identity re-runs
+// the regex+macro display pipeline for every mounted message, so renders
+// triggered by the presence clock or unrelated metadata writes must not renew
+// it. The field list must cover every field of the CharacterMap value type —
+// a missed field would make a real change invisible to consumers.
+function areCharacterMapValuesEqual(a: CharacterMapValue, b: CharacterMapValue): boolean {
+  return (
+    a.name === b.name &&
+    a.description === b.description &&
+    a.personality === b.personality &&
+    a.backstory === b.backstory &&
+    a.appearance === b.appearance &&
+    a.scenario === b.scenario &&
+    a.example === b.example &&
+    a.avatarUrl === b.avatarUrl &&
+    a.nameColor === b.nameColor &&
+    a.dialogueColor === b.dialogueColor &&
+    a.boxColor === b.boxColor &&
+    a.conversationStatus === b.conversationStatus &&
+    a.conversationActivity === b.conversationActivity &&
+    // avatarCrop is a small plain object — compare by value, not reference.
+    (a.avatarCrop === b.avatarCrop ||
+      JSON.stringify(a.avatarCrop ?? null) === JSON.stringify(b.avatarCrop ?? null))
+  );
+}
+
+function areCharacterMapsEqual(a: CharacterMap, b: CharacterMap): boolean {
+  if (a.size !== b.size) return false;
+  for (const [id, value] of b) {
+    const previous = a.get(id);
+    if (!previous || !areCharacterMapValuesEqual(previous, value)) return false;
+  }
+  return true;
+}
+
 const ChatConversationSurface = lazy(async () => {
   const module = await import("./ChatConversationSurface");
   return { default: module.ChatConversationSurface };
@@ -547,7 +583,9 @@ export function ChatArea() {
   }, []);
 
   useEffect(() => {
-    if (activeChatId) setHomeProfessorChatOpen(false);
+    if (!activeChatId) return;
+    setHomeProfessorChatOpen(false);
+    setHomeProfessorChatActive(false);
   }, [activeChatId]);
   const closeFloatingChatDrawers = useCallback(() => {
     setSettingsOpen(false);
@@ -683,8 +721,11 @@ export function ChatArea() {
     setAgentInjectionDrafts({});
   }, []);
 
-  // Character IDs in the active chat
-  const chatCharIds = useMemo(() => getChatCharacterIds(chat), [chat]);
+  // Character IDs in the active chat. Keyed on the raw characterIds field
+  // (all getChatCharacterIds reads) so chat-detail refetches that only bump
+  // other fields don't renew the array identity. [#3164]
+  const chatCharacterIdsRaw = chat?.characterIds;
+  const chatCharIds = useMemo(() => getChatCharacterIds({ characterIds: chatCharacterIdsRaw }), [chatCharacterIdsRaw]);
   const chatPersonaId = useMemo(() => resolveChatPersonaId(chat), [chat]);
   const { data: chatPersona } = usePersona(chatPersonaId);
   const { data: activePersonaFallback } = useActivePersona(!!chat?.id && !chatPersonaId && !isGameChat);
@@ -698,10 +739,20 @@ export function ChatArea() {
       staleTime: 5 * 60_000,
     })),
   });
-  const chatCharacterRows = useMemo(
-    () => activeCharacterQueries.map((query) => query.data).filter(isCharacterRow),
-    [activeCharacterQueries],
-  );
+  // [#3164] useQueries returns a fresh result array every render while the
+  // underlying row objects are cache-stable — reuse the previous array when
+  // every element is unchanged so the characterMap memo below (and everything
+  // downstream of it) keeps its identity across unrelated re-renders.
+  const chatCharacterRowsRef = useRef<CharacterRow[]>([]);
+  const chatCharacterRows = useMemo(() => {
+    const next = activeCharacterQueries.map((query) => query.data).filter(isCharacterRow);
+    const previous = chatCharacterRowsRef.current;
+    if (previous.length === next.length && next.every((row, index) => row === previous[index])) {
+      return previous;
+    }
+    chatCharacterRowsRef.current = next;
+    return next;
+  }, [activeCharacterQueries]);
 
   // A 60s-cadence clock so schedule/override-derived presence refreshes when time
   // alone changes the effective status (mirrors the presence pill's refetch).
@@ -709,6 +760,7 @@ export function ChatArea() {
 
   // Build character lookup map from the active chat's characters only. Library
   // panels can load the whole catalog; the chat surface should not.
+  const characterMapRef = useRef<CharacterMap>(new Map());
   const characterMap: CharacterMap = useMemo(() => {
     const map: CharacterMap = new Map();
     for (const char of chatCharacterRows) {
@@ -766,6 +818,12 @@ export function ChatArea() {
         });
       }
     }
+    // [#3164] Presence-clock ticks and metadata writes that didn't change any
+    // displayed character field must not renew the map identity — a new
+    // identity re-runs the regex+macro display pipeline for every mounted
+    // message across all three chat surfaces.
+    if (areCharacterMapsEqual(characterMapRef.current, map)) return characterMapRef.current;
+    characterMapRef.current = map;
     return map;
   }, [chatCharacterRows, chat?.metadata, presenceNow]);
 

@@ -265,17 +265,33 @@ export const ConversationMessage = memo(function ConversationMessage({
     ],
   );
 
+  // #3164: seed display randomness by message identity — this site previously
+  // passed no seed, so every {{random}}/{{roll}} re-rolled (Math.random) on
+  // every recompute, even for finished messages.
   const renderedContent = useMemo(
-    () => formatTextQuotes(resolveMessageMacros(message.content, macroContext), quoteFormat),
-    [macroContext, message.content, quoteFormat],
+    () =>
+      formatTextQuotes(
+        resolveMessageMacros(message.content, macroContext, {
+          randomSeed: `${message.id}:${message.activeSwipeIndex ?? 0}`,
+        }),
+        quoteFormat,
+      ),
+    [macroContext, message.activeSwipeIndex, message.content, message.id, quoteFormat],
   );
   const renderedContentParts = useMemo(() => {
     if (!contentParts?.length) return null;
     const count = Math.max(1, Math.min(visiblePartCount ?? contentParts.length, contentParts.length));
     return contentParts
       .slice(0, count)
-      .map((part) => formatTextQuotes(resolveMessageMacros(part, macroContext), quoteFormat));
-  }, [contentParts, macroContext, quoteFormat, visiblePartCount]);
+      .map((part, partIndex) =>
+        formatTextQuotes(
+          resolveMessageMacros(part, macroContext, {
+            randomSeed: `${message.id}:${message.activeSwipeIndex ?? 0}:${partIndex}`,
+          }),
+          quoteFormat,
+        ),
+      );
+  }, [contentParts, macroContext, message.activeSwipeIndex, message.id, quoteFormat, visiblePartCount]);
 
   // ── Attachment removal ──
   const qc = useQueryClient();

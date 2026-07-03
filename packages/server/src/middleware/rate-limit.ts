@@ -28,6 +28,9 @@ const ROUTE_RULES: Array<{ pattern: RegExp; rule: RateLimitRule }> = [
     rule: { key: "sidecar-privileged", limit: 20, windowMs: 60_000 },
   },
   { pattern: /^\/api\/haptic\/command(?:\?|$)/, rule: { key: "haptic-command", limit: 30, windowMs: 60_000 } },
+  // One-shot LLM call per user click; keep it out of the 600/min default
+  // class so a runaway loop can't burn API credits.
+  { pattern: /^\/api\/agents\/suite\/rewrite(?:\?|$)/, rule: { key: "agent-suite-rewrite", limit: 20, windowMs: 60_000 } },
   // Cap on extension routes so an XSS-driven mass install / spam can't
   // exploit the persistent storage path. 60/min covers React Query
   // refetches + legacy migrations of small extension lists comfortably.
