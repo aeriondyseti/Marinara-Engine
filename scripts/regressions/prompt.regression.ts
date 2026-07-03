@@ -35,6 +35,7 @@ import type { DB } from "../../packages/server/src/db/connection.js";
 import { escapeXmlText } from "../../packages/server/src/services/prompt/prompt-escaping.js";
 import {
   appendNonLeadingSystemMessagesToLastUser,
+  appendReadableAttachmentsToContent,
   buildGenerationGuideInstruction,
   appendSeparateAgentInjectionMessage,
   shouldEnableAgentsForGeneration,
@@ -45,6 +46,8 @@ import { resolveGenerationPromptPresetChoices } from "../../packages/server/src/
 import { scanForActivatedEntries } from "../../packages/server/src/services/lorebook/keyword-scanner.js";
 import { fitMessagesForModelAccess } from "../../packages/server/src/services/generation/model-access-policy.js";
 import { assemblePrompt, type AssemblerInput } from "../../packages/server/src/services/prompt/index.js";
+import { executeToolCalls } from "../../packages/server/src/services/tools/tool-executor.js";
+import type { LLMToolCall } from "../../packages/server/src/services/llm/base-provider.js";
 
 type RegressionCase = {
   name: string;
@@ -79,6 +82,25 @@ const keywordOptions = {
 };
 
 const cases: RegressionCase[] = [
+  {
+    name: "readable text attachments are not pre-truncated before context fitting",
+    run() {
+      const repeated = "0123456789".repeat(7_000);
+      const encoded = Buffer.from(repeated, "utf8").toString("base64");
+      const content = appendReadableAttachmentsToContent("Please read this.", [
+        {
+          type: "text/plain",
+          data: `data:text/plain;base64,${encoded}`,
+          filename: "long.txt",
+        },
+      ]);
+
+      assert.match(content, /<attached_file name="long.txt" type="text\/plain">/);
+      assert.match(content, /Please read this\./);
+      assert.equal(content.includes("[Attachment truncated after"), false);
+      assert.ok(content.includes(repeated));
+    },
+  },
   {
     name: "post-history system messages are folded into user turns",
     run() {
@@ -154,6 +176,38 @@ const cases: RegressionCase[] = [
       });
       assert.equal(testSecondaryKeys(["forbidden"], "This has the forbidden key.", "not", keywordOptions), false);
       assert.equal(testSecondaryKeys(["forbidden"], "This is safe.", "not", keywordOptions), true);
+    },
+  },
+  {
+    name: "save_lorebook_entry tool preserves large entry content",
+    async run() {
+      const longContent = `entry-start\n${"0123456789".repeat(8_000)}\nentry-end`;
+      let savedContent = "";
+      const calls: LLMToolCall[] = [
+        {
+          id: "call_save_lore",
+          type: "function",
+          function: {
+            name: "save_lorebook_entry",
+            arguments: JSON.stringify({
+              name: "Large entry",
+              content: longContent,
+              keys: ["Large entry"],
+              mode: "replace",
+            }),
+          },
+        },
+      ];
+
+      const results = await executeToolCalls(calls, {
+        saveLorebookEntry: async (entry) => {
+          savedContent = entry.content;
+          return { ok: true };
+        },
+      });
+
+      assert.equal(results[0]?.success, true);
+      assert.equal(savedContent, longContent);
     },
   },
   {
@@ -569,6 +623,43 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
     },
   },
   {
+    name: "danbooru illustration prompts keep grouped weighted tags intact",
+    run() {
+      const styleProfiles = createDefaultImageStyleProfileSettings();
+      const compiled = compileImagePrompt({
+        kind: "illustration",
+        prompt: [
+          "masterpiece",
+          "1boy",
+          "solo",
+          "(shaved head, bald:1.2)",
+          "(grey beard, short beard, stubble:1.3)",
+          "blue eyes",
+          "no (bad hands, extra fingers:1.2)",
+          "standing",
+        ].join(", "),
+        styleProfiles,
+        styleProfileId: "danbooru",
+      });
+
+      assert.match(compiled.prompt, /\(shaved head, bald:1\.2\)/);
+      assert.match(compiled.prompt, /\(grey beard, short beard, stubble:1\.3\)/);
+      assert.match(compiled.prompt, /\bstanding\b/);
+      assert.match(compiled.negativePrompt, /\(bad hands, extra fingers:1\.2\)/);
+      assert.doesNotMatch(compiled.prompt, /\(bad hands, extra fingers:1\.2\)/);
+
+      const taggedAppearance = compileImagePrompt({
+        kind: "portrait",
+        prompt: "Equipment: (sword and shield), cloak",
+        styleProfiles,
+        styleProfileId: "danbooru",
+      });
+
+      assert.match(taggedAppearance.prompt, /\(sword and shield\)/);
+      assert.match(taggedAppearance.prompt, /\bcloak\b/);
+    },
+  },
+  {
     name: "image prompt negation only moves the directly negated comma clause",
     run() {
       const styleProfiles = createDefaultImageStyleProfileSettings();
@@ -583,6 +674,18 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       assert.doesNotMatch(natural.negativePrompt, /holding flowers|smiling/);
       assert.match(natural.prompt, /holding flowers/);
       assert.match(natural.prompt, /smiling/);
+
+      const groupedNatural = compileImagePrompt({
+        kind: "selfie",
+        prompt: 'A cafe sign says "no shoes, no service", no (bad hands, extra fingers:1.2), holding flowers',
+        styleProfiles,
+        styleProfileId: "realistic",
+      });
+
+      assert.match(groupedNatural.prompt, /no shoes, no service/);
+      assert.match(groupedNatural.prompt, /holding flowers/);
+      assert.match(groupedNatural.negativePrompt, /\(bad hands, extra fingers:1\.2\)/);
+      assert.doesNotMatch(groupedNatural.negativePrompt, /no shoes|no service|holding flowers/);
 
       const tagged = compileImagePrompt({
         kind: "portrait",

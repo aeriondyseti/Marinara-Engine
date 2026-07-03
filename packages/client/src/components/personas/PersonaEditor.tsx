@@ -62,6 +62,7 @@ import { ImageUploadDropzone } from "../ui/ImageUploadDropzone";
 import { CustomEmojiTagButton } from "../ui/CustomEmojiTagButton";
 import { api } from "../../lib/api-client";
 import { parseTrackerCardColorConfig, serializeTrackerCardColorConfig } from "../../lib/tracker-card-colors";
+import { estimateTextTokens, formatEstimatedTokens } from "../../lib/character-token-count";
 import {
   useCharacterSprites,
   useUploadSprite,
@@ -119,6 +120,10 @@ const PERSONA_CARD_SECTIONS = [
   { id: "persona-card-appearance", label: "Appearance" },
   { id: "persona-card-scenario", label: "Scenario" },
 ] as const;
+
+function formatPersonaTextTokens(value: string): string {
+  return formatEstimatedTokens(estimateTextTokens(value));
+}
 
 const PERSONA_METADATA_HELP =
   "Use metadata for identity, sharing, and library organization. Name is injected as your persona name, creator/version help track authorship and revisions, tags make the persona searchable, and creator notes stay private.";
@@ -2781,7 +2786,7 @@ function DescriptionTab({
         className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-4 text-sm leading-relaxed outline-none transition-colors placeholder:text-[var(--muted-foreground)]/40 focus:border-emerald-400/40 focus:ring-1 focus:ring-emerald-400/20"
       />
       <p className="mt-1.5 text-right text-[0.625rem] text-[var(--muted-foreground)]">
-        {formData.description.length} characters
+        {formatPersonaTextTokens(formData.description)}
       </p>
     </div>
   );
@@ -2837,7 +2842,9 @@ function TextareaTab({
         title={title}
         className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-4 text-sm leading-relaxed outline-none transition-colors placeholder:text-[var(--muted-foreground)]/40 focus:border-emerald-400/40 focus:ring-1 focus:ring-emerald-400/20"
       />
-      <p className="mt-1.5 text-right text-[0.625rem] text-[var(--muted-foreground)]">{value.length} characters</p>
+      <p className="mt-1.5 text-right text-[0.625rem] text-[var(--muted-foreground)]">
+        {formatPersonaTextTokens(value)}
+      </p>
     </div>
   );
 }

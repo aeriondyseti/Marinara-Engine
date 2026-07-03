@@ -1798,7 +1798,6 @@ export function ChatSettingsDrawer({
     if (idx >= 0) {
       current.splice(idx, 1);
     } else {
-      if (current.length >= 3) return; // max 3
       current.push(charId);
     }
     updateMeta.mutate({ id: chat.id, spriteCharacterIds: current });
@@ -5939,7 +5938,7 @@ export function ChatSettingsDrawer({
                         badge={
                           spriteCharacterIds.length > 0 ? (
                             <span className="shrink-0 rounded-full bg-[var(--primary)]/10 px-1.5 py-0.5 text-[0.5625rem] font-medium text-[var(--primary)]">
-                              {spriteCharacterIds.length}/3 enabled
+                              {spriteCharacterIds.length} enabled
                             </span>
                           ) : null
                         }
@@ -6056,7 +6055,6 @@ export function ChatSettingsDrawer({
 
                                   <SpriteToggleButton
                                     active={spriteActive}
-                                    disabled={!spriteActive && spriteCharacterIds.length >= 3}
                                     onToggle={() => toggleSprite(subject.id)}
                                   />
                                 </div>
@@ -6075,8 +6073,7 @@ export function ChatSettingsDrawer({
                         )}
 
                         <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                          Only added characters and the active persona with uploaded sprites appear here. You can enable
-                          up to 3 at a time.
+                          Only added characters and the active persona with uploaded sprites appear here.
                         </p>
 
                         {spriteCharacterIds.length > 0 && (
@@ -7130,7 +7127,7 @@ export function ChatSettingsDrawer({
               metadata={metadata}
               isConversation={isConversation}
               connectionId={chat.connectionId ?? null}
-              connections={chatGenerationConnectionsList as Record<string, unknown>[]}
+              connections={chatGenerationConnectionsList}
               contextMessageLimit={metadata.contextMessageLimit as number | null | undefined}
               excludePastReasoning={metadata.excludePastReasoning as boolean | undefined}
               imageCaptioningEnabled={metadata.imageCaptioningEnabled as boolean | undefined}
@@ -8316,25 +8313,21 @@ function SpriteDisplayModeToggle({
 // ── Sprite toggle button (per character) ──
 function SpriteToggleButton({
   active,
-  disabled,
   onToggle,
 }: {
   active: boolean;
-  disabled: boolean;
   onToggle: () => void;
 }) {
   return (
     <button
       onClick={onToggle}
-      disabled={disabled}
       className={cn(
         "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[0.625rem] font-medium transition-colors ring-1",
         active
           ? "bg-[var(--primary)]/10 text-[var(--primary)] ring-[var(--primary)]/30 hover:bg-[var(--primary)]/15"
           : "text-[var(--muted-foreground)] ring-[var(--border)] hover:bg-[var(--accent)]",
-        disabled && "opacity-30 cursor-not-allowed",
       )}
-      title={active ? "Disable sprite" : disabled ? "Max 3 sprites" : "Enable sprite"}
+      title={active ? "Disable sprite" : "Enable sprite"}
     >
       <Image size="0.6875rem" />
       <span>{active ? "Enabled" : "Enable"}</span>
