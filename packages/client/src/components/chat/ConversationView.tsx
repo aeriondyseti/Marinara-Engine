@@ -420,7 +420,28 @@ export function ConversationView({
   const lastScrollTopRef = useRef(0);
   const composerScrollTopRef = useRef(0);
   const userScrolledAtRef = useRef(0);
+  const openedAtBottomChatIdRef = useRef<string | null>(null);
   const shouldKeepMobileComposerOpen = hasLiveStream || hasDraftInput || isFetchingNextPage;
+
+  const scrollToMessagesBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    const el = scrollRef.current;
+    if (el) {
+      el.scrollTo({ top: el.scrollHeight, behavior });
+      return;
+    }
+    messagesEndRef.current?.scrollIntoView({ behavior });
+  }, []);
+
+  const scheduleScrollToMessagesBottom = useCallback(
+    (behavior: ScrollBehavior = "smooth") => {
+      scrollToMessagesBottom(behavior);
+      requestAnimationFrame(() => {
+        scrollToMessagesBottom(behavior);
+        requestAnimationFrame(() => scrollToMessagesBottom(behavior));
+      });
+    },
+    [scrollToMessagesBottom],
+  );
 
   useEffect(() => {
     if (shouldKeepMobileComposerOpen) setMobileHistoryComposerCollapsed(false);
@@ -484,7 +505,7 @@ export function ConversationView({
     if (isLoadingMoreRef.current) return;
     // Always scroll when the user just sent a message (optimistic msg)
     if (isOptimistic || (isNearBottomRef.current && !userScrolledAwayRef.current)) {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      scrollToMessagesBottom("smooth");
     }
   }, [
     newestMsgId,
@@ -494,6 +515,7 @@ export function ConversationView({
     delayedCharacterInfo,
     typingCharacterName,
     isOptimistic,
+    scrollToMessagesBottom,
   ]);
 
   // Preserve scroll on load-more
@@ -514,7 +536,7 @@ export function ConversationView({
 
   const [transcriptWindowStart, setTranscriptWindowStart] = useState<number | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setTranscriptWindowStart(null);
   }, [chatId]);
 
@@ -540,6 +562,25 @@ export function ConversationView({
   const jumpToLatestTranscriptMessages = useCallback(() => {
     setTranscriptWindowStart(null);
   }, []);
+
+  useLayoutEffect(() => {
+    if (!chatId || isFetchingNextPage || isLoadingMoreRef.current) return;
+    if (openedAtBottomChatIdRef.current === chatId) return;
+    if (isLoading && (messages?.length ?? 0) === 0) return;
+    if (transcriptWindow.hiddenAfterCount > 0) return;
+
+    openedAtBottomChatIdRef.current = chatId;
+    userScrolledAwayRef.current = false;
+    isNearBottomRef.current = true;
+    scheduleScrollToMessagesBottom("auto");
+  }, [
+    chatId,
+    isFetchingNextPage,
+    isLoading,
+    messages?.length,
+    scheduleScrollToMessagesBottom,
+    transcriptWindow.hiddenAfterCount,
+  ]);
 
   // ── Build message list with day separators ──
   // Assistant multi-line reveal is presentation-only: a real message can carry
@@ -970,9 +1011,9 @@ export function ConversationView({
   // Auto-scroll when staggered parts are revealed
   useEffect(() => {
     if (!isLoadingMoreRef.current && isNearBottomRef.current && !userScrolledAwayRef.current) {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      scrollToMessagesBottom("smooth");
     }
-  }, [visiblePartCounts, visibleSegmentCounts]);
+  }, [scrollToMessagesBottom, visiblePartCounts, visibleSegmentCounts]);
 
   return (
     <div

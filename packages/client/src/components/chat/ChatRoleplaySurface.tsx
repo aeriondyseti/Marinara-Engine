@@ -1333,7 +1333,7 @@ export function ChatRoleplaySurface({
     previousEndIndex: number;
   } | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setTranscriptWindowStart(null);
     pendingLoadMoreRevealRef.current = null;
   }, [activeChatId]);
