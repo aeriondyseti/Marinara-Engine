@@ -23,7 +23,12 @@ import { createConnectionsStorage } from "../services/storage/connections.storag
 import { createGameSceneVideosStorage } from "../services/storage/game-scene-videos.storage.js";
 import { createPromptOverridesStorage } from "../services/storage/prompt-overrides.storage.js";
 import { GAME_VIDEO, loadPrompt } from "../services/prompt-overrides/index.js";
-import { generateVideo, saveVideoToDisk, type VideoReferenceImage } from "../services/video/video-generation.js";
+import {
+  generateVideo,
+  removeSavedVideoFromDisk,
+  saveVideoToDisk,
+  type VideoReferenceImage,
+} from "../services/video/video-generation.js";
 import {
   compactVideoPromptText,
   excerptIllustrationPromptForVideo,
@@ -733,6 +738,8 @@ export async function galleryRoutes(app: FastifyInstance) {
       debugLog("[debug/gallery/scene-video] prompt:\n%s", prompt);
     }
 
+    let savedFilePath: string | null = null;
+    let metadataSaved = false;
     try {
       const generated = await generateVideo(source, baseUrl, videoConn.apiKey || "", serviceHint, {
         prompt,
@@ -743,7 +750,8 @@ export async function galleryRoutes(app: FastifyInstance) {
         referenceImage,
         signal: sceneVideoAbortSignal,
       });
-      const filePath = saveVideoToDisk(input.chatId, generated.base64);
+      const filePath = await saveVideoToDisk(input.chatId, generated.base64);
+      savedFilePath = filePath;
       const row = await sceneVideos.create({
         chatId: input.chatId,
         filePath,
@@ -756,11 +764,21 @@ export async function galleryRoutes(app: FastifyInstance) {
         aspectRatio,
       });
       if (!row) throw new Error("Scene video metadata could not be saved");
+      metadataSaved = true;
 
       await chats.patchMetadata(input.chatId, () => ({ sceneLastVideoId: row.id }));
       logger.info("[gallery/generate-scene-video] saved video %s for chat %s", row.id, input.chatId);
       return { video: serializeSceneVideo(row) };
     } catch (err) {
+      if (savedFilePath && !metadataSaved) {
+        await removeSavedVideoFromDisk(savedFilePath).catch((cleanupErr) => {
+          logger.warn(
+            cleanupErr,
+            "[gallery/generate-scene-video] Failed to clean up orphaned video file %s",
+            savedFilePath,
+          );
+        });
+      }
       logger.warn(err, "[gallery/generate-scene-video] Scene video generation failed for chat %s", input.chatId);
       const message = err instanceof Error ? err.message : "Scene video generation failed";
       return reply.status(502).send({ error: message });

@@ -354,6 +354,9 @@ export async function connectionsRoutes(app: FastifyInstance) {
       if (Object.prototype.hasOwnProperty.call(rawRecord, IMAGE_DEFAULTS_STORAGE_KEY)) {
         params[IMAGE_DEFAULTS_STORAGE_KEY] = rawRecord[IMAGE_DEFAULTS_STORAGE_KEY];
       }
+      if (Object.prototype.hasOwnProperty.call(rawRecord, VIDEO_DEFAULTS_STORAGE_KEY)) {
+        params[VIDEO_DEFAULTS_STORAGE_KEY] = rawRecord[VIDEO_DEFAULTS_STORAGE_KEY];
+      }
     }
     await storage.updateDefaultParameters(req.params.id, params);
     resetMemoryRecallVectorizerCache();

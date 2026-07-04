@@ -75,6 +75,17 @@ Official Docker/Podman images keep runtime configuration in `/app/data/.env` so 
 | `CLAUDE_CONFIG_DIR`                         | `~/.claude` (native) / `/app/data/claude-config` (Docker) | Directory the Claude Agent SDK and the `claude_subscription` provider use for credentials and synthetic session JSONL scratch files. Official Docker images point this at the data volume so the SDK has a writable location after Docker's `node`/`nonroot` privilege drop (the inherited `HOME=/root` would otherwise be unreadable). Override on native installs only when `$HOME/.claude` isn't usable (read-only homedirs, NFS, sandboxed deployments).                                                                                                                                            |
 | `CLAUDE_CODE_OAUTH_TOKEN`                   | _(empty)_                                                | OAuth token for Claude subscription auth. When set, the Agent SDK uses it directly instead of reading credentials from `CLAUDE_CONFIG_DIR/.credentials.json`. Generate one on a workstation with `claude setup-token` (from `@anthropic-ai/claude-code`) and inject the resulting value via env var — recommended pattern for containerized or headless deployments where an interactive login flow isn't practical.                                                                                                                                                                                    |
 
+## Scene Videos and Storyboards
+
+Scene-video provider settings are saved as connections, not environment variables. Create a **Video Generation** connection in **Settings -> Connections**, then choose it per chat:
+
+- Game Mode: **Chat Settings -> Game Mode -> Scene Videos**.
+- Roleplay and Visual Novel: **Chat Settings -> Agents -> Scene Videos**.
+
+Game Mode storyboard automation is also per chat. **Automatic Storyboard Animations** is off by default so ordinary Game Mode turns do not automatically spend extra image/video calls. Enable it under **Chat Settings -> Game Mode -> Scene Videos** when you want completed GM narration turns to become manga keyframes and animation clips automatically. Manual **Storyboard turn** generation remains available from Game Assets when the toggle is off.
+
+The environment variables in the table above still control the underlying provider work. `IMAGE_GEN_TIMEOUT_MS` applies to storyboard keyframe illustrations, `VIDEO_GEN_TIMEOUT_MS` applies to storyboard clips and other scene videos, and `XAI_VIDEO_POLL_INTERVAL_MS` controls xAI Imagine polling.
+
 ## Logging Levels
 
 All server-side logging goes through [Pino](https://getpino.io/) via a shared logger instance (`packages/server/src/lib/logger.ts`). The `LOG_LEVEL` environment variable controls the minimum severity that gets printed — anything below the configured level is silently discarded. `LOG_PRESET=prompt-connections` overrides the effective level to `debug` and disables Fastify's routine request logs so prompt/model/connection diagnostics are easier to read.

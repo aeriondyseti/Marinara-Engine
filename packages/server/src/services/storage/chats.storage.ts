@@ -12,6 +12,8 @@ import {
   gameEngineState,
   chatImages,
   gameSceneVideos,
+  gameTurnStoryboardKeyframes,
+  gameTurnStoryboards,
   oocInfluences,
   conversationNotes,
   agentRuns,
@@ -263,7 +265,13 @@ export function createChatsStorage(db: DB) {
       .from(gameSceneVideos)
       .where(eq(gameSceneVideos.chatId, chatId))
       .limit(1);
-    return existingVideo.length > 0;
+    if (existingVideo.length > 0) return true;
+    const existingStoryboard = await db
+      .select({ id: gameTurnStoryboards.id })
+      .from(gameTurnStoryboards)
+      .where(eq(gameTurnStoryboards.chatId, chatId))
+      .limit(1);
+    return existingStoryboard.length > 0;
   }
 
   async function isProtectedGameDeleteTarget(chat: {
@@ -534,11 +542,7 @@ export function createChatsStorage(db: DB) {
     /** List all chats belonging to a group. */
     async listByGroup(groupId: string) {
       await ensureChatLastMessageAtBackfilled();
-      return db
-        .select()
-        .from(chats)
-        .where(eq(chats.groupId, groupId))
-        .orderBy(desc(chats.updatedAt));
+      return db.select().from(chats).where(eq(chats.groupId, groupId)).orderBy(desc(chats.updatedAt));
     },
 
     async canDeleteChat(id: string, options: { force?: boolean } = {}): Promise<ChatDeleteGuardResult> {
@@ -699,6 +703,14 @@ export function createChatsStorage(db: DB) {
       await db.delete(gameCheckpoints).where(eq(gameCheckpoints.chatId, id));
       await db.delete(gameStateSnapshots).where(eq(gameStateSnapshots.chatId, id));
       await db.delete(gameEngineState).where(eq(gameEngineState.chatId, id));
+      const storyboards = await db
+        .select({ id: gameTurnStoryboards.id })
+        .from(gameTurnStoryboards)
+        .where(eq(gameTurnStoryboards.chatId, id));
+      for (const storyboard of storyboards) {
+        await db.delete(gameTurnStoryboardKeyframes).where(eq(gameTurnStoryboardKeyframes.storyboardId, storyboard.id));
+      }
+      await db.delete(gameTurnStoryboards).where(eq(gameTurnStoryboards.chatId, id));
       await db.delete(gameSceneVideos).where(eq(gameSceneVideos.chatId, id));
 
       // Clean up gallery images (DB records + files on disk)
@@ -721,6 +733,16 @@ export function createChatsStorage(db: DB) {
         await db.delete(gameCheckpoints).where(eq(gameCheckpoints.chatId, chat.id));
         await db.delete(gameStateSnapshots).where(eq(gameStateSnapshots.chatId, chat.id));
         await db.delete(gameEngineState).where(eq(gameEngineState.chatId, chat.id));
+        const storyboards = await db
+          .select({ id: gameTurnStoryboards.id })
+          .from(gameTurnStoryboards)
+          .where(eq(gameTurnStoryboards.chatId, chat.id));
+        for (const storyboard of storyboards) {
+          await db
+            .delete(gameTurnStoryboardKeyframes)
+            .where(eq(gameTurnStoryboardKeyframes.storyboardId, storyboard.id));
+        }
+        await db.delete(gameTurnStoryboards).where(eq(gameTurnStoryboards.chatId, chat.id));
         await db.delete(gameSceneVideos).where(eq(gameSceneVideos.chatId, chat.id));
         await db.delete(chatImages).where(eq(chatImages.chatId, chat.id));
         const galleryDir = join(GALLERY_DIR, chat.id);
@@ -955,7 +977,10 @@ export function createChatsStorage(db: DB) {
       for (let i = 0; i < swipeRows.length; i += CHUNK) {
         await db.insert(messageSwipes).values(swipeRows.slice(i, i + CHUNK));
       }
-      await db.update(chats).set({ lastMessageAt: lastTimestamp, updatedAt: lastTimestamp }).where(eq(chats.id, chatId));
+      await db
+        .update(chats)
+        .set({ lastMessageAt: lastTimestamp, updatedAt: lastTimestamp })
+        .where(eq(chats.id, chatId));
       return createdIds;
     },
 

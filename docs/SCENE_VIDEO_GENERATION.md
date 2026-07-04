@@ -1,6 +1,8 @@
 # Scene Video Generation
 
-Marinara can turn Game Mode and Roleplay gallery illustrations into short MP4 scene videos. The first version is manual-first: generate or upload an illustration, then use the Gallery **Video** action or an illustration's **Animate** button to create a clip from that specific image.
+Marinara can turn Game Mode and Roleplay gallery illustrations into short MP4 scene videos. Gallery video generation is manual: generate or upload an illustration, then use the Gallery **Video** action or an illustration's **Animate** button to create a clip from that specific image.
+
+Game Mode can also storyboard completed GM turns. A Prompt Director turns one GM narration into ordered manga keyframes, Marinara renders each keyframe as a gallery illustration, and each keyframe can be animated into a short clip so the sequence plays like an anime cutscene alongside the text.
 
 Scene videos are separate from normal image generation. They use a **Video Generation** connection, save MP4 files in the scene-video media store, appear in the Gallery, and can be pinned or followed with the same overlay controls as generated illustrations.
 
@@ -28,20 +30,22 @@ Default values:
 Video connections are selected separately from image-generation connections.
 
 - **Game Mode setup wizard:** choose **Video Generation Connection** on the model/setup step when creating the game.
-- **Existing Game Mode chats:** open **Chat Settings -> Agents -> Scene Videos** and choose **Video Connection**.
+- **Existing Game Mode chats:** open **Chat Settings -> Game Mode -> Scene Videos** and choose **Video Connection**.
 - **Roleplay and Visual Novel chats:** open **Chat Settings -> Agents -> Scene Videos** and choose **Video Connection**.
 
 If a chat does not have a selected video connection, Marinara tries the connection marked **Default for Scene Videos** in Connections. If neither exists, Gallery video actions show a connection warning.
 
+Game Mode has a separate **Automatic Storyboard Animations** toggle under **Chat Settings -> Game Mode -> Scene Videos**. It is off by default. When enabled, Marinara automatically storyboards each completed GM narration after the turn finishes. When disabled, use the manual **Storyboard turn** control in **Game Assets**.
+
 ## Gallery Workflow
 
-The Gallery now has three top actions when the mode supports them:
+The Gallery separates still images and generated videos into **Images** and **Videos** tabs, with counts for each tab. The top actions shown for a mode still apply to the active chat:
 
 - **Illustrate** generates a still scene illustration.
 - **Video** animates the latest generated scene illustration.
 - **Background** generates or applies a scene background.
 
-Each illustration tile also has an **Animate** button beside Pin and Download. Use it when you want to animate that exact illustration instead of the newest gallery item.
+Each illustration tile and lightbox has actions ordered as Pin, Download, Animate, and Copy prompt. Use **Animate** when you want to animate that exact illustration instead of the newest gallery item. Copy prompt is intentionally duplicated in the lightbox so it remains available while the preview is open.
 
 Generated videos:
 
@@ -53,11 +57,29 @@ Generated videos:
 - can be pinned to the chat surface,
 - participate in **View latest**.
 
+## Game Mode Turn Storyboards
+
+Storyboards are per completed GM turn. Marinara uses the GM narration only; the user's CYOA choice is not included because that choice creates the next turn.
+
+The storyboard flow is:
+
+1. The Prompt Director reads the completed turn narration plus stable reader-section indices.
+2. It creates 2-6 ordered manga keyframes, usually 4.
+3. Each keyframe contains a still-image prompt, a video prompt, section anchors, continuity notes, camera motion, and duration/aspect-ratio settings.
+4. Marinara saves the storyboard metadata, then starts keyframe media generation concurrently once the prompts are ready.
+5. Keyframe illustrations are saved to the Gallery's **Images** tab. Keyframe clips are saved to scene videos and appear in the **Videos** tab.
+
+The Game Mode **Game Assets** panel has a **Storyboard turn** button for manual generation. After a storyboard exists, Game Assets also shows its keyframes and a button to reopen the floating storyboard viewer if you closed it.
+
+The floating storyboard viewer follows the current story section while you read through a turn. It shows the active keyframe clip when available, falls back to the generated keyframe image while video is pending or failed, and includes close, drag, resize, play/pause, mute/unmute, size, and frame-position controls.
+
 ## View Latest And Pinning
 
 **View latest** is a live viewer for the newest Gallery media item. When enabled, it updates automatically whenever a new illustration or scene video is added to the Gallery.
 
 Pinned videos use the same move and resize model as pinned illustrations. Drag the pinned media to reposition it and use the overlay controls to resize, unpin, or close it. The static illustration remains available as a fallback when a video is pending or fails.
+
+The Game Mode storyboard viewer uses the same viewer control model as **View latest**, but it is anchored to the current turn's storyboard keyframes instead of the newest Gallery item.
 
 ## Prompt Templates
 
@@ -69,9 +91,12 @@ The relevant keys are:
 | --- | --- |
 | `game.narrationSummarizer` | Converts completed Game Mode narration into a concise illustration request before scene illustration prompting. |
 | `game.sceneIllustration` | Builds the still visual novel/game scene illustration prompt. |
+| `game.storyboardDirector` | Splits one completed GM narration into manga keyframes, section anchors, still-image prompts, and per-keyframe video prompts. |
 | `game.video` | Builds the motion/camera/timing prompt for scene-video generation. |
 
 `game.video` receives variables such as scene title, narration summary, source illustration prompt, characters, setting, art style, duration seconds, aspect ratio, and a reminder that the source illustration is used as the first frame/reference. Editing this template is the main way to prompt-engineer different motion outcomes without changing code.
+
+`game.storyboardDirector` receives the game context, stripped GM narration, reader section indices, target keyframe count, duration, and aspect ratio. Editing it changes how the turn is divided into manga panels and how each panel's image and video prompts are written.
 
 Before rendering the template, Marinara compacts the video prompt context. The narration variable is a short visible story beat, not the full assistant message, and the illustration prompt variable is a filtered excerpt that drops common still-image boilerplate. xAI receives a stricter final prompt budget than Gemini because its video API rejects prompts over its maximum length.
 
@@ -81,13 +106,15 @@ The same template key is used for Gemini Omni and xAI scene videos today. Existi
 
 Scene videos are stored as MP4 files under Marinara's local data directory, separate from `chat_images`. Metadata records the chat, provider, model, prompt, source image, duration, aspect ratio, file path, and creation time.
 
+Game Mode storyboards store their own metadata and keyframe records. Keyframe image/video media still uses the existing Gallery and scene-video stores, so generated storyboard assets are visible outside the floating storyboard viewer.
+
 Video providers are called server-side. Provider responses are validated as MP4 before being saved, and remote video downloads are constrained to HTTPS.
 
 ## Troubleshooting
 
 ### "Choose a Video Generation connection"
 
-Open **Chat Settings -> Agents -> Scene Videos** for the current chat and select a Video Generation connection. If the dropdown is empty, create one in **Settings -> Connections**.
+Open **Chat Settings -> Game Mode -> Scene Videos** for a Game Mode chat, or **Chat Settings -> Agents -> Scene Videos** for Roleplay and Visual Novel chats, then select a Video Generation connection. If the dropdown is empty, create one in **Settings -> Connections**.
 
 ### "Generate a scene illustration before generating a scene video"
 
@@ -100,6 +127,18 @@ This is expected provider behavior. Marinara does not send `duration_seconds` to
 ### Copy Prompt closes the preview
 
 The preview should stay open while copying. If it closes, update to a build that includes the lightbox copy-event fix.
+
+### Storyboards do not generate automatically
+
+Automatic storyboards are opt-in. Open **Chat Settings -> Game Mode -> Scene Videos** and enable **Automatic Storyboard Animations**. Manual **Storyboard turn** generation in **Game Assets** still works when the automatic toggle is off.
+
+### Storyboard keyframes are images but not videos
+
+Storyboard image generation uses the Game Mode image-generation connection. Storyboard video generation also needs a Video Generation connection. If no video connection is selected and no default scene-video connection exists, Marinara can still save keyframe images, but the clips cannot be generated.
+
+### Storyboard generation times out
+
+The Prompt Director has its own request window, then each keyframe image/video render runs as media generation work. Keyframes start concurrently after the prompts are ready, so several provider jobs may be active at once. If a provider is slow or rate-limited, increase the relevant timeout (`IMAGE_GEN_TIMEOUT_MS`, `VIDEO_GEN_TIMEOUT_MS`, or provider-specific polling settings) and check debug logs for `[debug/game/storyboard-director]` and `[debug/game/storyboard-video]`.
 
 ### xAI video requests take a while
 

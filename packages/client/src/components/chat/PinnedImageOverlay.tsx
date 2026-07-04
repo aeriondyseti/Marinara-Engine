@@ -109,13 +109,14 @@ function PinnedMediaViewer({
   }, []);
 
   useEffect(() => {
-    const handleResize = () => {
+    const recomputeFrame = () => {
       const nextSize = getInitialSize(media);
       setSize(nextSize);
       setPos((current) => clampPosition(current, nextSize));
     };
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
+    recomputeFrame();
+    window.addEventListener("resize", recomputeFrame);
+    return () => window.removeEventListener("resize", recomputeFrame);
   }, [media]);
 
   useEffect(

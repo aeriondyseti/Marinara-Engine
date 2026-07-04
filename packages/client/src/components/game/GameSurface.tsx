@@ -12,6 +12,7 @@ import {
   Suspense,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
@@ -48,6 +49,12 @@ import {
   gameKeys,
   patchChatMetadata,
 } from "../../hooks/use-game";
+import {
+  gameStoryboardKeys,
+  useGameTurnStoryboards,
+  useGenerateGameTurnStoryboard,
+  type GenerateGameTurnStoryboardInput,
+} from "../../hooks/use-game-storyboards";
 import {
   chatKeys,
   useBranchChat,
@@ -96,6 +103,8 @@ import type {
   GameMap,
   GameActiveState,
   GeneratedSceneVideo,
+  GameTurnStoryboard,
+  GameTurnStoryboardKeyframe,
   CombatInitState,
   CombatPartyMember,
   CombatEnemy,
@@ -177,6 +186,10 @@ type JournalReadable = ReadableTag & {
   sourceSegmentIndex?: number | null;
 };
 
+type GameStoryboardSourceSection = NonNullable<GenerateGameTurnStoryboardInput["sections"]>[number];
+type StoryboardViewerSize = "small" | "medium" | "large";
+type StoryboardViewerPosition = { x: number; y: number };
+
 type GameAssetGenerationPayload = {
   chatId: string;
   backgroundTag?: string;
@@ -220,6 +233,67 @@ const GAME_MOBILE_FLOATING_PANEL =
 const GAME_MOBILE_FLOATING_MENU = "fixed z-[9999] max-h-[min(32rem,calc(100dvh-4.75rem))] overflow-y-auto";
 const GAME_ACTION_MENU_ITEM =
   "marinara-chat-popover__item flex items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-[var(--marinara-chat-chrome-panel-text)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg-hover)] hover:text-[var(--marinara-chat-chrome-highlight-text)] disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent";
+const STORYBOARD_VIEWER_PRESET_WIDTH: Record<StoryboardViewerSize, number> = {
+  small: 288,
+  medium: 368,
+  large: 544,
+};
+const STORYBOARD_VIEWER_VERTICAL_CHROME = 116;
+const STORYBOARD_VIEWER_CONTROL_BUTTON =
+  "flex h-7 w-7 items-center justify-center rounded-md border border-white/10 bg-white/10 text-white/70 transition-colors hover:bg-white/20 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-white/10";
+
+function nextStoryboardViewerSize(size: StoryboardViewerSize): StoryboardViewerSize {
+  if (size === "small") return "medium";
+  if (size === "medium") return "large";
+  return "small";
+}
+
+function clampStoryboardViewerWidth(width: number): number {
+  const viewportWidth = typeof window === "undefined" ? 1024 : window.innerWidth;
+  const minWidth = viewportWidth < 640 ? 180 : 240;
+  const maxWidth = viewportWidth - 24;
+  return Math.max(minWidth, Math.min(width, Math.max(minWidth, maxWidth)));
+}
+
+function getStoryboardViewerPresetWidth(size: StoryboardViewerSize): number {
+  return clampStoryboardViewerWidth(STORYBOARD_VIEWER_PRESET_WIDTH[size]);
+}
+
+function getStoryboardViewerViewport(): { width: number; height: number } {
+  return {
+    width: typeof window === "undefined" ? 1024 : window.innerWidth,
+    height: typeof window === "undefined" ? 768 : window.innerHeight,
+  };
+}
+
+function estimateStoryboardViewerHeight(width: number): number {
+  return Math.min(getStoryboardViewerViewport().height - 16, width * (9 / 16) + STORYBOARD_VIEWER_VERTICAL_CHROME);
+}
+
+function clampStoryboardViewerPosition(pos: StoryboardViewerPosition, width: number): StoryboardViewerPosition {
+  const viewport = getStoryboardViewerViewport();
+  const height = estimateStoryboardViewerHeight(width);
+  return {
+    x: Math.max(8, Math.min(pos.x, Math.max(8, viewport.width - width - 8))),
+    y: Math.max(8, Math.min(pos.y, Math.max(8, viewport.height - height - 8))),
+  };
+}
+
+function getInitialStoryboardViewerPosition(width: number): StoryboardViewerPosition {
+  const viewport = getStoryboardViewerViewport();
+  const mobile = viewport.width < 640;
+  return clampStoryboardViewerPosition(
+    {
+      x: mobile ? (viewport.width - width) / 2 : viewport.width - width - 16,
+      y: mobile ? 76 : 72,
+    },
+    width,
+  );
+}
+
+function shouldIgnoreStoryboardViewerDragTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && !!target.closest("button,a,video,input,textarea,select,[data-storyboard-viewer-no-drag]");
+}
 
 function getGameMobileFloatingPanelStyle(anchor: ChatToolbarFloatingPanelAnchor): CSSProperties {
   if (!anchor) {
@@ -1712,10 +1786,14 @@ import {
   Feather,
   Folder,
   Film,
+  GripHorizontal,
   Image,
   ImagePlus,
   Loader2,
+  Maximize2,
   MoreHorizontal,
+  PanelsTopLeft,
+  Pause,
   Play,
   Plug,
   RefreshCw,
@@ -1931,6 +2009,65 @@ function formatNarrationSegmentForContext(segment: NarrationSegment, edit?: Game
   }
 
   return trimmed;
+}
+
+function buildStoryboardSectionsFromMessage(
+  message: Message | null,
+  segmentEdits: Map<string, GameSegmentEdit>,
+  segmentDeletes: Set<string>,
+): GameStoryboardSourceSection[] {
+  if (!message?.id || !message.content) return [];
+  return parseNarrationSegments(message, EMPTY_GAME_SPEAKER_COLORS)
+    .map((segment, fallbackIndex): GameStoryboardSourceSection | null => {
+      const sourceIndex = segment.sourceSegmentIndex ?? fallbackIndex;
+      if (segmentDeletes.has(`${message.id}:${sourceIndex}`)) return null;
+      const content = formatNarrationSegmentForContext(segment, segmentEdits.get(`${message.id}:${sourceIndex}`));
+      if (!content) return null;
+      return {
+        index: sourceIndex,
+        kind: segment.type,
+        speaker: segment.speaker?.trim() || null,
+        content: content.slice(0, 6000),
+      };
+    })
+    .filter((section): section is GameStoryboardSourceSection => Boolean(section));
+}
+
+function findStoryboardKeyframeForSegment(
+  frames: GameTurnStoryboardKeyframe[],
+  segmentIndex: number | null,
+): GameTurnStoryboardKeyframe | null {
+  if (frames.length === 0) return null;
+  const sorted = [...frames].sort((a, b) => a.index - b.index);
+  if (segmentIndex == null || !Number.isFinite(segmentIndex)) return sorted[0] ?? null;
+
+  const exact = sorted.find((frame) => {
+    const start = frame.sectionStartIndex ?? frame.sectionEndIndex;
+    const end = frame.sectionEndIndex ?? frame.sectionStartIndex;
+    if (start == null || end == null) return false;
+    return segmentIndex >= Math.min(start, end) && segmentIndex <= Math.max(start, end);
+  });
+  if (exact) return exact;
+
+  const anchored = sorted.filter((frame) => frame.sectionStartIndex != null || frame.sectionEndIndex != null);
+  if (anchored.length === 0) return sorted[0] ?? null;
+  return anchored.reduce((best, frame) => {
+    const bestStart = best.sectionStartIndex ?? best.sectionEndIndex ?? 0;
+    const bestEnd = best.sectionEndIndex ?? best.sectionStartIndex ?? bestStart;
+    const frameStart = frame.sectionStartIndex ?? frame.sectionEndIndex ?? 0;
+    const frameEnd = frame.sectionEndIndex ?? frame.sectionStartIndex ?? frameStart;
+    const bestCenter = (bestStart + bestEnd) / 2;
+    const frameCenter = (frameStart + frameEnd) / 2;
+    return Math.abs(frameCenter - segmentIndex) < Math.abs(bestCenter - segmentIndex) ? frame : best;
+  });
+}
+
+function formatStoryboardSectionLabel(frame: GameTurnStoryboardKeyframe): string {
+  const start = frame.sectionStartIndex ?? frame.sectionEndIndex;
+  const end = frame.sectionEndIndex ?? frame.sectionStartIndex;
+  if (start == null || end == null) return `Keyframe ${frame.index + 1}`;
+  if (start === end) return `Section ${start + 1}`;
+  return `Sections ${Math.min(start, end) + 1}-${Math.max(start, end) + 1}`;
 }
 
 function buildSegmentEditMap(chatMeta: Record<string, unknown>): Map<string, GameSegmentEdit> {
@@ -2539,6 +2676,15 @@ function GameSurfaceComponent({
   const [manualBackgroundGenerating, setManualBackgroundGenerating] = useState(false);
   const [sceneVideoGenerating, setSceneVideoGenerating] = useState(false);
   const [sceneVideoFailed, setSceneVideoFailed] = useState(false);
+  const [activeStoryboardSegmentIndex, setActiveStoryboardSegmentIndex] = useState<number | null>(null);
+  const [storyboardViewerSize, setStoryboardViewerSize] = useState<StoryboardViewerSize>("medium");
+  const [storyboardViewerWidth, setStoryboardViewerWidth] = useState(() => getStoryboardViewerPresetWidth("medium"));
+  const [storyboardViewerPosition, setStoryboardViewerPosition] = useState(() =>
+    getInitialStoryboardViewerPosition(getStoryboardViewerPresetWidth("medium")),
+  );
+  const [storyboardViewerMuted, setStoryboardViewerMuted] = useState(true);
+  const [storyboardViewerPlaying, setStoryboardViewerPlaying] = useState(true);
+  const [storyboardViewerDismissedKey, setStoryboardViewerDismissedKey] = useState<string | null>(null);
   const [failedNpcAvatarNames, setFailedNpcAvatarNames] = useState<Set<string>>(() => new Set());
   const [imagePromptReviewItems, setImagePromptReviewItems] = useState<GameImagePromptReviewItem[]>([]);
   const [imagePromptReviewSubmitting, setImagePromptReviewSubmitting] = useState(false);
@@ -2572,6 +2718,12 @@ function GameSurfaceComponent({
   const weatherMsgRef = useRef<string | null>(null);
   const sceneAnalysisTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoAssetGenerationKeyRef = useRef<string | null>(null);
+  const autoStoryboardGenerationKeyRef = useRef<string | null>(null);
+  const storyboardViewerVideoRef = useRef<HTMLVideoElement | null>(null);
+  const storyboardViewerDragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(
+    null,
+  );
+  const storyboardViewerResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   const closeGameFloatingPanels = useCallback(() => {
     setSessionPanelOpen(false);
@@ -2840,6 +2992,7 @@ function GameSurfaceComponent({
   // Apply segment-tied effects when the user progresses to a new segment
   const handleSegmentEnter = useCallback(
     (segmentIndex: number) => {
+      setActiveStoryboardSegmentIndex(Number.isFinite(segmentIndex) ? segmentIndex : null);
       useGameModeStore.getState().setDiceRollResult(null);
       const sceneEffectsApplied = appliedSegmentsRef.current.has(segmentIndex);
       const inventoryApplied = appliedInventorySegmentsRef.current.has(segmentIndex);
@@ -3209,6 +3362,19 @@ function GameSurfaceComponent({
     }
     return null;
   }, [messages]);
+  const latestAssistantSwipeIndex = latestAssistantMsg?.activeSwipeIndex ?? 0;
+  const turnStoryboardsQuery = useGameTurnStoryboards(
+    activeChatId,
+    latestAssistantMsg?.id,
+    latestAssistantSwipeIndex,
+    !!latestAssistantMsg,
+  );
+  const turnStoryboardRows = turnStoryboardsQuery.data;
+  const turnStoryboardsLoading = turnStoryboardsQuery.isLoading;
+  const turnStoryboardsFetching = turnStoryboardsQuery.isFetching;
+  const latestTurnStoryboard = turnStoryboardRows?.[0] ?? null;
+  const generateTurnStoryboard = useGenerateGameTurnStoryboard();
+  const storyboardGenerating = generateTurnStoryboard.isPending;
 
   const latestAssistantDirectAddressMode = useMemo(() => {
     if (!latestAssistantMsg) return null;
@@ -3244,14 +3410,114 @@ function GameSurfaceComponent({
       const segment = segments[index]!;
       if (segmentDeletes.has(`${latestAssistantMsg.id}:${index}`)) continue;
       if (segment.partyType === "side" || segment.partyType === "extra") continue;
-      const text = formatNarrationSegmentForContext(
-        segment,
-        segmentEdits.get(`${latestAssistantMsg.id}:${index}`),
-      );
+      const text = formatNarrationSegmentForContext(segment, segmentEdits.get(`${latestAssistantMsg.id}:${index}`));
       if (text) visibleText.push(text);
     }
     return visibleText.join("\n").trim();
   }, [latestAssistantMsg, segmentDeletes, segmentEdits]);
+  const latestAssistantStoryboardSections = useMemo(
+    () => buildStoryboardSectionsFromMessage(latestAssistantMsg, segmentEdits, segmentDeletes),
+    [latestAssistantMsg, segmentDeletes, segmentEdits],
+  );
+  const activeStoryboardKeyframe = useMemo(
+    () => findStoryboardKeyframeForSegment(latestTurnStoryboard?.keyframes ?? [], activeStoryboardSegmentIndex),
+    [activeStoryboardSegmentIndex, latestTurnStoryboard?.keyframes],
+  );
+  const latestStoryboardViewerTurnKey = useMemo(() => {
+    if (!latestAssistantMsg?.id) return null;
+    return activeChatId ? `${activeChatId}:${latestAssistantMsg.id}:${latestAssistantSwipeIndex}` : latestAssistantMsg.id;
+  }, [activeChatId, latestAssistantMsg?.id, latestAssistantSwipeIndex]);
+  const storyboardViewerDismissed =
+    !!latestStoryboardViewerTurnKey && storyboardViewerDismissedKey === latestStoryboardViewerTurnKey;
+  const handleReopenStoryboardViewer = useCallback(() => {
+    setStoryboardViewerDismissedKey(null);
+    setStoryboardViewerPosition((pos) => clampStoryboardViewerPosition(pos, storyboardViewerWidth));
+  }, [storyboardViewerWidth]);
+  const handleViewStoryboardFromGallery = useCallback(() => {
+    handleReopenStoryboardViewer();
+    handleCloseGalleryPanel();
+  }, [handleCloseGalleryPanel, handleReopenStoryboardViewer]);
+  useEffect(() => {
+    const video = storyboardViewerVideoRef.current;
+    if (!video) return;
+    video.muted = storyboardViewerMuted;
+    if (storyboardViewerPlaying) {
+      void video.play().catch(() => setStoryboardViewerPlaying(false));
+    } else {
+      video.pause();
+    }
+  }, [activeStoryboardKeyframe?.video?.id, storyboardViewerMuted, storyboardViewerPlaying]);
+  useEffect(() => {
+    const handleResize = () => {
+      setStoryboardViewerWidth((width) => clampStoryboardViewerWidth(width));
+      setStoryboardViewerPosition((pos) => clampStoryboardViewerPosition(pos, storyboardViewerWidth));
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [storyboardViewerWidth]);
+  useEffect(() => {
+    setStoryboardViewerPosition((pos) => clampStoryboardViewerPosition(pos, storyboardViewerWidth));
+  }, [storyboardViewerWidth]);
+  const handleStoryboardViewerDragStart = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      if (shouldIgnoreStoryboardViewerDragTarget(event.target)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      storyboardViewerDragRef.current = {
+        startX: event.clientX,
+        startY: event.clientY,
+        origX: storyboardViewerPosition.x,
+        origY: storyboardViewerPosition.y,
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+    },
+    [storyboardViewerPosition],
+  );
+  const handleStoryboardViewerDragMove = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      if (!storyboardViewerDragRef.current) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const dx = event.clientX - storyboardViewerDragRef.current.startX;
+      const dy = event.clientY - storyboardViewerDragRef.current.startY;
+      setStoryboardViewerPosition(
+        clampStoryboardViewerPosition(
+          {
+            x: storyboardViewerDragRef.current.origX + dx,
+            y: storyboardViewerDragRef.current.origY + dy,
+          },
+          storyboardViewerWidth,
+        ),
+      );
+    },
+    [storyboardViewerWidth],
+  );
+  const handleStoryboardViewerDragEnd = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    storyboardViewerDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }, []);
+  const handleStoryboardViewerResizeStart = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      storyboardViewerResizeRef.current = { startX: event.clientX, startWidth: storyboardViewerWidth };
+      event.currentTarget.setPointerCapture(event.pointerId);
+    },
+    [storyboardViewerWidth],
+  );
+  const handleStoryboardViewerResizeMove = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    if (!storyboardViewerResizeRef.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const dx = event.clientX - storyboardViewerResizeRef.current.startX;
+    const nextWidth = clampStoryboardViewerWidth(storyboardViewerResizeRef.current.startWidth + dx);
+    setStoryboardViewerWidth(nextWidth);
+    setStoryboardViewerPosition((pos) => clampStoryboardViewerPosition(pos, nextWidth));
+  }, []);
+  const handleStoryboardViewerResizeEnd = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    storyboardViewerResizeRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }, []);
 
   const combatLogEntries = useMemo(
     () =>
@@ -3332,6 +3598,10 @@ function GameSurfaceComponent({
     typeof chatMeta.gameVideoConnectionId === "string" && chatMeta.gameVideoConnectionId.trim().length > 0;
   const gameImageAutoGenerationEnabled =
     gameImageGenerationEnabled && chatMeta.gameImageAutoGenerationEnabled !== false;
+  const gameStoryboardAutoIllustrationsEnabled = chatMeta.gameStoryboardAutoIllustrationsEnabled === true;
+  const gameStoryboardAutoAnimationsEnabled = chatMeta.gameStoryboardAutoGenerationEnabled === true;
+  const gameStoryboardAutoGenerationEnabled =
+    gameStoryboardAutoIllustrationsEnabled || gameStoryboardAutoAnimationsEnabled;
   const gameImageUseAvatarReferences = chatMeta.gameImageUseAvatarReferences !== false;
   const gameImageIncludeCharacterAppearance = chatMeta.gameImageIncludeCharacterAppearance !== false;
 
@@ -3933,6 +4203,10 @@ function GameSurfaceComponent({
   }, [segmentStorageKey, latestAssistantMsg?.id, chatMeta.gameNarrationIndex, chatMeta.gameNarrationMessageId]);
 
   const restoredSegmentIndex = restoredNarrationState.index;
+  useEffect(() => {
+    setActiveStoryboardSegmentIndex(latestAssistantMsg?.id ? restoredSegmentIndex : null);
+    autoStoryboardGenerationKeyRef.current = null;
+  }, [latestAssistantMsg?.id, latestAssistantSwipeIndex, restoredSegmentIndex]);
 
   // Check if async scene preparation exists (sidecar or connection-based scene model)
   const hasAsyncScenePrep = useMemo(() => {
@@ -4997,55 +5271,189 @@ function GameSurfaceComponent({
     sceneWrapCharacterNames,
   ]);
 
-  const handleGenerateSceneVideo = useCallback(async (source?: { galleryImageId?: string }) => {
-    if (!activeChatId || sceneVideoGenerating) return;
-    if (!gameVideoGenerationEnabled) {
-      toast.error("Choose a Video Generation connection in Game Settings first.");
+  const handleGenerateSceneVideo = useCallback(
+    async (source?: { galleryImageId?: string }) => {
+      if (!activeChatId || sceneVideoGenerating) return;
+      if (!gameVideoGenerationEnabled) {
+        toast.error("Choose a Video Generation connection in Game Settings first.");
+        return;
+      }
+      const galleryImageId = source?.galleryImageId?.trim();
+      const illustrationTag =
+        typeof chatMeta.gameLastIllustrationTag === "string" ? chatMeta.gameLastIllustrationTag.trim() : "";
+      if (!galleryImageId && !illustrationTag) {
+        toast.error("Generate a scene illustration before generating a scene video.");
+        return;
+      }
+
+      setSceneVideoGenerating(true);
+      setSceneVideoFailed(false);
+      try {
+        const result = await withTimeout(
+          (signal) =>
+            api.post<{ video: GeneratedSceneVideo }>(
+              "/game/generate-scene-video",
+              {
+                chatId: activeChatId,
+                ...(galleryImageId ? { galleryImageId } : { illustrationTag }),
+                debugMode: useUIStore.getState().debugMode,
+              },
+              { signal },
+            ),
+          SCENE_VIDEO_GENERATION_TIMEOUT_MS,
+        );
+        const galleryStore = useGalleryStore.getState();
+        galleryStore.pinVideo(result.video);
+        galleryStore.syncLatestViewer({ ...result.video, kind: "video" as const });
+        void queryClient.invalidateQueries({ queryKey: ["gallery", "scene-videos", activeChatId] });
+        void queryClient.invalidateQueries({ queryKey: ["game", "scene-videos", activeChatId] });
+        await sceneVideosQuery.refetch();
+        toast.success("Scene video generated.", { duration: 1800 });
+      } catch (error) {
+        setSceneVideoFailed(true);
+        toast.error(error instanceof Error ? error.message : "Scene video generation failed.");
+      } finally {
+        setSceneVideoGenerating(false);
+      }
+    },
+    [
+      activeChatId,
+      chatMeta.gameLastIllustrationTag,
+      gameVideoGenerationEnabled,
+      queryClient,
+      sceneVideoGenerating,
+      sceneVideosQuery,
+    ],
+  );
+
+  const handleGenerateTurnStoryboard = useCallback(async () => {
+    if (!activeChatId || storyboardGenerating) return;
+    if (!latestAssistantMsg?.id) {
+      toast.error("No GM narration turn is available to storyboard.");
       return;
     }
-    const galleryImageId = source?.galleryImageId?.trim();
-    const illustrationTag =
-      typeof chatMeta.gameLastIllustrationTag === "string" ? chatMeta.gameLastIllustrationTag.trim() : "";
-    if (!galleryImageId && !illustrationTag) {
-      toast.error("Generate a scene illustration before generating a scene video.");
+    if (isStreaming) {
+      toast.error("Wait for the current GM narration to finish before storyboarding this turn.");
+      return;
+    }
+    if (!gameImageGenerationEnabled) {
+      toast.error("Choose an Illustrator image connection in Game Settings first.");
       return;
     }
 
-    setSceneVideoGenerating(true);
-    setSceneVideoFailed(false);
     try {
-      const result = await withTimeout(
-        (signal) =>
-          api.post<{ video: GeneratedSceneVideo }>(
-            "/game/generate-scene-video",
-            {
-              chatId: activeChatId,
-              ...(galleryImageId ? { galleryImageId } : { illustrationTag }),
-              debugMode: useUIStore.getState().debugMode,
-            },
-            { signal },
-          ),
-        SCENE_VIDEO_GENERATION_TIMEOUT_MS,
-      );
-      const galleryStore = useGalleryStore.getState();
-      galleryStore.pinVideo(result.video);
-      galleryStore.syncLatestViewer({ ...result.video, kind: "video" as const });
+      const result = await generateTurnStoryboard.mutateAsync({
+        chatId: activeChatId,
+        messageId: latestAssistantMsg.id,
+        swipeIndex: latestAssistantSwipeIndex,
+        sections: latestAssistantStoryboardSections,
+        generateVideos: gameStoryboardAutoAnimationsEnabled && gameVideoGenerationEnabled,
+        debugMode: useUIStore.getState().debugMode,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: gameStoryboardKeys.turn(activeChatId, latestAssistantMsg.id, latestAssistantSwipeIndex),
+      });
+      void queryClient.invalidateQueries({ queryKey: ["gallery", activeChatId] });
+      void queryClient.invalidateQueries({ queryKey: ["gallery", "assets", activeChatId] });
       void queryClient.invalidateQueries({ queryKey: ["gallery", "scene-videos", activeChatId] });
-      await sceneVideosQuery.refetch();
-      toast.success("Scene video generated.", { duration: 1800 });
+      void queryClient.invalidateQueries({ queryKey: ["game", "scene-videos", activeChatId] });
+      await Promise.all([turnStoryboardsQuery.refetch(), sceneVideosQuery.refetch()]);
+      const frameCount = result.storyboard.keyframes.length;
+      toast.success(
+        result.storyboard.status === "partial"
+          ? `Storyboard saved with ${frameCount} keyframes; some media failed.`
+          : `Storyboard saved with ${frameCount} keyframes.`,
+        { duration: 2200 },
+      );
     } catch (error) {
-      setSceneVideoFailed(true);
-      toast.error(error instanceof Error ? error.message : "Scene video generation failed.");
-    } finally {
-      setSceneVideoGenerating(false);
+      toast.error(error instanceof Error ? error.message : "Storyboard generation failed.");
     }
   }, [
     activeChatId,
-    chatMeta.gameLastIllustrationTag,
+    gameImageGenerationEnabled,
+    gameStoryboardAutoAnimationsEnabled,
     gameVideoGenerationEnabled,
+    generateTurnStoryboard,
+    isStreaming,
+    latestAssistantMsg?.id,
+    latestAssistantStoryboardSections,
+    latestAssistantSwipeIndex,
     queryClient,
-    sceneVideoGenerating,
     sceneVideosQuery,
+    storyboardGenerating,
+    turnStoryboardsQuery,
+  ]);
+
+  useEffect(() => {
+    if (!activeChatId || !latestAssistantMsg?.id || !latestAssistantMsg.content) return;
+    if (!gameStoryboardAutoGenerationEnabled || !gameImageGenerationEnabled) {
+      autoStoryboardGenerationKeyRef.current = null;
+      return;
+    }
+    if (isStreaming || scenePreparing || pendingAssetGeneration || storyboardGenerating) return;
+    if (turnStoryboardsLoading || turnStoryboardsFetching) return;
+    if (latestAssistantStoryboardSections.length === 0) return;
+    if ((turnStoryboardRows?.length ?? 0) > 0) return;
+
+    const lastSection = latestAssistantStoryboardSections[latestAssistantStoryboardSections.length - 1];
+    const payloadKey = [
+      activeChatId,
+      latestAssistantMsg.id,
+      latestAssistantSwipeIndex,
+      latestAssistantMsg.content.length,
+      latestAssistantStoryboardSections.length,
+      lastSection?.index ?? 0,
+      lastSection?.content.length ?? 0,
+    ].join(":");
+    if (autoStoryboardGenerationKeyRef.current === payloadKey) return;
+    autoStoryboardGenerationKeyRef.current = payloadKey;
+
+    void generateTurnStoryboard
+      .mutateAsync({
+        chatId: activeChatId,
+        messageId: latestAssistantMsg.id,
+        swipeIndex: latestAssistantSwipeIndex,
+        sections: latestAssistantStoryboardSections,
+        generateVideos: gameStoryboardAutoAnimationsEnabled && gameVideoGenerationEnabled,
+        debugMode: useUIStore.getState().debugMode,
+      })
+      .then((result) => {
+        queryClient.setQueryData(
+          gameStoryboardKeys.turn(activeChatId, latestAssistantMsg.id, latestAssistantSwipeIndex),
+          (existing: GameTurnStoryboard[] | undefined) => [
+            result.storyboard,
+            ...(existing ?? []).filter((storyboard) => storyboard.id !== result.storyboard.id),
+          ],
+        );
+        void queryClient.invalidateQueries({ queryKey: ["gallery", activeChatId] });
+        void queryClient.invalidateQueries({ queryKey: ["gallery", "assets", activeChatId] });
+        void queryClient.invalidateQueries({ queryKey: ["gallery", "scene-videos", activeChatId] });
+        void queryClient.invalidateQueries({ queryKey: ["game", "scene-videos", activeChatId] });
+        void sceneVideosQuery.refetch();
+      })
+      .catch((error) => {
+        console.warn("[game/storyboard] auto storyboard generation failed", error);
+      });
+  }, [
+    activeChatId,
+    gameImageGenerationEnabled,
+    gameStoryboardAutoAnimationsEnabled,
+    gameStoryboardAutoGenerationEnabled,
+    gameVideoGenerationEnabled,
+    generateTurnStoryboard,
+    isStreaming,
+    latestAssistantMsg?.content,
+    latestAssistantMsg?.id,
+    latestAssistantStoryboardSections,
+    latestAssistantSwipeIndex,
+    pendingAssetGeneration,
+    queryClient,
+    scenePreparing,
+    sceneVideosQuery,
+    storyboardGenerating,
+    turnStoryboardRows,
+    turnStoryboardsFetching,
+    turnStoryboardsLoading,
   ]);
 
   useEffect(() => {
@@ -8981,6 +9389,183 @@ function GameSurfaceComponent({
     return mobile ? renderGameMobilePortal(panel) : panel;
   };
 
+  const renderStoryboardInlineViewer = () => {
+    if (!latestAssistantMsg?.id) return null;
+    if (!latestTurnStoryboard && !storyboardGenerating) return null;
+    if (storyboardViewerDismissed) return null;
+
+    const frame = activeStoryboardKeyframe;
+    const framePosition =
+      latestTurnStoryboard && frame
+        ? Math.max(0, latestTurnStoryboard.keyframes.findIndex((item) => item.id === frame.id))
+        : 0;
+    const hasVideo = !!frame?.video;
+
+    return (
+      <div
+        data-game-skip-bg-nav="true"
+        className="group pointer-events-auto fixed z-[60] cursor-grab select-none touch-none active:cursor-grabbing"
+        style={{
+          left: storyboardViewerPosition.x,
+          top: storyboardViewerPosition.y,
+          width: storyboardViewerWidth,
+          maxWidth: "calc(100vw - 1.5rem)",
+        }}
+        onClick={(event) => event.stopPropagation()}
+        onPointerDown={handleStoryboardViewerDragStart}
+        onPointerMove={handleStoryboardViewerDragMove}
+        onPointerUp={handleStoryboardViewerDragEnd}
+        onPointerCancel={handleStoryboardViewerDragEnd}
+        aria-label="Storyboard viewer. Drag to move."
+      >
+        <div className="relative">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setStoryboardViewerDismissedKey(latestStoryboardViewerTurnKey);
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
+            className={getChatToolbarButtonClass({
+              compact: true,
+              sizeClassName: "h-7 w-7",
+              className: "absolute -right-2 -top-2 z-20 shadow-lg",
+            })}
+            aria-label="Close storyboard viewer"
+            title="Close storyboard viewer"
+          >
+            <X size={14} />
+          </button>
+          <div className="overflow-hidden rounded-xl border border-white/15 bg-black/75 shadow-2xl backdrop-blur-md">
+            <div className="flex items-center justify-between gap-2 border-b border-white/10 px-3 py-2">
+              <div
+                className="flex min-w-0 cursor-grab items-center gap-2 text-[0.6875rem] font-semibold uppercase tracking-wide text-white/75 active:cursor-grabbing"
+                aria-label="Drag storyboard viewer"
+              >
+                <GripHorizontal size={13} className="shrink-0 text-white/45" />
+                <PanelsTopLeft size={13} className="shrink-0 text-[var(--primary)]" />
+                <span className="truncate">Storyboard</span>
+              </div>
+              <span className="shrink-0 text-[0.625rem] text-white/45">
+                {frame ? formatStoryboardSectionLabel(frame) : "Rendering"}
+              </span>
+            </div>
+
+            {frame?.video ? (
+              <video
+                ref={storyboardViewerVideoRef}
+                key={frame.video.id}
+                src={frame.video.url}
+                autoPlay={storyboardViewerPlaying}
+                controls
+                loop
+                muted={storyboardViewerMuted}
+                playsInline
+                onPlay={() => setStoryboardViewerPlaying(true)}
+                onPause={() => setStoryboardViewerPlaying(false)}
+                className="aspect-video w-full touch-auto cursor-auto bg-black object-cover"
+                data-storyboard-viewer-no-drag
+              />
+            ) : frame?.image ? (
+              <img
+                src={frame.image.url}
+                alt={frame.title || `Storyboard keyframe ${frame.index + 1}`}
+                className="aspect-video w-full bg-black object-cover"
+                draggable={false}
+              />
+            ) : (
+              <div className="flex aspect-video w-full items-center justify-center gap-2 bg-black/45 text-xs text-white/55">
+                {storyboardGenerating ? <Loader2 size={14} className="animate-spin" /> : null}
+                {frame ? frame.status.replace("_", " ") : "Creating storyboard"}
+              </div>
+            )}
+
+            <div className="space-y-2 px-3 py-2.5">
+              <div className="flex items-start justify-between gap-2">
+                <p className="min-w-0 truncate text-xs font-semibold text-white/90">
+                  {frame?.title || latestTurnStoryboard?.title || "Storyboard turn"}
+                </p>
+                <div className="flex shrink-0 items-center gap-1">
+                  {hasVideo ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setStoryboardViewerPlaying((playing) => !playing)}
+                        className={STORYBOARD_VIEWER_CONTROL_BUTTON}
+                        title={storyboardViewerPlaying ? "Pause storyboard video" : "Play storyboard video"}
+                        aria-label={storyboardViewerPlaying ? "Pause storyboard video" : "Play storyboard video"}
+                      >
+                        {storyboardViewerPlaying ? <Pause size={13} /> : <Play size={13} />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStoryboardViewerMuted((muted) => !muted)}
+                        className={STORYBOARD_VIEWER_CONTROL_BUTTON}
+                        title={storyboardViewerMuted ? "Unmute storyboard video" : "Mute storyboard video"}
+                        aria-label={storyboardViewerMuted ? "Unmute storyboard video" : "Mute storyboard video"}
+                      >
+                        {storyboardViewerMuted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+                      </button>
+                    </>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setStoryboardViewerSize((size) => {
+                        const nextSize = nextStoryboardViewerSize(size);
+                        const nextWidth = getStoryboardViewerPresetWidth(nextSize);
+                        setStoryboardViewerWidth(nextWidth);
+                        setStoryboardViewerPosition((pos) => clampStoryboardViewerPosition(pos, nextWidth));
+                        return nextSize;
+                      })
+                    }
+                    className={STORYBOARD_VIEWER_CONTROL_BUTTON}
+                    title={`Change storyboard viewer size. Current: ${storyboardViewerSize}`}
+                    aria-label={`Change storyboard viewer size. Current: ${storyboardViewerSize}`}
+                  >
+                    <Maximize2 size={13} />
+                  </button>
+                  {latestTurnStoryboard?.keyframes.length ? (
+                    <span className="ml-1 text-[0.625rem] text-white/45">
+                      {framePosition + 1}/{latestTurnStoryboard.keyframes.length}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+              <p className="line-clamp-2 text-[0.6875rem] leading-4 text-white/58">
+                {frame?.anchorQuote || frame?.narrationBeat || latestTurnStoryboard?.error || "Generating keyframes..."}
+              </p>
+              {latestTurnStoryboard?.keyframes.length ? (
+                <div className="flex gap-1">
+                  {latestTurnStoryboard.keyframes.map((item) => (
+                    <span
+                      key={item.id}
+                      className={cn(
+                        "h-1 flex-1 rounded-full transition-colors",
+                        frame?.id === item.id ? "bg-[var(--primary)]" : "bg-white/15",
+                      )}
+                    />
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </div>
+          <div
+            className="absolute -bottom-2 -right-2 z-20 flex h-7 w-7 cursor-nwse-resize items-center justify-center rounded-lg border border-[var(--marinara-chat-chrome-button-border)] bg-[var(--marinara-chat-chrome-button-bg)] text-[var(--marinara-chat-chrome-button-text)] shadow-lg transition-all duration-150 hover:border-[var(--marinara-chat-chrome-button-border-hover)] hover:bg-[var(--marinara-chat-chrome-button-bg-hover)] hover:text-[var(--marinara-chat-chrome-button-text-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--marinara-chat-chrome-focus-ring)] active:scale-95"
+            aria-label="Resize storyboard viewer"
+            tabIndex={0}
+            onPointerDown={handleStoryboardViewerResizeStart}
+            onPointerMove={handleStoryboardViewerResizeMove}
+            onPointerUp={handleStoryboardViewerResizeEnd}
+            onPointerCancel={handleStoryboardViewerResizeEnd}
+          >
+            <span className="h-2.5 w-2.5 rounded-br-sm border-b-2 border-r-2 border-current" />
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderGameAssetsPanel = (mobile = false) => {
     const panel = (
       <div
@@ -8994,7 +9579,7 @@ function GameSurfaceComponent({
         )}
         style={mobile ? getGameMobileFloatingPanelStyle(mobileGameAssetsPanelAnchor) : undefined}
       >
-        <div className="flex shrink-0 items-center gap-2 border-b border-[var(--marinara-chat-chrome-panel-divider)] p-2">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-[var(--marinara-chat-chrome-panel-divider)] p-2">
           <button
             type="button"
             onClick={handleManualSceneBackground}
@@ -9020,8 +9605,107 @@ function GameSurfaceComponent({
             {sceneVideoGenerating ? <Loader2 size={14} className="animate-spin" /> : <Film size={14} />}
             Generate video
           </button>
+          <button
+            type="button"
+            onClick={() => void handleGenerateTurnStoryboard()}
+            disabled={storyboardGenerating || isStreaming || !gameImageGenerationEnabled || !latestAssistantMsg?.id}
+            className="marinara-chat-popover__item flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium text-[var(--marinara-chat-chrome-panel-text)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg-hover)] hover:text-[var(--marinara-chat-chrome-highlight-text)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+            title="Create manga keyframes and animation prompts from the current GM narration"
+          >
+            {storyboardGenerating ? <Loader2 size={14} className="animate-spin" /> : <PanelsTopLeft size={14} />}
+            Storyboard turn
+          </button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
+          {(latestTurnStoryboard || storyboardGenerating) && (
+            <div className="border-b border-[var(--marinara-chat-chrome-panel-divider)] p-3">
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="truncate text-sm font-semibold text-[var(--marinara-chat-chrome-panel-text)]">
+                    {latestTurnStoryboard?.title || "Storyboard turn"}
+                  </h3>
+                  <p className="mt-0.5 text-[0.6875rem] uppercase tracking-wide text-[var(--marinara-chat-chrome-panel-muted)]">
+                    {storyboardGenerating ? "Generating" : (latestTurnStoryboard?.status ?? "ready").replace("_", " ")}
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                  {storyboardViewerDismissed && latestTurnStoryboard ? (
+                    <button
+                      type="button"
+                      onClick={handleReopenStoryboardViewer}
+                      className="marinara-chat-popover__item flex items-center gap-1.5 rounded-md border border-[var(--marinara-chat-chrome-panel-divider)] px-2 py-1 text-[0.6875rem] font-medium text-[var(--marinara-chat-chrome-panel-text)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg-hover)] hover:text-[var(--marinara-chat-chrome-highlight-text)]"
+                      title="Show the floating storyboard viewer"
+                    >
+                      <PanelsTopLeft size={12} />
+                      Show viewer
+                    </button>
+                  ) : null}
+                  {latestTurnStoryboard?.turnNumber ? (
+                    <span className="rounded-md border border-[var(--marinara-chat-chrome-panel-divider)] px-2 py-1 text-[0.6875rem] text-[var(--marinara-chat-chrome-panel-muted)]">
+                      Turn {latestTurnStoryboard.turnNumber}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+              {storyboardGenerating && !latestTurnStoryboard ? (
+                <div className="flex items-center gap-2 rounded-lg border border-[var(--marinara-chat-chrome-panel-divider)] px-3 py-4 text-xs text-[var(--marinara-chat-chrome-panel-muted)]">
+                  <Loader2 size={14} className="animate-spin" />
+                  Creating storyboard keyframes
+                </div>
+              ) : null}
+              {latestTurnStoryboard?.error ? (
+                <p className="mb-3 rounded-lg border border-[var(--marinara-chat-chrome-panel-divider)] px-3 py-2 text-[0.6875rem] text-[var(--destructive)]">
+                  {latestTurnStoryboard.error}
+                </p>
+              ) : null}
+              {latestTurnStoryboard ? (
+                <div className="grid gap-3 md:grid-cols-2">
+                  {latestTurnStoryboard.keyframes.map((frame) => (
+                    <div
+                      key={frame.id}
+                      className="overflow-hidden rounded-lg border border-[var(--marinara-chat-chrome-panel-divider)] bg-[var(--marinara-chat-chrome-panel-bg)]"
+                    >
+                      {frame.video ? (
+                        <video
+                          src={frame.video.url}
+                          controls
+                          muted
+                          playsInline
+                          className="aspect-video w-full bg-black object-contain"
+                        />
+                      ) : frame.image ? (
+                        <img
+                          src={frame.image.url}
+                          alt={frame.title || `Storyboard keyframe ${frame.index + 1}`}
+                          className="aspect-video w-full bg-black object-cover"
+                        />
+                      ) : (
+                        <div className="flex aspect-video items-center justify-center bg-black/40 text-[0.6875rem] text-[var(--marinara-chat-chrome-panel-muted)]">
+                          {frame.status.replace("_", " ")}
+                        </div>
+                      )}
+                      <div className="space-y-2 p-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <h4 className="min-w-0 truncate text-xs font-semibold text-[var(--marinara-chat-chrome-panel-text)]">
+                            {frame.index + 1}. {frame.title || "Keyframe"}
+                          </h4>
+                          <span className="shrink-0 text-[0.625rem] uppercase tracking-wide text-[var(--marinara-chat-chrome-panel-muted)]">
+                            {frame.status.replace("_", " ")}
+                          </span>
+                        </div>
+                        <p className="line-clamp-2 text-[0.6875rem] leading-4 text-[var(--marinara-chat-chrome-panel-muted)]">
+                          {frame.narrationBeat || frame.videoPrompt}
+                        </p>
+                        {frame.error ? (
+                          <p className="text-[0.6875rem] text-[var(--destructive)]">{frame.error}</p>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          )}
           {(latestSceneVideo || sceneVideoFailed) && (
             <div className="border-b border-[var(--marinara-chat-chrome-panel-divider)] p-3">
               {latestSceneVideo ? (
@@ -9972,6 +10656,8 @@ function GameSurfaceComponent({
                   );
                 })()}
 
+                {renderStoryboardInlineViewer()}
+
                 {/* QTE overlay — absolute, centered */}
                 {activeQte && sessionInteractive && (
                   <div className="pointer-events-auto absolute inset-0 z-30 flex items-center justify-center">
@@ -10090,6 +10776,10 @@ function GameSurfaceComponent({
                   onClose={handleCloseGalleryPanel}
                   anchor={galleryAnchor}
                   onIllustrate={handleManualSceneIllustration}
+                  onGenerateStoryboard={handleGenerateTurnStoryboard}
+                  onViewStoryboard={
+                    latestTurnStoryboard || storyboardGenerating ? handleViewStoryboardFromGallery : undefined
+                  }
                   onGenerateVideo={handleGenerateSceneVideo}
                   onAnimateImage={(image) => handleGenerateSceneVideo({ galleryImageId: image.id })}
                   onGenerateBackground={handleManualSceneBackground}

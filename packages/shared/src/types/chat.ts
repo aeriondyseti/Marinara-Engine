@@ -460,6 +460,10 @@ export interface ChatMetadata {
   gameLastIllustrationTag?: string;
   /** Connection used for Game Mode scene-video generation. */
   gameVideoConnectionId?: string | null;
+  /** When true, completed Game Mode GM turns automatically create storyboard keyframe illustrations. */
+  gameStoryboardAutoIllustrationsEnabled?: boolean;
+  /** When true, completed Game Mode GM turns automatically create storyboard keyframe videos. */
+  gameStoryboardAutoGenerationEnabled?: boolean;
   /** Last generated scene-video record ID for this game. */
   gameLastSceneVideoId?: string | null;
   /** Connection used for roleplay/gallery scene-video generation. */

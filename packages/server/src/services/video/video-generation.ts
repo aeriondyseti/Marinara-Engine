@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from "fs";
+import { mkdir, rename, unlink, writeFile } from "fs/promises";
 import { join } from "path";
 import { DATA_DIR } from "../../utils/data-dir.js";
 import { newId } from "../../utils/id-generator.js";
@@ -63,26 +63,29 @@ export async function generateVideo(
   throw new Error(`Unsupported video generation service: ${resolvedService || serviceHint || source}`);
 }
 
-export function saveVideoToDisk(chatId: string, base64: string): string {
+export async function saveVideoToDisk(chatId: string, base64: string): Promise<string> {
   const dir = assertInsideDir(GAME_SCENE_VIDEOS_DIR, join(GAME_SCENE_VIDEOS_DIR, chatId));
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  await mkdir(dir, { recursive: true });
   const filename = `${newId()}.mp4`;
   const filePath = assertInsideDir(GAME_SCENE_VIDEOS_DIR, join(dir, filename));
   const tempPath = assertInsideDir(GAME_SCENE_VIDEOS_DIR, `${filePath}.${process.pid}.${Date.now()}.tmp`);
   try {
     const buffer = Buffer.from(base64, "base64");
     if (!isMp4Buffer(buffer)) throw new Error("Provider returned data that is not a valid MP4 file");
-    writeFileSync(tempPath, buffer);
-    renameSync(tempPath, filePath);
+    await writeFile(tempPath, buffer);
+    await rename(tempPath, filePath);
   } catch (error) {
-    try {
-      if (existsSync(tempPath)) unlinkSync(tempPath);
-    } catch {
-      /* best-effort cleanup */
-    }
+    await unlink(tempPath).catch(() => undefined);
     throw error;
   }
   return `${chatId}/${filename}`;
+}
+
+export async function removeSavedVideoFromDisk(filePath: string): Promise<void> {
+  const fullPath = assertInsideDir(GAME_SCENE_VIDEOS_DIR, join(GAME_SCENE_VIDEOS_DIR, filePath));
+  await unlink(fullPath).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error;
+  });
 }
 
 function normalizeVideoService(value: string): string {
@@ -281,7 +284,11 @@ function withVideoGenerationDeadline<T>(
     controller.abort(externalSignal.reason);
   }
   const timeout = setTimeout(() => controller.abort(new VideoGenerationDeadlineError(timeoutMs)), timeoutMs);
-  externalSignal?.addEventListener("abort", onAbort, { once: true });
+  if (externalSignal?.aborted) {
+    controller.abort(externalSignal.reason);
+  } else {
+    externalSignal?.addEventListener("abort", onAbort, { once: true });
+  }
   return run(controller.signal).finally(() => {
     clearTimeout(timeout);
     externalSignal?.removeEventListener("abort", onAbort);

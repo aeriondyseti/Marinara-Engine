@@ -237,6 +237,10 @@ type ChatCommonOverlaysProps = {
   onIllustrate?: () => void;
   /** Generate and apply a background for the current scene. */
   onGenerateBackground?: () => void | Promise<void>;
+  /** Generate a storyboard for the latest completed Game Mode GM turn. */
+  onGenerateStoryboard?: () => void | Promise<void>;
+  /** Show the latest Game Mode storyboard viewer. */
+  onViewStoryboard?: () => void;
   /** Generate a scene video from the latest gallery image. */
   onGenerateVideo?: () => void | Promise<void>;
   /** Generate a scene video from a specific gallery image. */
@@ -274,6 +278,8 @@ export function ChatCommonOverlays({
   onCloseGallery,
   onIllustrate,
   onGenerateBackground,
+  onGenerateStoryboard,
+  onViewStoryboard,
   onGenerateVideo,
   onAnimateImage,
   onWizardFinish,
@@ -316,6 +322,8 @@ export function ChatCommonOverlays({
               onClose={onCloseGallery}
               anchor={galleryAnchor}
               onIllustrate={onIllustrate}
+              onGenerateStoryboard={onGenerateStoryboard}
+              onViewStoryboard={onViewStoryboard}
               onGenerateVideo={onGenerateVideo}
               onAnimateImage={onAnimateImage}
               onGenerateBackground={onGenerateBackground}

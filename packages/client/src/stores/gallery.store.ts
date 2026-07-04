@@ -89,6 +89,8 @@ interface GalleryState {
   videoGeneratingChatIds: Set<string>;
   /** Chat IDs with an in-flight manual scene background request. */
   backgroundGeneratingChatIds: Set<string>;
+  /** Chat IDs with an in-flight manual game storyboard request. */
+  storyboardGeneratingChatIds: Set<string>;
   pinImage: (image: ChatImage) => void;
   pinVideo: (video: GeneratedSceneVideo) => void;
   viewImage: (image: ChatImage) => void;
@@ -101,6 +103,7 @@ interface GalleryState {
   setChatIllustrating: (chatId: string, illustrating: boolean) => void;
   setChatGeneratingVideo: (chatId: string, generating: boolean) => void;
   setChatGeneratingBackground: (chatId: string, generating: boolean) => void;
+  setChatGeneratingStoryboard: (chatId: string, generating: boolean) => void;
 }
 
 export const useGalleryStore = create<GalleryState>((set) => ({
@@ -110,6 +113,7 @@ export const useGalleryStore = create<GalleryState>((set) => ({
   illustratingChatIds: new Set(),
   videoGeneratingChatIds: new Set(),
   backgroundGeneratingChatIds: new Set(),
+  storyboardGeneratingChatIds: new Set(),
 
   pinImage: (image) =>
     set((s) => {
@@ -175,5 +179,13 @@ export const useGalleryStore = create<GalleryState>((set) => ({
       if (generating) next.add(chatId);
       else next.delete(chatId);
       return { backgroundGeneratingChatIds: next };
+    }),
+
+  setChatGeneratingStoryboard: (chatId, generating) =>
+    set((s) => {
+      const next = new Set(s.storyboardGeneratingChatIds);
+      if (generating) next.add(chatId);
+      else next.delete(chatId);
+      return { storyboardGeneratingChatIds: next };
     }),
 }));

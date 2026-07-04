@@ -285,11 +285,13 @@ Game Mode image generation waits up to 30 minutes by default. Slow providers can
 
 ### Scene Video Generation
 
-Scene videos animate generated Game Mode illustrations into short MP4 clips. Configure a **Video Generation** connection in Settings, then choose it in the Game setup wizard or in **Chat Settings -> Agents -> Scene Videos** for an existing game.
+Scene videos animate generated Game Mode illustrations into short MP4 clips. Configure a **Video Generation** connection in Settings, then choose it in the Game setup wizard or in **Chat Settings -> Game Mode -> Scene Videos** for an existing game.
 
 Use the Gallery **Video** action to animate the latest scene illustration, or click **Animate** on a specific Gallery illustration to use that image as the first frame/reference. Generated videos appear in the Gallery, can be previewed fullscreen with their prompt, copied, downloaded, pinned, resized, and followed through **View latest**.
 
-See [Scene Video Generation](SCENE_VIDEO_GENERATION.md) for provider setup, defaults, prompt templates, and troubleshooting.
+Game Mode can also storyboard a completed GM turn. **Storyboard turn** in Game Assets asks the Prompt Director to split the GM narration into manga keyframes, render each keyframe as a gallery illustration, and animate the keyframes when a video connection is available. The floating storyboard viewer follows the current story section while you read and can be closed, dragged, resized, muted, paused, and reopened from Game Assets. Automatic storyboard generation is controlled by **Chat Settings -> Game Mode -> Scene Videos -> Automatic Storyboard Animations** and is off by default.
+
+See [Scene Video Generation](SCENE_VIDEO_GENERATION.md) for provider setup, defaults, storyboard behavior, prompt templates, and troubleshooting.
 
 ## The `game-assets` folder
 

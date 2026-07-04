@@ -17,6 +17,7 @@ import {
   GAME_BACKGROUND,
   GAME_SCENE_ILLUSTRATION,
   GAME_NARRATION_SUMMARIZER,
+  GAME_STORYBOARD_DIRECTOR,
   GAME_VIDEO,
 } from "./registry/game-assets.js";
 import { CONVERSATION_SELFIE } from "./registry/conversation.js";
@@ -30,6 +31,7 @@ export const PROMPT_OVERRIDE_REGISTRY = [
   GAME_BACKGROUND,
   GAME_SCENE_ILLUSTRATION,
   GAME_NARRATION_SUMMARIZER,
+  GAME_STORYBOARD_DIRECTOR,
   GAME_VIDEO,
   CONVERSATION_SELFIE,
 ] as const;
@@ -66,6 +68,7 @@ export {
   GAME_BACKGROUND,
   GAME_SCENE_ILLUSTRATION,
   GAME_NARRATION_SUMMARIZER,
+  GAME_STORYBOARD_DIRECTOR,
   GAME_VIDEO,
   CONVERSATION_SELFIE,
 };
@@ -80,6 +83,7 @@ export type {
   GameBackgroundCtx,
   GameSceneIllustrationCtx,
   GameNarrationSummarizerCtx,
+  GameStoryboardDirectorCtx,
   GameVideoCtx,
 } from "./registry/game-assets.js";
 export type { ConversationSelfieCtx } from "./registry/conversation.js";

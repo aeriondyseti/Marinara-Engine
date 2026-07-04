@@ -101,7 +101,8 @@ export function normalizeImportedConnectionEntry(value: unknown): ConnectionImpo
 
   const defaultParameters = parseDefaultParameters(value.defaultParameters);
   const imageService = asNullableString(value.imageService ?? value.service);
-  const videoService = asNullableString(value.videoService ?? value.service);
+  const videoService =
+    provider === "video_generation" ? asNullableString(value.videoService ?? value.service) : null;
 
   return {
     connection: {
@@ -125,7 +126,7 @@ export function normalizeImportedConnectionEntry(value: unknown): ConnectionImpo
       comfyuiWorkflow: asNullableString(value.comfyuiWorkflow),
       imageService,
       imageEndpointId: asNullableString(value.imageEndpointId),
-      videoGenerationSource: asNullableString(value.videoGenerationSource),
+      videoGenerationSource: provider === "video_generation" ? asNullableString(value.videoGenerationSource) : null,
       videoService,
       promptPresetId: null,
       maxTokensOverride: asNullablePositiveInteger(value.maxTokensOverride),
@@ -140,6 +141,7 @@ export function normalizeImportedConnectionEntry(value: unknown): ConnectionImpo
 
 function serializeConnectionForExport(connection: ConnectionTransferRow): SafeConnectionExport {
   const provider = asProvider(connection.provider) ?? "custom";
+  const isVideoProvider = provider === "video_generation";
   return {
     name: asString(connection.name) || "Unnamed Connection",
     provider,
@@ -162,8 +164,8 @@ function serializeConnectionForExport(connection: ConnectionTransferRow): SafeCo
     openrouterProvider: asNullableString(connection.openrouterProvider),
     imageGenerationSource: asNullableString(connection.imageGenerationSource),
     imageService: asNullableString(connection.imageService ?? connection.service),
-    videoGenerationSource: asNullableString(connection.videoGenerationSource),
-    videoService: asNullableString(connection.videoService ?? connection.service),
+    videoGenerationSource: isVideoProvider ? asNullableString(connection.videoGenerationSource) : null,
+    videoService: isVideoProvider ? asNullableString(connection.videoService ?? connection.service) : null,
     imageEndpointId: asNullableString(connection.imageEndpointId),
     comfyuiWorkflow: asNullableString(connection.comfyuiWorkflow),
     treatAsLocalEndpoint: asBoolean(connection.treatAsLocalEndpoint),

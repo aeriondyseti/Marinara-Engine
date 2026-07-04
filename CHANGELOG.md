@@ -8,6 +8,8 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 - Added the Agent Suite to the Chat Settings drawer's Agents section: a window listing the agents active in the current chat where you can view and edit everything they have stored — agent memory, tracker state, and custom-agent outputs — manually or with AI-assisted rewrites (select text, give an instruction, optionally attach grounding context such as character cards or active-lorebook entries, and pick a connection) (#3160).
 - Added first-class scene video generation for Game Mode, Roleplay, and Visual Novel galleries, including Video Generation connections for Gemini Omni and xAI Imagine, editable `game.video` prompts, manual Gallery video actions, per-image Animate buttons, Gallery video previews with prompt copy, live View Latest media, and draggable/resizable pinned video overlays.
+- Added Game Mode turn storyboards: a `game.storyboardDirector` Prompt Director splits completed GM narration into manga keyframes with image/video prompts, renders keyframe media concurrently, follows the current story section in a draggable/resizable viewer, can be reopened from Game Assets, and supports an off-by-default **Automatic Storyboard Animations** chat setting.
+- Added Gallery **Images** and **Videos** tabs so generated clips are reachable without scrolling through every still image first.
 
 ### Fixed
 

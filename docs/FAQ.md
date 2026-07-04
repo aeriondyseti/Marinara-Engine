@@ -116,6 +116,22 @@ You can configure multiple connections at once and assign different providers pe
 
 ---
 
+<details>
+<summary><strong>How do Game Mode storyboard animations work?</strong></summary>
+<br>
+
+Storyboards are created from completed GM narration turns. Marinara does not include your CYOA choice in the storyboard source, because that choice is the input that creates the next turn.
+
+Open **Game Assets** and click **Storyboard turn** to manually create a storyboard for the latest GM narration. The Prompt Director splits the turn into manga keyframes, generates each keyframe illustration, and creates animation clips when a Video Generation connection is available. The floating storyboard viewer follows the current story section as you read, and it can be closed, dragged, resized, paused, muted, or reopened from Game Assets.
+
+Automatic generation is off by default. Enable **Chat Settings -> Game Mode -> Scene Videos -> Automatic Storyboard Animations** if you want Marinara to create storyboard keyframes and clips after each completed GM turn.
+
+See [Scene Video Generation](SCENE_VIDEO_GENERATION.md#game-mode-turn-storyboards) for setup, prompt-template keys, and troubleshooting.
+
+</details>
+
+---
+
 <a id="why-doesnt-my-roleplay-character-remember-the-messages-from-our-connected-conversation"></a>
 
 <details>

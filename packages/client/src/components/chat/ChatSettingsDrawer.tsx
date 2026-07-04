@@ -19,6 +19,7 @@ import {
   Sparkles,
   Image,
   Film,
+  PanelsTopLeft,
   Pencil,
   AlertTriangle,
   GripVertical,
@@ -1313,6 +1314,8 @@ export function ChatSettingsDrawer({
   const gameImageUseAvatarReferences = metadata.gameImageUseAvatarReferences !== false;
   const gameImageIncludeCharacterAppearance = metadata.gameImageIncludeCharacterAppearance !== false;
   const gameImageAutoGenerationEnabled = metadata.gameImageAutoGenerationEnabled !== false;
+  const gameStoryboardAutoIllustrationsEnabled = metadata.gameStoryboardAutoIllustrationsEnabled === true;
+  const gameStoryboardAutoAnimationsEnabled = metadata.gameStoryboardAutoGenerationEnabled === true;
   const updateIllustratorPromptConnection = useCallback(
     (connectionId: string) => {
       updateMeta.mutate({
@@ -6720,7 +6723,7 @@ export function ChatSettingsDrawer({
                   <AgentSettingsCard
                     icon={<Film size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
                     title="Scene Videos"
-                    description="Generate manual MP4 scene videos from the latest game illustration."
+                    description="Generate MP4 scene videos from game illustrations."
                   >
                     <label className="flex flex-col gap-1">
                       <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Video Connection</span>
@@ -6746,8 +6749,46 @@ export function ChatSettingsDrawer({
                       </p>
                     )}
                     <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                      Scene videos use the latest generated scene illustration as the first frame and the editable Omni
-                      scene-video prompt template.
+                      Scene videos use the latest generated scene illustration as the first frame and the editable
+                      scene-video prompt template. Storyboard animations use this video connection when enabled below.
+                    </p>
+                  </AgentSettingsCard>
+                )}
+
+                {isGame && (
+                  <AgentSettingsCard
+                    icon={<PanelsTopLeft size="0.75rem" className="mt-0.5 text-[var(--primary)]" />}
+                    title="Storyboards"
+                    description="Create keyframe media for completed GM turns and follow the active narration section in the floating viewer."
+                  >
+                    <AgentSettingsToggle
+                      label="Automatic Storyboard Illustrations"
+                      description="Automatically create manga keyframe illustrations after completed GM turns. Requires an Illustrator image connection."
+                      enabled={gameStoryboardAutoIllustrationsEnabled}
+                      onToggle={() => {
+                        const nextEnabled = !gameStoryboardAutoIllustrationsEnabled;
+                        updateMeta.mutate({
+                          id: chat.id,
+                          gameStoryboardAutoIllustrationsEnabled: nextEnabled,
+                          ...(nextEnabled ? {} : { gameStoryboardAutoGenerationEnabled: false }),
+                        });
+                      }}
+                    />
+                    <AgentSettingsToggle
+                      label="Automatic Storyboard Animations"
+                      description="Also generate MP4 clips for each storyboard keyframe. Requires storyboard illustrations and a Video Generation connection."
+                      enabled={gameStoryboardAutoAnimationsEnabled}
+                      onToggle={() => {
+                        const nextEnabled = !gameStoryboardAutoAnimationsEnabled;
+                        updateMeta.mutate({
+                          id: chat.id,
+                          gameStoryboardAutoGenerationEnabled: nextEnabled,
+                          ...(nextEnabled ? { gameStoryboardAutoIllustrationsEnabled: true } : {}),
+                        });
+                      }}
+                    />
+                    <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                      Illustrations are the low-cost default path. Animations add video generation for every keyframe.
                     </p>
                   </AgentSettingsCard>
                 )}

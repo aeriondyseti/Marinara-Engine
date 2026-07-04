@@ -15,6 +15,7 @@ export * from "./game-state.js";
 export * from "./game-engine-state.js";
 export * from "./checkpoints.js";
 export * from "./game-scene-videos.js";
+export * from "./game-storyboards.js";
 export * from "./regex-scripts.js";
 export * from "./gallery.js";
 export * from "./custom-emojis.js";

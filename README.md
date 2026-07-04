@@ -147,7 +147,7 @@ Three chat modes — **Conversation** (Discord-style DMs), **Roleplay** (immersi
 
 ### Visual & Immersive
 
-Character expression sprites with automatic emotion switching, custom scene backgrounds, dynamic weather overlays, gallery illustrations, short scene videos from generated illustrations, two visual themes (Y2K Marinara and SillyTavern classic), and light/dark mode.
+Character expression sprites with automatic emotion switching, custom scene backgrounds, dynamic weather overlays, gallery illustrations, short scene videos from generated illustrations, Game Mode manga storyboards with animated keyframes, two visual themes (Y2K Marinara and SillyTavern classic), and light/dark mode.
 
 ### AI Agent System
 
@@ -174,7 +174,7 @@ Export individual chats or bulk transcript zips as JSONL or plain text. Fully lo
 | [docs/INSTALLATION.md](docs/INSTALLATION.md)         | Installation guide index (all platforms)                        |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md)       | Environment variables and `.env` reference                      |
 | [docs/IMAGE_GENERATION.md](docs/IMAGE_GENERATION.md) | Image provider setup, style profiles, and prompt cleanup        |
-| [docs/SCENE_VIDEO_GENERATION.md](docs/SCENE_VIDEO_GENERATION.md) | Scene-video setup, Gallery animation workflow, and prompt templates |
+| [docs/SCENE_VIDEO_GENERATION.md](docs/SCENE_VIDEO_GENERATION.md) | Scene-video setup, Game Mode storyboards, Gallery animation workflow, and prompt templates |
 | [docs/EXTENSIONS.md](docs/EXTENSIONS.md)             | Extension folder manifests, package format, and examples        |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)   | Common issues and fixes                                         |
 | [docs/FAQ.md](docs/FAQ.md)                           | Frequently asked questions (LAN access, etc.)                   |
