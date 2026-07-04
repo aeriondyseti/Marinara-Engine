@@ -34,6 +34,7 @@ export const CONVERSATION_COMMAND_KEYS = [
   "selfie",
   "memory",
   "scene",
+  "call",
   "uno",
   "chess",
   "music",
@@ -237,6 +238,8 @@ export interface ChatMetadata {
   illustratorPromptConnectionId?: string | null;
   /** Whether Conversation selfie commands should send the matching character avatar as a reference image. */
   selfieUseAvatarReferences?: boolean;
+  /** Whether Conversation selfie commands should append matched character card appearance text to image prompts. */
+  selfieIncludeCharacterAppearance?: boolean;
   /** Whether Game Mode scene illustrations should send matching character/persona avatar references. */
   gameImageUseAvatarReferences?: boolean;
   /** Whether Game Mode scene illustrations should append matched character appearance descriptions. */
@@ -388,6 +391,10 @@ export interface ChatMetadata {
   characterCommands?: boolean;
   /** Per-command Conversation command enable overrides. Missing/true means enabled. */
   conversationCommandToggles?: ConversationCommandToggles;
+  /** Allow this conversation to start local AI audio/video calls. Default: false. */
+  conversationCallsEnabled?: boolean;
+  /** Allow characters to ring the user through the call command. Default: true when calls are enabled. */
+  conversationCharactersCanCall?: boolean;
   /** Chat-scoped generated schedules for conversation characters. */
   characterSchedules?: Record<string, unknown>;
   /** Chat-scoped manual status overrides for conversation characters. */
@@ -572,6 +579,19 @@ export interface MessageReaction {
   imageUrl?: string | null;
   /** Who reacted: the "user" sentinel for the human, or character ids for bots. */
   by: string[];
+  /**
+   * For grouped multi-speaker messages: index of the speaker segment this reaction
+   * targets (the client's grouped-segment order). Absent/null targets the whole
+   * message — 1:1 chats, legacy data, and block-level reactions all stay that way.
+   */
+  segment?: number | null;
+  /**
+   * Speaker name of the targeted segment, captured at react time. Lets the client
+   * detect a stale `segment` index after an edit/regeneration re-segments the
+   * content (mismatches fall back to whole-message display), and lets the server
+   * tell characters whose line was reacted to. Null for a narration segment.
+   */
+  segmentSpeaker?: string | null;
 }
 
 /** Additional data attached to a message. */

@@ -19,6 +19,8 @@ import {
   agentRuns,
   agentMemory,
   memoryChunks,
+  conversationCallSessions,
+  conversationCallMessages,
 } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";
 import { existsSync, rmSync } from "fs";
@@ -703,6 +705,8 @@ export function createChatsStorage(db: DB) {
       await db.delete(gameCheckpoints).where(eq(gameCheckpoints.chatId, id));
       await db.delete(gameStateSnapshots).where(eq(gameStateSnapshots.chatId, id));
       await db.delete(gameEngineState).where(eq(gameEngineState.chatId, id));
+      await db.delete(conversationCallMessages).where(eq(conversationCallMessages.chatId, id));
+      await db.delete(conversationCallSessions).where(eq(conversationCallSessions.chatId, id));
       const storyboards = await db
         .select({ id: gameTurnStoryboards.id })
         .from(gameTurnStoryboards)
@@ -733,6 +737,8 @@ export function createChatsStorage(db: DB) {
         await db.delete(gameCheckpoints).where(eq(gameCheckpoints.chatId, chat.id));
         await db.delete(gameStateSnapshots).where(eq(gameStateSnapshots.chatId, chat.id));
         await db.delete(gameEngineState).where(eq(gameEngineState.chatId, chat.id));
+        await db.delete(conversationCallMessages).where(eq(conversationCallMessages.chatId, chat.id));
+        await db.delete(conversationCallSessions).where(eq(conversationCallSessions.chatId, chat.id));
         const storyboards = await db
           .select({ id: gameTurnStoryboards.id })
           .from(gameTurnStoryboards)

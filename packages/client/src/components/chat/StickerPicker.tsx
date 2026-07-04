@@ -55,7 +55,7 @@ export function StickerPicker({ open, onClose, onSelect, anchorRef, containerRef
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [pos, setPos] = useState<{ top: number; left?: number; maxHeight?: number }>({ top: 0 });
+  const [pos, setPos] = useState<{ top: number; left?: number; right?: number; maxHeight?: number }>({ top: 0 });
 
   const updatePosition = useCallback(() => {
     if (!anchorRef?.current) return;
@@ -81,8 +81,12 @@ export function StickerPicker({ open, onClose, onSelect, anchorRef, containerRef
       setPos({ top, left, maxHeight });
     } else {
       const btnRight = btnRect.right + viewportLeft;
-      const left = Math.max(visibleLeft + pad, Math.min(btnRight - panelWidth, visibleRight - panelWidth - pad));
-      setPos({ top, left, maxHeight });
+      const alignedLeft = btnRight - panelWidth;
+      if (alignedLeft < visibleLeft + pad) {
+        setPos({ top, left: visibleLeft + pad, maxHeight });
+      } else {
+        setPos({ top, right: Math.max(pad, visibleRight - btnRight), maxHeight });
+      }
     }
   }, [anchorRef, containerRef]);
 
@@ -363,8 +367,8 @@ export function StickerPicker({ open, onClose, onSelect, anchorRef, containerRef
               <>No stickers match “{query.trim()}”.</>
             ) : (
               <>
-                No stickers yet. Upload one (max 512×512) to send it as{" "}
-                <span className="font-mono">sticker:name:</span>.
+                No stickers yet. Upload one (max 512×512) to send it as <span className="font-mono">sticker:name:</span>
+                .
               </>
             )}
           </p>
@@ -382,7 +386,11 @@ export function StickerPicker({ open, onClose, onSelect, anchorRef, containerRef
                         title={editing ? `Rename sticker:${sticker.name}:` : `Send sticker:${sticker.name}:`}
                         className={cellClass}
                       >
-                        <img src={sticker.url} alt={`sticker:${sticker.name}:`} className="max-h-16 max-w-full object-contain" />
+                        <img
+                          src={sticker.url}
+                          alt={`sticker:${sticker.name}:`}
+                          className="max-h-16 max-w-full object-contain"
+                        />
                       </button>
                       {editing && (
                         <button
@@ -412,7 +420,11 @@ export function StickerPicker({ open, onClose, onSelect, anchorRef, containerRef
                         title={`Send sticker:${sticker.name}: — ${source}`}
                         className={cellClass}
                       >
-                        <img src={sticker.url} alt={`sticker:${sticker.name}:`} className="max-h-16 max-w-full object-contain" />
+                        <img
+                          src={sticker.url}
+                          alt={`sticker:${sticker.name}:`}
+                          className="max-h-16 max-w-full object-contain"
+                        />
                       </button>
                     </div>
                   ))}
@@ -436,6 +448,7 @@ export function StickerPicker({ open, onClose, onSelect, anchorRef, containerRef
       style={{
         top: pos.top,
         ...(pos.left != null ? { left: pos.left } : {}),
+        ...(pos.right != null ? { right: pos.right } : {}),
         ...(pos.maxHeight != null ? { maxHeight: pos.maxHeight } : {}),
       }}
     >

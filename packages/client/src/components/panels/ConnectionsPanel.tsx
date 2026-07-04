@@ -31,6 +31,8 @@ import {
   LOCAL_SIDECAR_CONNECTION_ID,
   getDefaultAgentPrompt,
   type ConnectionFolder,
+  type SidecarSpeechModelId,
+  type SidecarSpeechRuntimeDiagnostics,
 } from "@marinara-engine/shared";
 import { confirmNonEmptyFolderDelete, showConfirmDialog } from "../../lib/app-dialogs";
 import {
@@ -57,6 +59,8 @@ import {
   Sparkles,
   ImageIcon,
   Film,
+  Mic,
+  HardDriveDownload,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { sortBasicPanelItems } from "../../lib/panel-sort";
@@ -104,6 +108,32 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
+function describeSpeechRuntimeUnavailable(runtime: SidecarSpeechRuntimeDiagnostics | null): string {
+  if (!runtime) {
+    return "Local Whisper needs the native ONNX runtime for this platform. Reinstall dependencies with the same Node architecture used to run Marinara.";
+  }
+
+  const runtimeTuple = `${runtime.platform}/${runtime.arch}`;
+  const installed =
+    runtime.installedBindingArchs.length > 0
+      ? runtime.installedBindingArchs.map((arch) => `${runtime.platform}/${arch}`).join(", ")
+      : "";
+
+  if (runtime.liteMode) {
+    return "Local Whisper is disabled in Lite mode. Use a full Marinara install to download and run the local speech model.";
+  }
+
+  if (!runtime.packageFound) {
+    return `Local Whisper needs onnxruntime-node. Run pnpm install with Node ${runtime.nodeVersion} (${runtimeTuple}), then restart Marinara.`;
+  }
+
+  if (installed && !runtime.installedBindingArchs.includes(runtime.arch)) {
+    return `Marinara is running with ${runtimeTuple} Node, but this install has ONNX runtime for ${installed}. Restart Marinara with the matching Node architecture, or reinstall dependencies using the same Node architecture you use to run Marinara.`;
+  }
+
+  return `Local Whisper cannot find the ONNX runtime for ${runtimeTuple}. Run pnpm install --force --frozen-lockfile with the same Node architecture used to run Marinara, then restart.`;
+}
+
 function formatRuntimeVariantLabel(variant: string | null): string | null {
   if (!variant) return null;
   return variant.replace(/-/g, " ");
@@ -131,14 +161,27 @@ function SidecarCard() {
     failedRuntimeVariant,
     curatedModels,
     downloadProgress,
+    speechStatus,
+    speechAvailable,
+    speechModelDownloaded,
+    speechModelDisplayName,
+    speechModelSize,
+    speechModels,
+    speechRuntime,
+    speechDownloadProgress,
+    speechError,
     setShowDownloadModal,
     startDownload,
+    startSpeechDownload,
+    deleteSpeechModel,
     updateConfig,
     fetchStatus,
+    fetchSpeechStatus,
   } = useSidecarStore();
   const isDownloaded = modelDownloaded;
   const [assigningTrackers, setAssigningTrackers] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [speechModelChoice, setSpeechModelChoice] = useState<SidecarSpeechModelId>("whisper_tiny");
   const activeModelName = isDownloaded ? modelDisplayName : null;
   const backendLabel = config.backend === "mlx" ? "MLX" : "GGUF";
   const nativeToolLabel =
@@ -156,7 +199,15 @@ function SidecarCard() {
   // Fetch status on mount (handles HMR store resets and initial load)
   useEffect(() => {
     fetchStatus();
-  }, [fetchStatus]);
+    fetchSpeechStatus();
+  }, [fetchSpeechStatus, fetchStatus]);
+
+  useEffect(() => {
+    const firstModel = speechModels[0]?.id;
+    if (firstModel && !speechModels.some((model) => model.id === speechModelChoice)) {
+      setSpeechModelChoice(firstModel);
+    }
+  }, [speechModelChoice, speechModels]);
 
   const handleAssignTrackersToLocal = async () => {
     if (!isDownloaded || assigningTrackers) return;
@@ -214,6 +265,21 @@ function SidecarCard() {
   };
 
   const isDownloading = downloadProgress?.status === "downloading";
+  const speechDownloading = speechDownloadProgress?.status === "downloading" || speechStatus === "downloading_model";
+  const activeSpeechModel = speechModels.find((model) => model.id === speechModelChoice) ?? speechModels[0];
+  const speechStatusLabel = speechModelDownloaded
+    ? `${speechModelDisplayName ?? "Whisper"}${
+        speechStatus === "ready" ? " • Ready" : speechStatus === "loading" ? " • Loading" : " • Downloaded"
+      }${speechModelSize ? ` • ${formatBytes(speechModelSize)}` : ""}`
+    : speechAvailable
+      ? "Not downloaded"
+      : "Unavailable on this install";
+  const speechUnavailableMessage = describeSpeechRuntimeUnavailable(speechRuntime);
+
+  const handleDownloadWhisper = () => {
+    if (!activeSpeechModel || speechDownloading) return;
+    void startSpeechDownload(activeSpeechModel.id);
+  };
 
   return (
     <div
@@ -284,6 +350,108 @@ function SidecarCard() {
               The bundled Local Model is intentionally small. Use it for tracker agents, scene analysis, and lightweight
               background tasks only.
             </p>
+          </div>
+          <div className="mt-2.5 rounded-lg border border-sky-400/15 bg-sky-400/5 p-2.5">
+            <div className="flex items-start gap-2">
+              <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-sky-400/10 text-sky-300">
+                <Mic size="0.875rem" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs font-semibold text-[var(--foreground)]">Local Speech Model</div>
+                  {speechModelDownloaded && (
+                    <button
+                      type="button"
+                      onClick={() => void deleteSpeechModel()}
+                      className="mari-chrome-control mari-chrome-control--small p-1"
+                      title="Delete Local Whisper"
+                    >
+                      <Trash2 size="0.75rem" />
+                    </button>
+                  )}
+                </div>
+                <div className="mt-0.5 text-[0.6875rem] text-[var(--muted-foreground)]">{speechStatusLabel}</div>
+                {!speechAvailable && (
+                  <div className="mt-1 space-y-1">
+                    <p className="text-[0.6875rem] leading-relaxed text-[var(--muted-foreground)]">
+                      {speechUnavailableMessage}
+                    </p>
+                    {speechRuntime && (
+                      <p className="text-[0.59375rem] leading-relaxed text-[var(--muted-foreground)]/80">
+                        Node {speechRuntime.nodeVersion} at {speechRuntime.nodeExecPath}
+                      </p>
+                    )}
+                  </div>
+                )}
+                {!speechModelDownloaded && speechAvailable && (
+                  <div className="mt-2 flex flex-col gap-2">
+                    <select
+                      value={speechModelChoice}
+                      onChange={(event) => setSpeechModelChoice(event.target.value as SidecarSpeechModelId)}
+                      className="mari-chrome-field h-8 text-xs"
+                      disabled={speechDownloading || speechModels.length === 0}
+                    >
+                      {speechModels.map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.label}
+                        </option>
+                      ))}
+                    </select>
+                    {activeSpeechModel && (
+                      <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+                        {activeSpeechModel.description} About {formatBytes(activeSpeechModel.sizeBytes)} download,{" "}
+                        {formatBytes(activeSpeechModel.ramBytes)} RAM while running.
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleDownloadWhisper}
+                      disabled={speechDownloading || !activeSpeechModel}
+                      className="mari-chrome-control w-full justify-center px-3 py-2 text-xs"
+                    >
+                      {speechDownloading ? (
+                        <>
+                          <HardDriveDownload size="0.8125rem" className="animate-pulse" />
+                          Downloading Whisper...
+                        </>
+                      ) : (
+                        <>
+                          <HardDriveDownload size="0.8125rem" />
+                          Download Whisper
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )}
+                {speechDownloading && speechDownloadProgress && (
+                  <div className="mt-2">
+                    <div className="h-1.5 overflow-hidden rounded-full bg-sky-400/10">
+                      <div
+                        className="h-full rounded-full bg-sky-300 transition-[width]"
+                        style={{
+                          width: `${
+                            speechDownloadProgress.total > 0
+                              ? Math.min(
+                                  100,
+                                  Math.round((speechDownloadProgress.downloaded / speechDownloadProgress.total) * 100),
+                                )
+                              : 12
+                          }%`,
+                        }}
+                      />
+                    </div>
+                    <div className="mt-1 truncate text-[0.625rem] text-[var(--muted-foreground)]">
+                      {speechDownloadProgress.label ?? "Downloading Local Whisper"}
+                    </div>
+                  </div>
+                )}
+                {speechError && (
+                  <div className="mt-2 rounded-md border border-[var(--destructive)]/20 bg-[var(--destructive)]/10 px-2 py-1.5 text-[0.625rem] text-[var(--destructive)]">
+                    {speechError}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
           {isDownloaded && (
             <div className="mt-2.5 flex flex-col gap-1.5 border-t border-sky-400/10 pt-2.5">

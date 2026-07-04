@@ -76,7 +76,7 @@ The `start-termux.sh` launcher automatically updates Marinara Engine on each run
 1. Fetches the latest code for the current update branch, then fast-forwards normal clones or moves detached release checkouts to that commit. Local `staging` branches follow `origin/staging`; all other launcher checkouts follow stable `origin/main`.
 2. Detects whether the checkout changed
 3. Temporarily stashes tracked local changes if needed, then reapplies them
-4. Reinstalls dependencies and rebuilds when needed, using sequential low-memory server/client builds on Android
+4. Reinstalls dependencies, refreshes native packages for the current Node architecture, and rebuilds when needed, using sequential low-memory server/client builds on Android
 5. Starts the app on the current version
 
 Simply run `./start-termux.sh` to get the latest version each time.

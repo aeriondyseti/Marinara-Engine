@@ -308,7 +308,7 @@ echo  [OK] Repository updated
 :: -- Install dependencies --
 echo.
 echo  [..] Installing dependencies (this may take a few minutes)...
-call :run_pnpm install
+call :run_pnpm install --force
 if %errorlevel% neq 0 (
     set "INSTALL_ERROR=Failed to install dependencies."
     goto :fatal

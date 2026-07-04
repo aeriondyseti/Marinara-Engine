@@ -241,8 +241,8 @@ elif [ -d ".git" ]; then
                 echo "  [WARN] Update did not land on ${TARGET_REF}. Continuing with current version."
             else
                 echo "  [OK] Updated to $(git log -1 --format='%h %s' 2>/dev/null)"
-                echo "  [..] Reinstalling dependencies..."
-                run_pnpm install
+                echo "  [..] Reinstalling dependencies and refreshing native packages..."
+                run_pnpm install --force
                 rm -rf packages/shared/dist packages/server/dist packages/client/dist
                 rm -f packages/shared/tsconfig.tsbuildinfo packages/server/tsconfig.tsbuildinfo packages/client/tsconfig.tsbuildinfo
             fi
@@ -279,14 +279,14 @@ if [ -f "packages/shared/dist/constants/defaults.js" ]; then
     if [ -n "$SOURCE_VER" ] && [ -n "$DIST_VER" ] && [ "$SOURCE_VER" != "$DIST_VER" ]; then
         echo "  [WARN] Version mismatch: source v$SOURCE_VER but dist has v$DIST_VER"
         echo "  [..] Forcing rebuild to apply update..."
-        run_pnpm install
+        run_pnpm install --force
         rm -rf packages/shared/dist packages/server/dist packages/client/dist
         rm -f packages/shared/tsconfig.tsbuildinfo packages/server/tsconfig.tsbuildinfo packages/client/tsconfig.tsbuildinfo
     fi
     if [ -n "$SOURCE_COMMIT" ] && [ "$SOURCE_COMMIT" != "$DIST_COMMIT" ]; then
         echo "  [WARN] Build commit mismatch: source $SOURCE_COMMIT but dist has ${DIST_COMMIT:-<missing>}"
         echo "  [..] Forcing rebuild to apply update..."
-        run_pnpm install
+        run_pnpm install --force
         rm -rf packages/shared/dist packages/server/dist packages/client/dist
         rm -f packages/shared/tsconfig.tsbuildinfo packages/server/tsconfig.tsbuildinfo packages/client/tsconfig.tsbuildinfo
     fi
@@ -298,11 +298,7 @@ if [ ! -d "node_modules" ] || [ "$TERMUX_FORCE_INSTALL" = "1" ] || ! node script
     echo "  [..] Installing dependencies${TERMUX_FORCE_INSTALL:+ (refreshing for platform fix)}..."
     echo "       This may take several minutes on mobile."
     echo ""
-    if [ "$TERMUX_FORCE_INSTALL" = "1" ]; then
-        run_pnpm install --force
-    else
-        run_pnpm install
-    fi
+    run_pnpm install --force
 fi
 
 # ── Build if needed ──

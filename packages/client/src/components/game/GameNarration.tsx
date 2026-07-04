@@ -622,7 +622,7 @@ function buildVoiceLineTextCacheKey(
     job.tone ?? "",
     job.chunk,
   ].join("\n");
-  return `game-voice-line-v1:${rawKey.length}:${hashVoiceKey(rawKey)}`;
+  return `game-voice-line-v2:${rawKey.length}:${hashVoiceKey(rawKey)}`;
 }
 
 function buildVoiceLineSegmentCacheKey(segmentVoiceKey: string, jobIndex: number, textCacheKey: string): string {

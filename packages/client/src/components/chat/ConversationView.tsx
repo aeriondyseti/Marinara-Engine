@@ -13,7 +13,17 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { Loader2, ChevronUp, Settings2, Image as ImageIcon, ArrowRightLeft } from "lucide-react";
+import {
+  Loader2,
+  ChevronUp,
+  Settings2,
+  Image as ImageIcon,
+  ArrowRightLeft,
+  Phone,
+  PhoneIncoming,
+  PhoneOff,
+} from "lucide-react";
+import { toast } from "sonner";
 import { ConversationMessage } from "./ConversationMessage";
 import { ConversationInput } from "./ConversationInput";
 import { UnoBoard } from "./UnoBoard";
@@ -24,24 +34,36 @@ import { SceneBanner, EndSceneBar } from "./SceneBanner";
 import { ChatBranchSelector } from "./ChatBranchSelector";
 import { ActiveLorebookEntriesButton } from "./ActiveLorebookEntriesButton";
 import { ChatToolbarButton, ChatToolbarMenu } from "./ChatToolbarControls";
-import { groupConsecutiveSegments, parseNamePrefixFormat, parseSpeakerTags } from "./ConversationMessageShared";
 import { ConversationPresenceCard } from "./ConversationPresenceCard";
 import { PendingTypingDots } from "./PendingTypingDots";
 import { TranscriptWindowControls } from "./TranscriptWindowControls";
 import { PinnedImageOverlay } from "./PinnedImageOverlay";
+import { ConversationCallSurface } from "./ConversationCallSurface";
 import { useChatStore } from "../../stores/chat.store";
 import { useUnoGameStore } from "../../stores/uno-game.store";
 import { useChessGameStore } from "../../stores/chess-game.store";
 import { useUIStore } from "../../stores/ui.store";
 import { playConfiguredNotificationPing } from "../../lib/notification-sound";
+import { playConversationCallRingingSoundOnce } from "../../lib/conversation-call-sounds";
 import { useRenderTimer } from "../../lib/perf-diagnostics";
 import { messageHasPendingPostProcessing } from "../../lib/chat-message-extra";
 import { getTranscriptRenderWindow, TRANSCRIPT_RENDER_WINDOW_STEP } from "../../lib/transcript-render-window";
 import { useThrottledStreamBuffer } from "../../hooks/use-throttled-stream-buffer";
 import { useConversationCustomEmojis } from "../../hooks/use-conversation-custom-emojis";
 import { useConversationCustomStickers } from "../../hooks/use-conversation-custom-stickers";
+import {
+  useAcceptConversationCall,
+  useConversationCallStatus,
+  useDeclineConversationCall,
+  useStartConversationCall,
+} from "../../hooks/use-conversation-calls";
 import type { CharacterMap, MessageSelectionToggle, PersonaInfo } from "./chat-area.types";
-import { normalizeTextForMatch, type Message } from "@marinara-engine/shared";
+import {
+  normalizeTextForMatch,
+  parseGroupedSpeakerSegments,
+  stripLeadingMessageTimestamps,
+  type Message,
+} from "@marinara-engine/shared";
 
 const ConversationAutonomousEffects = lazy(async () => {
   const module = await import("./ConversationAutonomousEffects");
@@ -133,10 +155,7 @@ function hasNamePrefixFormat(content: string, knownNames: Set<string>): boolean 
 }
 
 function getGroupedSegmentCount(content: string, knownNames: Set<string>): number {
-  const speakerSegments = parseSpeakerTags(content, knownNames);
-  if (speakerSegments) return groupConsecutiveSegments(speakerSegments).length;
-  const nameSegments = parseNamePrefixFormat(content, knownNames);
-  return nameSegments ? groupConsecutiveSegments(nameSegments).length : 0;
+  return parseGroupedSpeakerSegments(content, knownNames)?.length ?? 0;
 }
 
 function isHiddenFromUser(message: Message) {
@@ -387,6 +406,77 @@ export function ConversationView({
     return { background: `linear-gradient(135deg, ${g.from}, ${g.to})` };
   }, [convoGradient, theme]);
   const hasAutonomousMessaging = !!chatMeta.autonomousMessages || !!chatMeta.characterExchanges;
+  const callsEnabled = chatMeta.conversationCallsEnabled === true;
+  const { data: callStatus } = useConversationCallStatus(chatId, true);
+  const activeCall = callStatus?.activeCall ?? null;
+  const ringingCall = callStatus?.ringingCall ?? null;
+  const playedRingingCallSoundForRef = useRef<string | null>(null);
+  const startCall = useStartConversationCall(chatId);
+  const acceptCall = useAcceptConversationCall(chatId);
+  const declineCall = useDeclineConversationCall(chatId);
+  const setActiveConversationCall = useChatStore((state) => state.setActiveConversationCall);
+  const conversationCallExpanded = useChatStore((state) => state.conversationCallExpanded);
+  const setConversationCallExpanded = useChatStore((state) => state.setConversationCallExpanded);
+  const callExpandedInThisChat = Boolean(activeCall && conversationCallExpanded);
+  useEffect(() => {
+    if (!ringingCall || activeCall) {
+      if (!ringingCall) playedRingingCallSoundForRef.current = null;
+      return;
+    }
+    if (playedRingingCallSoundForRef.current === ringingCall.id) return;
+    playedRingingCallSoundForRef.current = ringingCall.id;
+    playConversationCallRingingSoundOnce(ringingCall.id);
+  }, [activeCall, ringingCall]);
+
+  const handleStartCall = useCallback(async () => {
+    try {
+      const session = await startCall.mutateAsync();
+      setActiveConversationCall({ session, chatName, characterMap, chatCharIds, personaInfo });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not start the call.");
+    }
+  }, [characterMap, chatCharIds, chatName, personaInfo, setActiveConversationCall, startCall]);
+  const handleAcceptCall = useCallback(async () => {
+    if (!ringingCall) return;
+    try {
+      const session = await acceptCall.mutateAsync(ringingCall.id);
+      setActiveConversationCall({ session, chatName, characterMap, chatCharIds, personaInfo });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not answer the call.");
+    }
+  }, [acceptCall, characterMap, chatCharIds, chatName, personaInfo, ringingCall, setActiveConversationCall]);
+  const handleDeclineCall = useCallback(async () => {
+    if (!ringingCall) return;
+    try {
+      await declineCall.mutateAsync(ringingCall.id);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not decline the call.");
+    }
+  }, [declineCall, ringingCall]);
+  useEffect(() => {
+    if (activeCall) {
+      setActiveConversationCall({
+        session: activeCall,
+        chatName,
+        characterMap,
+        chatCharIds,
+        personaInfo,
+      });
+      return;
+    }
+    if (callStatus && useChatStore.getState().activeConversationCall?.session.chatId === chatId) {
+      setActiveConversationCall(null);
+    }
+  }, [
+    activeCall,
+    callStatus,
+    characterMap,
+    chatCharIds,
+    chatId,
+    chatName,
+    personaInfo,
+    setActiveConversationCall,
+  ]);
   const renderToolbarActions = (compact = false) => (
     <>
       <ChatBranchSelector
@@ -408,6 +498,89 @@ export function ConversationView({
       <ChatToolbarButton icon={<Settings2 size="0.875rem" />} title="Chat Settings" onClick={onOpenSettings} />
     </>
   );
+  const renderCallButton = () =>
+    callsEnabled ? (
+      <ChatToolbarButton
+        icon={
+          startCall.isPending ? (
+            <Loader2 size="0.875rem" className="animate-spin" />
+          ) : activeCall ? (
+            <PhoneIncoming size="0.875rem" />
+          ) : (
+            <Phone size="0.875rem" />
+          )
+        }
+        title={activeCall ? "Open call" : "Start call"}
+        onClick={
+          activeCall
+            ? () => {
+                setConversationCallExpanded(true);
+              }
+            : () => void handleStartCall()
+        }
+      />
+    ) : null;
+  const renderHeader = () => (
+    <div
+      className={[
+        "sticky top-0 z-30 flex items-center justify-between px-4 py-2",
+        callExpandedInThisChat
+          ? "mari-chrome-token-scope bg-[var(--background)] text-[var(--marinara-chat-chrome-panel-text)]"
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
+      <ConversationPresenceCard
+        chatId={chatId}
+        chatMeta={chatMeta}
+        chatCharIds={chatCharIds}
+        characterMap={characterMap}
+        messages={messages}
+        onOpenSettings={onOpenSettings}
+      />
+
+      <div className="ml-2 flex min-w-0 flex-1 items-center justify-end gap-2">
+        {renderCallButton()}
+        <ChatToolbarMenu
+          className="flex-1"
+          desktopChildren={renderToolbarActions()}
+          mobileChildren={renderToolbarActions(true)}
+        />
+      </div>
+    </div>
+  );
+  const renderIncomingCallBanner = () =>
+    ringingCall && !activeCall ? (
+      <div className="px-3 pb-2">
+        <div className="flex w-full items-center gap-3 rounded-lg border border-[var(--border)] bg-[var(--popover)] p-3 shadow-xl">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-400">
+            <PhoneIncoming size="1rem" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-semibold text-[var(--foreground)]">Incoming call</div>
+          </div>
+          <button
+            type="button"
+            onClick={() => void handleDeclineCall()}
+            disabled={declineCall.isPending || acceptCall.isPending}
+            className="mari-chrome-control h-9 w-9 p-0 text-[var(--destructive)] disabled:opacity-50"
+            title="Decline call"
+          >
+            <PhoneOff size="0.875rem" />
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleAcceptCall()}
+            disabled={declineCall.isPending || acceptCall.isPending}
+            className="mari-chrome-control h-9 w-9 p-0 text-emerald-400 disabled:opacity-50"
+            title="Answer call"
+          >
+            {acceptCall.isPending ? <Loader2 size="0.875rem" className="animate-spin" /> : <Phone size="0.875rem" />}
+          </button>
+        </div>
+      </div>
+    ) : null;
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -587,11 +760,9 @@ export function ConversationView({
   // Assistant multi-line reveal is presentation-only: a real message can carry
   // display parts, but actions/edit/delete/regenerate still target one message.
   // Strip leaked timestamps like [16:08] or [18.03.2026] from assistant content.
-  const stripTimestamps = (text: string) =>
-    text
-      .replace(/^(\s*\[\d{1,2}[:.]\d{2}\]\s*)+/gm, "")
-      .replace(/^(\s*\[\d{1,2}\.\d{1,2}\.\d{4}\]\s*)+/gm, "")
-      .trim();
+  // Shared with the server (reaction segment-index resolution segments the same
+  // stripped shape) — don't reintroduce a local variant.
+  const stripTimestamps = stripLeadingMessageTimestamps;
 
   const renderedItems = useMemo(() => {
     const visibleMessages = transcriptWindow.messages;
@@ -660,7 +831,9 @@ export function ConversationView({
       const groupSegmentCount =
         msg.role === "assistant" && groupingContent ? getGroupedSegmentCount(groupingContent, knownNames) : 0;
       const hasGroupFormat =
-        groupingContent.includes("<speaker=") || groupSegmentCount > 0 || hasNamePrefixFormat(groupingContent, knownNames);
+        groupingContent.includes("<speaker=") ||
+        groupSegmentCount > 0 ||
+        hasNamePrefixFormat(groupingContent, knownNames);
       let contentParts: string[] | undefined;
       if (conversationMessageStyle === "classic" && msg.role === "assistant" && msg.content && !hasGroupFormat) {
         const cleaned = stripTimestamps(msg.content);
@@ -1016,6 +1189,28 @@ export function ConversationView({
     }
   }, [scrollToMessagesBottom, visiblePartCounts, visibleSegmentCounts]);
 
+  if (callExpandedInThisChat && activeCall) {
+    return (
+      <div
+        className="mari-chat-area mari-card-css mari-chrome-token-scope relative flex flex-1 flex-col overflow-hidden bg-[var(--background)] text-[var(--marinara-chat-chrome-panel-text)]"
+        data-chat-mode="conversation"
+      >
+        {renderHeader()}
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <ConversationCallSurface
+            chatId={chatId}
+            session={activeCall}
+            characterMap={characterMap}
+            chatCharIds={chatCharIds}
+            personaInfo={personaInfo}
+            onEnded={() => setActiveConversationCall(null)}
+            embedded
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="mari-chat-area mari-card-css relative flex flex-1 flex-col overflow-hidden"
@@ -1025,22 +1220,7 @@ export function ConversationView({
       {/* ── Messages scroll area ── */}
       <div ref={scrollRef} className="mari-messages-scroll flex-1 overflow-y-auto overflow-x-hidden">
         {/* Floating header — character info + action buttons */}
-        <div className="sticky top-0 z-30 flex items-center justify-between px-4 py-2">
-          <ConversationPresenceCard
-            chatId={chatId}
-            chatMeta={chatMeta}
-            chatCharIds={chatCharIds}
-            characterMap={characterMap}
-            messages={messages}
-            onOpenSettings={onOpenSettings}
-          />
-
-          <ChatToolbarMenu
-            className="flex-1"
-            desktopChildren={renderToolbarActions()}
-            mobileChildren={renderToolbarActions(true)}
-          />
-        </div>
+        {renderHeader()}
 
         {/* Load More */}
         {hasNextPage && (
@@ -1305,6 +1485,7 @@ export function ConversationView({
       {/* ── Turn-game boards (UNO, chess) — each self-hides when no game is active ── */}
       <UnoBoard chatId={chatId} />
       <ChessBoard chatId={chatId} />
+      {renderIncomingCallBanner()}
       {/* Setup modals mounted once here (stable position) so they never double-render.
           Keyed by chatId so their internal selection state resets on a chat switch
           (matches ConversationInput below) — otherwise stale selected ids would

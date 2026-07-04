@@ -116,6 +116,12 @@ function applyAgentFrontendStyle(chatId: string, raw: unknown) {
   }, durationMs);
 }
 
+function isChatSurfaceVisible(chatId: string) {
+  const chatState = useChatStore.getState();
+  if (chatState.activeChatId !== chatId) return false;
+  return !useUIStore.getState().hasAnyDetailOpen();
+}
+
 const editableCharacterCardFieldSet = new Set<string>(EDITABLE_CHARACTER_CARD_FIELDS);
 
 function formatToolDebugPayload(value: unknown, maxLength = 1_200): string {
@@ -320,8 +326,7 @@ function readAgentWriteApprovalProposal(
       ? (envelope.approval as Record<string, unknown>)
       : envelope;
   if (!source) return null;
-  const kind =
-    source.kind === "lorebook_update" || source.kind === "summary_update" ? source.kind : null;
+  const kind = source.kind === "lorebook_update" || source.kind === "summary_update" ? source.kind : null;
   if (!kind) return null;
 
   const chatId =
@@ -391,7 +396,9 @@ import { characterKeys } from "./use-characters";
 import { connectionKeys } from "./use-connections";
 import { lorebookKeys } from "./use-lorebooks";
 import { presetKeys } from "./use-presets";
+import { conversationCallKeys } from "./use-conversation-calls";
 import { playConfiguredNotificationPing } from "../lib/notification-sound";
+import { playConversationCallRingingSoundOnce } from "../lib/conversation-call-sounds";
 import { messageHasPendingPostProcessing } from "../lib/chat-message-extra";
 import { stripGmTagsKeepReadables } from "../lib/game-tag-parser";
 import type { APIConnection, Chat, GameMap, Message } from "@marinara-engine/shared";
@@ -2048,6 +2055,56 @@ export function useGenerate() {
               break;
             }
 
+            case "conversation_call_ringing": {
+              const data = event.data as {
+                session?: {
+                  id?: unknown;
+                  chatId?: unknown;
+                  initiatorCharacterId?: unknown;
+                  metadata?: Record<string, unknown>;
+                };
+                reason?: unknown;
+                characterId?: unknown;
+              };
+              const session = data.session;
+              const callId = typeof session?.id === "string" ? session.id : null;
+              const callChatId = typeof session?.chatId === "string" ? session.chatId : params.chatId;
+              const characterId =
+                typeof data.characterId === "string"
+                  ? data.characterId
+                  : typeof session?.initiatorCharacterId === "string"
+                    ? session.initiatorCharacterId
+                    : null;
+              const reason =
+                typeof data.reason === "string"
+                  ? data.reason
+                  : typeof session?.metadata?.reason === "string"
+                    ? session.metadata.reason
+                    : null;
+
+              qc.invalidateQueries({ queryKey: conversationCallKeys.status(callChatId) });
+              qc.invalidateQueries({ queryKey: chatKeys.messages(callChatId) });
+              qc.invalidateQueries({ queryKey: chatKeys.list() });
+
+              playConversationCallRingingSoundOnce(callId);
+
+              if (callId && !isChatSurfaceVisible(callChatId)) {
+                const identity = resolveCachedCharacterIdentity(qc, characterId);
+                useChatStore
+                  .getState()
+                  .addCallNotification(
+                    callChatId,
+                    callId,
+                    identity.name ?? "Character",
+                    identity.avatarUrl,
+                    identity.avatarCrop,
+                    reason,
+                    { showWhenActive: true },
+                  );
+              }
+              break;
+            }
+
             case "spotify_command": {
               const spotifyData = event.data as {
                 track?: { name?: string; artist?: string };
@@ -2235,7 +2292,7 @@ export function useGenerate() {
               const delayedNames = (event as any).characters as string[] | undefined;
               const delayedLabel =
                 delayedNames?.length === 1 ? delayedNames[0] : (delayedNames?.join(", ") ?? "Character");
-              const delayedStatus = (((event as any).status as DelayedCharacterInfo["status"] | undefined) ?? "idle");
+              const delayedStatus = ((event as any).status as DelayedCharacterInfo["status"] | undefined) ?? "idle";
               const delayedInfo: DelayedCharacterInfo = {
                 name: delayedLabel,
                 status: delayedStatus,
@@ -2334,7 +2391,9 @@ export function useGenerate() {
           if (!abortController.signal.aborted) {
             await refreshMessagesAuthoritatively(qc, params.chatId, persistedMessages.values());
             if (!settled) {
-              toast.info("Generation is still finishing in the background. Refresh the chat in a moment if it has not appeared.");
+              toast.info(
+                "Generation is still finishing in the background. Refresh the chat in a moment if it has not appeared.",
+              );
             }
           }
           return abortController.signal.aborted ? receivedContent : true;
@@ -2418,33 +2477,53 @@ export function useGenerate() {
         // so the superseded one knows it no longer owns the state.
         const stillOwner = stillOwnerAtCleanupStart;
         const partialContent = normalizeLineBreakSpacing(fullBuffer + pendingText).trim();
-        const unpersistedPartialMessage: Message | null =
+        let unpersistedPartialMessage: Message | null = null;
+        if (
           receivedContent &&
           persistedMessages.size === 0 &&
           partialContent &&
           !params.regenerateMessageId &&
           !params.continueMessageId
-            ? {
-                id: `__partial_${params.chatId}_${Date.now()}`,
-                chatId: params.chatId,
-                role: params.impersonate ? "user" : "assistant",
-                characterId: params.impersonate
-                  ? null
-                  : (params.forCharacterId ?? useChatStore.getState().streamingCharacterId ?? null),
-                content: partialContent,
-                activeSwipeIndex: 0,
-                extra: {
-                  displayText: null,
-                  isGenerated: !params.impersonate,
-                  tokenCount: null,
-                  generationInfo: null,
-                },
-                createdAt: new Date().toISOString(),
-              }
-            : null;
+        ) {
+          const createdAt = new Date().toISOString();
+          const partialRole = params.impersonate ? "user" : "assistant";
+          const partialCharacterId = params.impersonate
+            ? null
+            : (params.forCharacterId ?? useChatStore.getState().streamingCharacterId ?? null);
+          try {
+            const created = await api.post<Message>(`/chats/${params.chatId}/messages`, {
+              role: partialRole,
+              characterId: partialCharacterId,
+              content: partialContent,
+              createdAt,
+              updatedAt: createdAt,
+            });
+            unpersistedPartialMessage = created;
+            persistedMessages.set(created.id, created);
+          } catch (error) {
+            console.warn("[use-generate] Failed to persist stopped partial message; keeping cache-only fallback", error);
+            unpersistedPartialMessage = {
+              id: `__partial_${params.chatId}_${Date.now()}`,
+              chatId: params.chatId,
+              role: partialRole,
+              characterId: partialCharacterId,
+              content: partialContent,
+              activeSwipeIndex: 0,
+              extra: {
+                displayText: null,
+                isGenerated: !params.impersonate,
+                tokenCount: null,
+                generationInfo: null,
+              },
+              createdAt,
+            };
+          }
+        }
         const persistedForRefresh = [
           ...persistedMessages.values(),
-          ...(unpersistedPartialMessage ? [unpersistedPartialMessage] : []),
+          ...(unpersistedPartialMessage && !persistedMessages.has(unpersistedPartialMessage.id)
+            ? [unpersistedPartialMessage]
+            : []),
         ];
         const primeMessagesFromSaved = () => {
           if (persistedForRefresh.length > 0) {
@@ -3179,7 +3258,9 @@ function formatAgentBubble(agentType: string, agentName: string, data: unknown):
     }
 
     case "knowledge-router": {
-      const selectedEntries = Array.isArray(d.selectedEntries) ? (d.selectedEntries as Array<Record<string, unknown>>) : [];
+      const selectedEntries = Array.isArray(d.selectedEntries)
+        ? (d.selectedEntries as Array<Record<string, unknown>>)
+        : [];
       const candidateCount =
         typeof d.candidateCount === "number" && Number.isFinite(d.candidateCount) ? d.candidateCount : null;
       if (selectedEntries.length > 0) {

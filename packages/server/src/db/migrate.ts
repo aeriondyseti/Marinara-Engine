@@ -41,6 +41,41 @@ const CREATE_TABLES: string[] = [
     extra TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS conversation_call_sessions (
+    id TEXT PRIMARY KEY NOT NULL,
+    chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    status TEXT NOT NULL,
+    mode TEXT NOT NULL DEFAULT 'audio',
+    initiator TEXT NOT NULL,
+    initiator_character_id TEXT,
+    started_at TEXT,
+    ended_at TEXT,
+    summary TEXT,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS conversation_call_messages (
+    id TEXT PRIMARY KEY NOT NULL,
+    call_id TEXT NOT NULL REFERENCES conversation_call_sessions(id) ON DELETE CASCADE,
+    chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    role TEXT NOT NULL,
+    character_id TEXT,
+    participant_kind TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    content TEXT NOT NULL DEFAULT '',
+    extra TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS conversation_call_sounds (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL,
+    file_path TEXT,
+    mime_type TEXT NOT NULL DEFAULT 'audio/mpeg',
+    duration_ms INTEGER,
+    built_in TEXT NOT NULL DEFAULT 'false',
+    created_at TEXT NOT NULL
+  )`,
   `CREATE TABLE IF NOT EXISTS characters (
     id TEXT PRIMARY KEY NOT NULL,
     data TEXT NOT NULL,

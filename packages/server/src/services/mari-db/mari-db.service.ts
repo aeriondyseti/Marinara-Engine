@@ -85,6 +85,7 @@ type ParsedMutationRequest = {
   cascade: boolean;
   reason: string | null;
   generatedIds?: string[];
+  relatedInserts?: Array<{ table: string; row: Row }>;
 };
 type PendingRecord = MariDbPendingApproval & {
   plan: Plan;
@@ -872,6 +873,209 @@ function normalizePromptPresetActionData(input: Row, existing?: Row | null): Row
   delete row.default_choices;
   delete row.is_default;
   return row;
+}
+
+function normalizePromptIdentifier(value: string, fallback: string, used: Set<string>): string {
+  const base =
+    value
+      .trim()
+      .replace(/[^\w.-]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 80) || fallback;
+  let next = base;
+  let suffix = 2;
+  while (used.has(next)) {
+    next = `${base}_${suffix}`;
+    suffix += 1;
+  }
+  used.add(next);
+  return next;
+}
+
+function normalizePromptVariableName(value: string, fallback: string, used: Set<string>): string {
+  const base =
+    value
+      .trim()
+      .replace(/[^\w]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 80) || fallback;
+  let next = base;
+  let suffix = 2;
+  while (used.has(next)) {
+    next = `${base}_${suffix}`;
+    suffix += 1;
+  }
+  used.add(next);
+  return next;
+}
+
+function promptOptionRows(value: unknown): Array<{ id: string; label: string; value: string }> {
+  const rawOptions = Array.isArray(value) ? value : [];
+  const usedIds = new Set<string>();
+  return rawOptions
+    .map((option, index) => {
+      if (typeof option === "string" || typeof option === "number" || typeof option === "boolean") {
+        const text = String(option).trim();
+        if (!text) return null;
+        return {
+          id: normalizePromptIdentifier(text, `option_${index + 1}`, usedIds),
+          label: text,
+          value: text,
+        };
+      }
+      if (!isRecord(option)) return null;
+      const label = firstString(option, ["label", "name", "title", "text", "value"]);
+      const optionValue =
+        firstString(option, ["value", "content", "prompt", "text", "label", "name", "title"]) ?? label;
+      if (!label || !optionValue) return null;
+      return {
+        id: normalizePromptIdentifier(firstString(option, ["id", "key"]) ?? label, `option_${index + 1}`, usedIds),
+        label,
+        value: optionValue,
+      };
+    })
+    .filter((option): option is { id: string; label: string; value: string } => option !== null);
+}
+
+function normalizePromptPresetChildInserts(payload: Row, presetId: string): Array<{ table: string; row: Row }> {
+  const relatedInserts: Array<{ table: string; row: Row }> = [];
+  const groupIdsByName = new Map<string, string>();
+  const groupOrder: string[] = [];
+  const sectionOrder: string[] = [];
+  const usedSectionIdentifiers = new Set<string>();
+  const usedVariableNames = new Set<string>();
+  const groupKey = (name: string) => name.trim().toLowerCase();
+
+  const ensureGroup = (name: string, order?: number, enabled?: boolean): string => {
+    const trimmed = name.trim();
+    const key = groupKey(trimmed);
+    const existing = groupIdsByName.get(key);
+    if (existing) return existing;
+    const id = newId();
+    groupIdsByName.set(key, id);
+    groupOrder.push(id);
+    relatedInserts.push({
+      table: "prompt_groups",
+      row: {
+        id,
+        presetId,
+        name: trimmed,
+        parentGroupId: null,
+        order: order ?? groupOrder.length * 100,
+        enabled: boolText(enabled ?? true),
+      },
+    });
+    return id;
+  };
+
+  const rawGroups = Array.isArray(payload.groups) ? payload.groups : [];
+  for (const rawGroup of rawGroups) {
+    if (!isRecord(rawGroup)) continue;
+    const name = firstString(rawGroup, ["name", "title", "label"]);
+    if (!name) continue;
+    ensureGroup(name, firstNumber(rawGroup, ["order", "sortOrder"]), firstBoolean(rawGroup, ["enabled"]));
+  }
+  for (const rawGroup of rawGroups) {
+    if (!isRecord(rawGroup)) continue;
+    const name = firstString(rawGroup, ["name", "title", "label"]);
+    const parentName = firstString(rawGroup, ["parentGroupName", "parentGroup", "parent"]);
+    if (!name || !parentName) continue;
+    const childId = groupIdsByName.get(groupKey(name));
+    const parentId = ensureGroup(parentName);
+    const groupInsert = relatedInserts.find((insert) => insert.table === "prompt_groups" && insert.row.id === childId);
+    if (groupInsert) groupInsert.row.parentGroupId = parentId;
+  }
+
+  const rawSections = Array.isArray(payload.sections)
+    ? payload.sections
+    : Array.isArray(payload.promptSections)
+      ? payload.promptSections
+      : [];
+  for (const [index, rawSection] of rawSections.entries()) {
+    if (!isRecord(rawSection)) continue;
+    const name = firstString(rawSection, ["name", "title", "label"]) ?? `Section ${index + 1}`;
+    const groupName = firstString(rawSection, ["groupName", "group"]);
+    const id = firstString(rawSection, ["id", "sectionId"]) ?? newId();
+    sectionOrder.push(id);
+    relatedInserts.push({
+      table: "prompt_sections",
+      row: {
+        id,
+        presetId,
+        identifier: normalizePromptIdentifier(
+          firstString(rawSection, ["identifier", "key", "slug"]) ?? name,
+          `section_${index + 1}`,
+          usedSectionIdentifiers,
+        ),
+        name,
+        content: firstString(rawSection, ["content", "prompt", "text"]) ?? "",
+        role: ["system", "user", "assistant"].includes(String(rawSection.role ?? ""))
+          ? String(rawSection.role)
+          : "system",
+        enabled: boolText(firstBoolean(rawSection, ["enabled"]) ?? true),
+        isMarker: boolText(firstBoolean(rawSection, ["isMarker", "marker"]) ?? false),
+        groupId: groupName ? ensureGroup(groupName) : null,
+        markerConfig: isRecord(rawSection.markerConfig) ? JSON.stringify(rawSection.markerConfig) : null,
+        injectionPosition: rawSection.injectionPosition === "depth" ? "depth" : "ordered",
+        injectionDepth: firstNumber(rawSection, ["injectionDepth", "depth"]) ?? 0,
+        injectionOrder: firstNumber(rawSection, ["injectionOrder", "order", "sortOrder"]) ?? (index + 1) * 100,
+        wrapInXml: "false",
+        xmlTagName: "",
+        forbidOverrides: boolText(firstBoolean(rawSection, ["forbidOverrides"]) ?? false),
+      },
+    });
+  }
+
+  const rawChoiceBlocks = Array.isArray(payload.choiceBlocks)
+    ? payload.choiceBlocks
+    : Array.isArray(payload.variables)
+      ? payload.variables
+      : Array.isArray(payload.choices)
+        ? payload.choices
+        : [];
+  for (const [index, rawChoiceBlock] of rawChoiceBlocks.entries()) {
+    if (!isRecord(rawChoiceBlock)) continue;
+    const rawVariableName =
+      firstString(rawChoiceBlock, ["variableName", "variable", "name", "key", "id"]) ?? `variable_${index + 1}`;
+    const variableName = normalizePromptVariableName(rawVariableName, `variable_${index + 1}`, usedVariableNames);
+    const options = promptOptionRows(
+      rawChoiceBlock.options ?? rawChoiceBlock.choices ?? rawChoiceBlock.values ?? rawChoiceBlock.value,
+    );
+    if (options.length === 0) continue;
+    relatedInserts.push({
+      table: "choice_blocks",
+      row: {
+        id: firstString(rawChoiceBlock, ["id", "choiceBlockId"]) ?? newId(),
+        presetId,
+        variableName,
+        question: firstString(rawChoiceBlock, ["question", "prompt", "label", "title"]) ?? variableName,
+        options,
+        multiSelect: boolText(firstBoolean(rawChoiceBlock, ["multiSelect", "multi"]) ?? false),
+        separator: firstString(rawChoiceBlock, ["separator"]) ?? ", ",
+        randomPick: boolText(firstBoolean(rawChoiceBlock, ["randomPick", "random"]) ?? false),
+        displayMode: ["auto", "buttons", "listbox"].includes(String(rawChoiceBlock.displayMode ?? ""))
+          ? String(rawChoiceBlock.displayMode)
+          : "auto",
+        optionSort: rawChoiceBlock.optionSort === "alphabetical" ? "alphabetical" : "manual",
+        sortOrder: firstNumber(rawChoiceBlock, ["sortOrder", "order"]) ?? (index + 1) * 100,
+      },
+    });
+  }
+
+  if (!payload.groupOrder && groupOrder.length > 0) payload.groupOrder = groupOrder;
+  if (!payload.sectionOrder && sectionOrder.length > 0) payload.sectionOrder = sectionOrder;
+  return relatedInserts;
+}
+
+function stripPromptPresetChildPayload(row: Row): Row {
+  const out = { ...row };
+  delete out.groups;
+  delete out.sections;
+  delete out.promptSections;
+  delete out.choiceBlocks;
+  delete out.variables;
+  delete out.choices;
+  return out;
 }
 
 function actionCommandPayload(envelope: MariAppDataActionEnvelope): Row {
@@ -2189,23 +2393,31 @@ export class MariDbService {
         return { ok: true, mode: "read", command: context.command, output: rows };
       }
       case "create": {
-        const data = normalizePromptPresetActionData(
-          actionDataWithTopLevel(args, ["data", "preset", "promptPreset", "row"], [
-            "name",
-            "description",
-            "conversationPrompt",
-            "gamePrompt",
-            "sectionOrder",
-            "groupOrder",
-            "variableGroups",
-            "variableValues",
-            "parameters",
-            "wrapFormat",
-            "defaultChoices",
-            "isDefault",
-            "author",
-          ]),
-        );
+        const payload = actionDataWithTopLevel(args, ["data", "preset", "promptPreset", "row"], [
+          "name",
+          "description",
+          "conversationPrompt",
+          "gamePrompt",
+          "sectionOrder",
+          "groupOrder",
+          "variableGroups",
+          "variableValues",
+          "parameters",
+          "wrapFormat",
+          "defaultChoices",
+          "isDefault",
+          "author",
+          "groups",
+          "sections",
+          "promptSections",
+          "choiceBlocks",
+          "variables",
+          "choices",
+        ]);
+        const presetId = firstString(payload, ["id", "presetId", "promptPresetId"]) ?? newId();
+        payload.id = presetId;
+        const relatedInserts = normalizePromptPresetChildInserts(payload, presetId);
+        const data = normalizePromptPresetActionData(stripPromptPresetChildPayload(payload));
         requiredString(data, ["name"], "prompt preset name");
         const request: ParsedMutationRequest = {
           kind: "insert",
@@ -2216,30 +2428,36 @@ export class MariDbService {
           cascade: false,
           reason: firstString(args, ["reason"]) ?? null,
           cwd: context.cwd,
+          relatedInserts,
         };
         return this.executeMutation(request, context.command, context.sessionId);
       }
       case "update": {
         const id = requiredString(args, ["id", "presetId", "promptPresetId"], "prompt preset id");
         const existing = await this.requireRawById(getMeta("prompt_presets"), id);
-        const data = normalizePromptPresetActionData(
-          actionDataWithTopLevel(args, ["patch", "data", "preset", "promptPreset"], [
-            "name",
-            "description",
-            "conversationPrompt",
-            "gamePrompt",
-            "sectionOrder",
-            "groupOrder",
-            "variableGroups",
-            "variableValues",
-            "parameters",
-            "wrapFormat",
-            "defaultChoices",
-            "isDefault",
-            "author",
-          ]),
-          existing,
-        );
+        const payload = actionDataWithTopLevel(args, ["patch", "data", "preset", "promptPreset"], [
+          "name",
+          "description",
+          "conversationPrompt",
+          "gamePrompt",
+          "sectionOrder",
+          "groupOrder",
+          "variableGroups",
+          "variableValues",
+          "parameters",
+          "wrapFormat",
+          "defaultChoices",
+          "isDefault",
+          "author",
+          "groups",
+          "sections",
+          "promptSections",
+          "choiceBlocks",
+          "variables",
+          "choices",
+        ]);
+        const relatedInserts = normalizePromptPresetChildInserts(payload, id);
+        const data = normalizePromptPresetActionData(stripPromptPresetChildPayload(payload), existing);
         delete data.id;
         const request: ParsedMutationRequest = {
           kind: "patch",
@@ -2250,6 +2468,7 @@ export class MariDbService {
           cascade: false,
           reason: firstString(args, ["reason"]) ?? null,
           cwd: context.cwd,
+          relatedInserts,
         };
         return this.executeMutation(request, context.command, context.sessionId);
       }
@@ -3730,7 +3949,20 @@ export class MariDbService {
     if (parsed[pk] == null || parsed[pk] === "") parsed[pk] = allocateId();
     this.fillTimestamps(meta, parsed, true, timestamp);
     const afterRaw = serializeRow(meta.name, parsed);
-    return [{ table: meta.name, id: String(afterRaw[pk]), action: "insert", before: null, after: parseRow(meta.name, afterRaw), beforeRaw: null, afterRaw, apply: true }];
+    const changes: PlanChange[] = [
+      {
+        table: meta.name,
+        id: String(afterRaw[pk]),
+        action: "insert",
+        before: null,
+        after: parseRow(meta.name, afterRaw),
+        beforeRaw: null,
+        afterRaw,
+        apply: true,
+      },
+    ];
+    changes.push(...this.planRelatedInserts(request.relatedInserts, timestamp, allocateId));
+    return changes;
   }
 
   private async planPatch(request: ParsedMutationRequest, timestamp: string): Promise<PlanChange[]> {
@@ -3741,7 +3973,46 @@ export class MariDbService {
     next[getPrimary(meta)] = existing[getPrimary(meta)];
     this.fillTimestamps(meta, next, false, timestamp);
     const afterRaw = serializeRow(meta.name, next);
-    return [{ table: meta.name, id: rowId(meta, existing), action: "update", before: parsed, after: parseRow(meta.name, afterRaw), beforeRaw: existing, afterRaw, apply: true }];
+    const changes: PlanChange[] = [
+      {
+        table: meta.name,
+        id: rowId(meta, existing),
+        action: "update",
+        before: parsed,
+        after: parseRow(meta.name, afterRaw),
+        beforeRaw: existing,
+        afterRaw,
+        apply: true,
+      },
+    ];
+    changes.push(...this.planRelatedInserts(request.relatedInserts, timestamp, () => newId()));
+    return changes;
+  }
+
+  private planRelatedInserts(
+    relatedInserts: ParsedMutationRequest["relatedInserts"],
+    timestamp: string,
+    allocateId: () => string,
+  ): PlanChange[] {
+    if (!relatedInserts?.length) return [];
+    return relatedInserts.map((insert) => {
+      const meta = getMeta(insert.table);
+      const pk = getPrimary(meta);
+      const parsed = { ...insert.row };
+      if (parsed[pk] == null || parsed[pk] === "") parsed[pk] = allocateId();
+      this.fillTimestamps(meta, parsed, true, timestamp);
+      const afterRaw = serializeRow(meta.name, parsed);
+      return {
+        table: meta.name,
+        id: String(afterRaw[pk]),
+        action: "insert",
+        before: null,
+        after: parseRow(meta.name, afterRaw),
+        beforeRaw: null,
+        afterRaw,
+        apply: true,
+      };
+    });
   }
 
   private async planReplace(request: ParsedMutationRequest, timestamp: string): Promise<PlanChange[]> {

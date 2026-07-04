@@ -52,8 +52,13 @@ import { fitMessagesForModelAccess } from "../../packages/server/src/services/ge
 import { assemblePrompt, type AssemblerInput } from "../../packages/server/src/services/prompt/index.js";
 import { executeToolCalls } from "../../packages/server/src/services/tools/tool-executor.js";
 import { parseRouterResponse } from "../../packages/server/src/services/agents/knowledge-router.js";
+import {
+  GAME_STORYBOARD_DIRECTOR,
+  GAME_STORYBOARD_ILLUSTRATION_DIRECTOR,
+} from "../../packages/server/src/services/prompt-overrides/index.js";
+import { buildElevenLabsTextInput } from "../../packages/server/src/routes/tts.routes.js";
 import type { LLMToolCall } from "../../packages/server/src/services/llm/base-provider.js";
-import { resolveTTSVoiceForSpeaker } from "../../packages/client/src/lib/tts-dialogue.js";
+import { cleanTTSInputText, resolveTTSVoiceForSpeaker } from "../../packages/client/src/lib/tts-dialogue.js";
 
 type RegressionCase = {
   name: string;
@@ -281,6 +286,35 @@ const cases: RegressionCase[] = [
         },
       );
       assert.equal(emptyElevenLabsVoice, "");
+    },
+  },
+  {
+    name: "TTS cleanup strips VN speaker and sprite metadata",
+    run() {
+      const cleaned = cleanTTSInputText(`\
+[Pippa Quill] [main] [neutral]: "Reserved. Tomorrow afternoon."
+[2B-] [whisper:Matt] [thinking]: "Your ribs require rest."
+[Morgana-] [side] [smirk]: "A bold strategy."
+[bg: backgrounds:generated:guild-hall]
+[state: dialogue]`);
+
+      assert.equal(cleaned.includes("Pippa Quill"), false);
+      assert.equal(cleaned.includes("neutral"), false);
+      assert.equal(cleaned.includes("whisper:Matt"), false);
+      assert.equal(cleaned.includes("thinking"), false);
+      assert.equal(cleaned.includes("smirk"), false);
+      assert.equal(cleaned.includes("backgrounds:generated"), false);
+      assert.match(cleaned, /Reserved\. Tomorrow afternoon\./);
+      assert.match(cleaned, /Your ribs require rest\./);
+      assert.match(cleaned, /A bold strategy\./);
+    },
+  },
+  {
+    name: "ElevenLabs TTS input does not prepend sprite tone tags",
+    run() {
+      assert.equal(buildElevenLabsTextInput("Reserved. Tomorrow afternoon.", "neutral"), "Reserved. Tomorrow afternoon.");
+      assert.equal(buildElevenLabsTextInput("Your ribs require rest.", "thinking"), "Your ribs require rest.");
+      assert.equal(buildElevenLabsTextInput("A bold strategy.", "smirk"), "A bold strategy.");
     },
   },
   {
@@ -521,6 +555,31 @@ const cases: RegressionCase[] = [
       assert.equal(createRegexScriptSchema.safeParse({ ...base, applyMode: "both" }).success, true);
       assert.equal(createRegexScriptSchema.safeParse({ ...base, flags: "gg" }).success, false);
       assert.equal(createRegexScriptSchema.safeParse({ ...base, minDepth: 5, maxDepth: 2 }).success, false);
+    },
+  },
+  {
+    name: "game storyboard directors split illustration and animation prompt contracts",
+    run() {
+      const ctx = {
+        gameContextBlock: "<game_context>\nMode: exploration\n</game_context>",
+        sourceSectionsBlock: '<turn_sections>\n<section index="0" kind="narration">A door opens.</section>\n</turn_sections>',
+        sourceNarration: "A door opens.",
+        keyframeCount: 4,
+        durationSeconds: 6,
+        aspectRatio: "16:9",
+      };
+
+      const illustrationPrompt = GAME_STORYBOARD_ILLUSTRATION_DIRECTOR.defaultBuilder(ctx);
+      const animationPrompt = GAME_STORYBOARD_DIRECTOR.defaultBuilder(ctx);
+
+      assert.match(illustrationPrompt, /image-only anime storyboard/);
+      assert.match(illustrationPrompt, /"imagePrompt"/);
+      assert.doesNotMatch(illustrationPrompt, /"videoPrompt"/);
+      assert.doesNotMatch(illustrationPrompt, /"cameraMotion"/);
+      assert.doesNotMatch(illustrationPrompt, /"transitionHint"/);
+      assert.match(animationPrompt, /"videoPrompt"/);
+      assert.match(animationPrompt, /"cameraMotion"/);
+      assert.match(animationPrompt, /"transitionHint"/);
     },
   },
   {
@@ -1057,7 +1116,7 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
     },
   },
   {
-    name: "impersonate assembly skips regular preset instructions but keeps markers",
+    name: "impersonate assembly skips fallback preset sections but preserves dedicated impersonate presets",
     async run() {
       const chatMessages: ChatMLMessage[] = [
         { role: "user", content: "Can you answer as me?" },
@@ -1124,13 +1183,22 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
 
       const normal = await assemblePrompt(baseInput);
       const impersonate = await assemblePrompt({ ...baseInput, impersonate: true });
+      const dedicatedImpersonate = await assemblePrompt({
+        ...baseInput,
+        impersonate: true,
+        preserveImpersonatePresetSections: true,
+      });
       const normalText = normal.messages.map((message) => message.content).join("\n");
       const impersonateText = impersonate.messages.map((message) => message.content).join("\n");
+      const dedicatedImpersonateText = dedicatedImpersonate.messages.map((message) => message.content).join("\n");
 
       assert.match(normalText, /Never answer as Mari/);
       assert.equal(impersonateText.includes("Never answer as Mari"), false);
       assert.match(impersonateText, /Can you answer as me\?/);
       assert.match(impersonateText, /I can help\./);
+      assert.match(dedicatedImpersonateText, /Never answer as Mari/);
+      assert.match(dedicatedImpersonateText, /Can you answer as me\?/);
+      assert.match(dedicatedImpersonateText, /I can help\./);
     },
   },
   {

@@ -151,6 +151,9 @@ export const FILE_BACKED_TABLES = [
   "chats",
   "messages",
   "message_swipes",
+  "conversation_call_sessions",
+  "conversation_call_messages",
+  "conversation_call_sounds",
   "characters",
   "character_card_versions",
   "personas",
@@ -208,6 +211,8 @@ const warnedFlushFailures = new Set<string>();
 
 const CASCADES: Array<{ parent: FileBackedTable; child: FileBackedTable; parentKey: string; childKey: string }> = [
   { parent: "chats", child: "messages", parentKey: "id", childKey: "chatId" },
+  { parent: "chats", child: "conversation_call_sessions", parentKey: "id", childKey: "chatId" },
+  { parent: "chats", child: "conversation_call_messages", parentKey: "id", childKey: "chatId" },
   { parent: "chats", child: "agent_runs", parentKey: "id", childKey: "chatId" },
   { parent: "chats", child: "agent_memory", parentKey: "id", childKey: "chatId" },
   { parent: "chats", child: "chat_images", parentKey: "id", childKey: "chatId" },
@@ -224,6 +229,7 @@ const CASCADES: Array<{ parent: FileBackedTable; child: FileBackedTable; parentK
     childKey: "storyboardId",
   },
   { parent: "messages", child: "message_swipes", parentKey: "id", childKey: "messageId" },
+  { parent: "conversation_call_sessions", child: "conversation_call_messages", parentKey: "id", childKey: "callId" },
   { parent: "characters", child: "character_card_versions", parentKey: "id", childKey: "characterId" },
   { parent: "characters", child: "character_images", parentKey: "id", childKey: "characterId" },
   { parent: "personas", child: "persona_images", parentKey: "id", childKey: "personaId" },

@@ -260,24 +260,20 @@ function getMobileWidgetStyle(
     top: Math.max(
       MOBILE_WIDGET_VIEWPORT_PADDING,
       Math.min(
-        height - (collapsed ? MOBILE_WIDGET_COLLAPSED_SIZE : MOBILE_WIDGET_EXPANDED_HEIGHT) - MOBILE_WIDGET_VIEWPORT_PADDING,
+        height -
+          (collapsed ? MOBILE_WIDGET_COLLAPSED_SIZE : MOBILE_WIDGET_EXPANDED_HEIGHT) -
+          MOBILE_WIDGET_VIEWPORT_PADDING,
         position.y,
       ),
     ),
   };
 }
 
-function getMobileExpandedPanelStyle(
-  position: { x: number; y: number },
-  viewportWidth?: number,
-): CSSProperties {
+function getMobileExpandedPanelStyle(position: { x: number; y: number }, viewportWidth?: number): CSSProperties {
   if (typeof window === "undefined") return {};
   const availableWidth = viewportWidth ?? window.innerWidth;
 
-  const width = Math.min(
-    MOBILE_WIDGET_EXPANDED_MAX_WIDTH,
-    availableWidth - MOBILE_WIDGET_EXPANDED_HORIZONTAL_GUTTER,
-  );
+  const width = Math.min(MOBILE_WIDGET_EXPANDED_MAX_WIDTH, availableWidth - MOBILE_WIDGET_EXPANDED_HORIZONTAL_GUTTER);
   const opensLeft =
     position.x + width > availableWidth - MOBILE_WIDGET_VIEWPORT_PADDING ||
     position.x + MOBILE_WIDGET_COLLAPSED_SIZE / 2 > availableWidth / 2;
@@ -1077,7 +1073,11 @@ export function SpotifyMiniPlayer({
               )}
               title={sdkDeviceId ? "Use Marinara player" : "Enable Marinara player"}
             >
-              {browserPlaybackLoading ? <Loader2 size="0.8125rem" className="animate-spin" /> : <Laptop size="0.8125rem" />}
+              {browserPlaybackLoading ? (
+                <Loader2 size="0.8125rem" className="animate-spin" />
+              ) : (
+                <Laptop size="0.8125rem" />
+              )}
             </button>
           )}
           <button
@@ -1126,7 +1126,7 @@ export function SpotifyMiniPlayer({
   if (floating) {
     return (
       <div
-        className={cn("fixed z-[35] touch-none select-none", mobile && "md:hidden")}
+        className={cn("fixed z-[45] touch-none select-none", mobile && "md:hidden")}
         style={mobileWidgetStyle}
         onPointerDown={startDrag}
         onPointerMove={moveDrag}

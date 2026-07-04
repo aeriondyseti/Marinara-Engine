@@ -170,6 +170,7 @@ import {
 import {
   GAME_NARRATION_SUMMARIZER,
   GAME_STORYBOARD_DIRECTOR,
+  GAME_STORYBOARD_ILLUSTRATION_DIRECTOR,
   GAME_VIDEO,
   loadPrompt,
 } from "../services/prompt-overrides/index.js";
@@ -1377,6 +1378,8 @@ export interface MergeRecruitInput {
   fallbackSetupConfig: GameSetupConfig;
   /** Chat `characterIds` column from the request; used only as a fallback party source. */
   chatCharacterIds: string[];
+  /** Game-scoped NPC to persist when a mid-session recruit was not tracked yet. */
+  npcToTrack?: GameNpc | null;
 }
 
 export interface MergeRecruitResult {
@@ -1402,11 +1405,21 @@ export interface MergeRecruitResult {
  * from being reverted on the blob-level metadata write (#2627, residual concurrency facet of #2613).
  */
 export function mergeRecruitIntoGameMetadata(input: MergeRecruitInput): MergeRecruitResult {
-  const { current, recruitId, recruitName, nextCard, existingCardIndex, fallbackSetupConfig, chatCharacterIds } = input;
+  const {
+    current,
+    recruitId,
+    recruitName,
+    nextCard,
+    existingCardIndex,
+    fallbackSetupConfig,
+    chatCharacterIds,
+    npcToTrack,
+  } = input;
 
   const freshSetupConfig = (current.gameSetupConfig as GameSetupConfig | null) ?? fallbackSetupConfig;
   const freshCards = (current.gameCharacterCards as Array<Record<string, unknown>>) ?? [];
   const freshPartyIds = getStoredPartyCharacterIds(current, freshSetupConfig, chatCharacterIds);
+  const freshNpcs = Array.isArray(current.gameNpcs) ? (current.gameNpcs as GameNpc[]) : [];
 
   const alreadyInFreshParty = freshPartyIds.includes(recruitId);
   const mergedPartyIds = alreadyInFreshParty ? freshPartyIds : [...freshPartyIds, recruitId];
@@ -1426,11 +1439,25 @@ export function mergeRecruitIntoGameMetadata(input: MergeRecruitInput): MergeRec
     }
   }
 
+  const patch: MergeRecruitResult["patch"] & { gameNpcs?: GameNpc[] } = {
+    gameSetupConfig: syncSetupConfigPartyIds(freshSetupConfig, mergedPartyIds),
+    gamePartyCharacterIds: mergedPartyIds,
+    gameCharacterCards: mergedCards,
+  };
+  if (
+    npcToTrack &&
+    !freshNpcs.some(
+      (npc) =>
+        normalizeCharacterLookupName(npc.name) === normalizeCharacterLookupName(npcToTrack.name) ||
+        buildPartyNpcId(npc.name) === buildPartyNpcId(npcToTrack.name),
+    )
+  ) {
+    patch.gameNpcs = [...freshNpcs, npcToTrack];
+  }
+
   return {
     patch: {
-      gameSetupConfig: syncSetupConfigPartyIds(freshSetupConfig, mergedPartyIds),
-      gamePartyCharacterIds: mergedPartyIds,
-      gameCharacterCards: mergedCards,
+      ...patch,
     },
     mergedChatCharacterIds: mergedPartyIds.filter((id) => !isPartyNpcId(id)),
     added: !alreadyInFreshParty,
@@ -1493,6 +1520,22 @@ function findGameNpcByName(npcs: GameNpc[], requestedName: string): GameNpc | nu
     });
   }
   return matches.length === 1 ? matches[0]! : null;
+}
+
+function buildFallbackTrackedGameNpc(name: string): GameNpc {
+  return {
+    id: buildGameNpcId(name),
+    name,
+    emoji: "👤",
+    description: `${name} is a mid-session NPC the party has recruited.`,
+    descriptionSource: "user",
+    gender: null,
+    pronouns: null,
+    location: "",
+    reputation: 25,
+    notes: ["Recruited into the party before a full NPC profile existed."],
+    avatarUrl: null,
+  };
 }
 
 function buildNpcPartyCard(npc: Pick<GameNpc, "name" | "description" | "location" | "notes">): Record<string, unknown> {
@@ -2324,6 +2367,9 @@ const GAME_STORYBOARD_DIRECTOR_TIMEOUT_MS = 3 * 60 * 1000;
 const GAME_ASSET_PORTRAIT_CONCURRENCY = 2;
 const GAME_STORYBOARD_IMAGE_FRAME_CONCURRENCY = 4;
 const GAME_STORYBOARD_VIDEO_FRAME_CONCURRENCY = 2;
+const GAME_STORYBOARD_STALE_RENDER_MS = GAME_SCENE_VIDEO_GENERATION_TIMEOUT_MS * 2;
+const GAME_STORYBOARD_STALE_RENDER_ERROR =
+  "Storyboard rendering was interrupted before completion. Generate it again to retry.";
 const gameAssetGenerationLocks = new Map<string, Promise<void>>();
 
 class GameGenerationTimeoutError extends Error {
@@ -3956,6 +4002,25 @@ function normalizeStoryboardKeyframeStatus(value: string): GameStoryboardKeyfram
     : "failed";
 }
 
+function storyboardStaleRenderCutoff(): string {
+  return new Date(Date.now() - GAME_STORYBOARD_STALE_RENDER_MS).toISOString();
+}
+
+async function recoverStaleGameStoryboards(
+  storyboards: ReturnType<typeof createGameStoryboardsStorage>,
+  cutoffUpdatedAt: string,
+  context: string,
+) {
+  try {
+    const recovered = await storyboards.failInProgressUpdatedBefore(cutoffUpdatedAt, GAME_STORYBOARD_STALE_RENDER_ERROR);
+    if (recovered > 0) {
+      logger.warn("[game/storyboard] marked %d stale storyboard render job(s) failed during %s", recovered, context);
+    }
+  } catch (err) {
+    logger.warn(err, "[game/storyboard] failed to recover stale storyboard render jobs during %s", context);
+  }
+}
+
 function normalizeStoryboardAspectRatio(
   value: unknown,
   fallback: GameSceneVideoAspectRatio,
@@ -4126,6 +4191,7 @@ function fallbackStoryboardPlan(args: {
   keyframeCount: number;
   durationSeconds: number;
   aspectRatio: GameSceneVideoAspectRatio;
+  includeVideoPrompts?: boolean;
 }): PlannedStoryboard {
   const cleanNarration = compactStoryboardText(args.sourceNarration, 2000);
   const frameCount = Math.min(6, Math.max(2, args.keyframeCount));
@@ -4163,12 +4229,19 @@ function fallbackStoryboardPlan(args: {
         narrationBeat: beat,
         mangaPanelPrompt: `Manga illustration keyframe, cinematic anime panel, expressive character acting, detailed environment, dramatic lighting. ${beat}`,
         imagePrompt: `Manga illustration keyframe, cinematic anime panel, expressive character acting, detailed environment, dramatic lighting. ${beat}`,
-        videoPrompt: `Animate this manga keyframe as a short anime shot: subtle camera drift, atmospheric motion, character expression shift, and continuity-preserving movement. Story beat: ${beat}`,
+        videoPrompt: args.includeVideoPrompts
+          ? `Animate this manga keyframe as a short anime shot: subtle camera drift, atmospheric motion, character expression shift, and continuity-preserving movement. Story beat: ${beat}`
+          : "",
         characters: [],
-        continuityNotes:
-          "Preserve character designs, props, setting, lighting, and emotional continuity from the GM narration.",
-        cameraMotion: "subtle cinematic camera drift",
-        transitionHint: index === frameCount - 1 ? "hold on the result of the turn" : "continue into the next beat",
+        continuityNotes: args.includeVideoPrompts
+          ? "Preserve character designs, props, setting, lighting, and emotional continuity from the GM narration."
+          : "",
+        cameraMotion: args.includeVideoPrompts ? "subtle cinematic camera drift" : "",
+        transitionHint: args.includeVideoPrompts
+          ? index === frameCount - 1
+            ? "hold on the result of the turn"
+            : "continue into the next beat"
+          : "",
         durationSeconds: args.durationSeconds,
         aspectRatio: args.aspectRatio,
       };
@@ -4184,6 +4257,7 @@ function sanitizeStoryboardPlan(
     keyframeCount: number;
     durationSeconds: number;
     aspectRatio: GameSceneVideoAspectRatio;
+    includeVideoPrompts?: boolean;
   },
 ): PlannedStoryboard {
   const root = asStoryboardRecord(raw);
@@ -4197,7 +4271,9 @@ function sanitizeStoryboardPlan(
       const narrationBeat = compactStoryboardText(frame.narrationBeat, 1200);
       const mangaPanelPrompt = compactStoryboardText(frame.mangaPanelPrompt, 5000);
       const imagePrompt = compactStoryboardText(frame.imagePrompt, 6500) || mangaPanelPrompt || narrationBeat;
-      const videoPrompt = compactStoryboardText(frame.videoPrompt, 6500) || narrationBeat || imagePrompt;
+      const videoPrompt = args.includeVideoPrompts
+        ? compactStoryboardText(frame.videoPrompt, 6500) || narrationBeat || imagePrompt
+        : "";
       if (!narrationBeat && !imagePrompt && !videoPrompt) return null;
       let sectionStartIndex = normalizeStoryboardSectionIndex(frame.sectionStartIndex, args.sections);
       let sectionEndIndex = normalizeStoryboardSectionIndex(frame.sectionEndIndex, args.sections);
@@ -4230,9 +4306,9 @@ function sanitizeStoryboardPlan(
         imagePrompt,
         videoPrompt,
         characters: parseStoryboardCharacters(frame.characters),
-        continuityNotes: compactStoryboardText(frame.continuityNotes, 1200),
-        cameraMotion: compactStoryboardText(frame.cameraMotion, 400),
-        transitionHint: compactStoryboardText(frame.transitionHint, 400),
+        continuityNotes: args.includeVideoPrompts ? compactStoryboardText(frame.continuityNotes, 1200) : "",
+        cameraMotion: args.includeVideoPrompts ? compactStoryboardText(frame.cameraMotion, 400) : "",
+        transitionHint: args.includeVideoPrompts ? compactStoryboardText(frame.transitionHint, 400) : "",
         durationSeconds: normalizeStoryboardDuration(frame.durationSeconds, args.durationSeconds),
         aspectRatio: normalizeStoryboardAspectRatio(frame.aspectRatio, args.aspectRatio),
       };
@@ -4323,6 +4399,7 @@ async function buildStoryboardDirectorMessages(args: {
   keyframeCount: number;
   durationSeconds: number;
   aspectRatio: GameSceneVideoAspectRatio;
+  includeVideoPrompts: boolean;
 }): Promise<{ systemPrompt: string; messages: ChatMessage[] }> {
   const gameContextBlock = buildStoryboardGameContextBlock({
     meta: args.meta,
@@ -4334,7 +4411,8 @@ async function buildStoryboardDirectorMessages(args: {
     args.sections.length > 0
       ? "<gm_turn_narration>\nUse the ordered <turn_sections> block above as the full GM turn narration source.\n</gm_turn_narration>"
       : `<gm_turn_narration>\n${args.sourceNarration}\n</gm_turn_narration>`;
-  const systemPrompt = await loadPrompt(args.promptOverridesStorage, GAME_STORYBOARD_DIRECTOR, {
+  const promptKey = args.includeVideoPrompts ? GAME_STORYBOARD_DIRECTOR : GAME_STORYBOARD_ILLUSTRATION_DIRECTOR;
+  const systemPrompt = await loadPrompt(args.promptOverridesStorage, promptKey, {
     gameContextBlock,
     sourceSectionsBlock,
     sourceNarration: args.sourceNarration,
@@ -4352,13 +4430,22 @@ async function buildStoryboardDirectorMessages(args: {
           gameContextBlock,
           sourceSectionsBlock,
           sourceNarrationBlock,
-          [
-            "Create the storyboard JSON now.",
-            `Target keyframes: ${args.keyframeCount}.`,
-            `Default clip duration: ${args.durationSeconds} seconds.`,
-            `Default aspect ratio: ${args.aspectRatio}.`,
-            "Remember: storyboard only this GM narration turn, not the user's next CYOA/action.",
-          ].join("\n"),
+          args.includeVideoPrompts
+            ? [
+                "Create the animation storyboard JSON now.",
+                `Target keyframes: ${args.keyframeCount}.`,
+                `Default clip duration: ${args.durationSeconds} seconds.`,
+                `Default aspect ratio: ${args.aspectRatio}.`,
+                "Include imagePrompt and videoPrompt fields for every keyframe.",
+                "Remember: storyboard only this GM narration turn, not the user's next CYOA/action.",
+              ].join("\n")
+            : [
+                "Create the illustration storyboard JSON now.",
+                `Target keyframes: ${args.keyframeCount}.`,
+                `Aspect ratio: ${args.aspectRatio}.`,
+                "Do not include videoPrompt, cameraMotion, transitionHint, or continuityNotes fields.",
+                "Remember: storyboard only this GM narration turn, not the user's next CYOA/action.",
+              ].join("\n"),
         ].join("\n\n"),
       },
     ],
@@ -4447,6 +4534,8 @@ async function serializeGameTurnStoryboard(args: {
 }
 
 export async function gameRoutes(app: FastifyInstance) {
+  await recoverStaleGameStoryboards(createGameStoryboardsStorage(app.db), new Date().toISOString(), "startup");
+
   const buildHydratedGameMeta = async (
     chatId: string,
     baseMeta: Record<string, unknown>,
@@ -6901,9 +6990,15 @@ export async function gameRoutes(app: FastifyInstance) {
     }
 
     const gameNpcs = (meta.gameNpcs as GameNpc[]) ?? [];
-    const npcRecruit = matches.length === 0 ? findGameNpcByName(gameNpcs, requestedName) : null;
-    if (matches.length === 0 && !npcRecruit) {
-      throw new Error(`Character or tracked NPC "${requestedName}" was not found`);
+    let npcRecruit = matches.length === 0 ? findGameNpcByName(gameNpcs, requestedName) : null;
+    const fallbackTrackedNpc = matches.length === 0 && !npcRecruit ? buildFallbackTrackedGameNpc(requestedName) : null;
+    if (fallbackTrackedNpc) {
+      npcRecruit = fallbackTrackedNpc;
+      logger.info(
+        '[game/party/recruit] Created fallback tracked NPC "%s" for mid-session party recruit in chat %s',
+        requestedName,
+        input.chatId,
+      );
     }
 
     const recruit = matches[0] ?? null;
@@ -7094,6 +7189,7 @@ export async function gameRoutes(app: FastifyInstance) {
         existingCardIndex,
         fallbackSetupConfig: setupConfig,
         chatCharacterIds,
+        npcToTrack: fallbackTrackedNpc,
       });
       added = didAdd;
       return { metadata: patch, characterIds: mergedChatCharacterIds };
@@ -9037,6 +9133,7 @@ export async function gameRoutes(app: FastifyInstance) {
       const storyboards = createGameStoryboardsStorage(app.db);
       const gallery = createGalleryStorage(app.db);
       const sceneVideos = createGameSceneVideosStorage(app.db);
+      await recoverStaleGameStoryboards(storyboards, storyboardStaleRenderCutoff(), "storyboard list");
       const rows = query.messageId
         ? await storyboards.listForTurn(chatId, query.messageId, query.swipeIndex ?? 0)
         : await storyboards.listByChatId(chatId);
@@ -9055,7 +9152,7 @@ export async function gameRoutes(app: FastifyInstance) {
       GAME_SCENE_VIDEO_GENERATION_TIMEOUT_MS,
       "Game storyboard generation",
     );
-    const releaseStoryboardLock = await acquireGameAssetGenerationLock(
+    let releaseStoryboardLock: (() => void) | null = await acquireGameAssetGenerationLock(
       `storyboard:${input.chatId}`,
       storyboardAbortSignal,
     );
@@ -9073,6 +9170,7 @@ export async function gameRoutes(app: FastifyInstance) {
       const sceneVideos = createGameSceneVideosStorage(app.db);
       const gallery = createGalleryStorage(app.db);
       const promptOverridesStorage = createPromptOverridesStorage(app.db);
+      await recoverStaleGameStoryboards(storyboards, storyboardStaleRenderCutoff(), "storyboard generate");
 
       const chat = await chats.getById(input.chatId);
       if (!chat) return reply.status(404).send({ error: "Chat not found" });
@@ -9134,6 +9232,7 @@ export async function gameRoutes(app: FastifyInstance) {
         keyframeCount: input.keyframeCount,
         durationSeconds: input.durationSeconds,
         aspectRatio: input.aspectRatio,
+        includeVideoPrompts: input.generateVideos,
       });
       if (debugLogsEnabled) {
         debugLog("[debug/game/storyboard-director] messages:\n%s", JSON.stringify(directorMessages.messages, null, 2));
@@ -9142,6 +9241,7 @@ export async function gameRoutes(app: FastifyInstance) {
       let directorErrorMessage: string | null = null;
       let plan: PlannedStoryboard;
       try {
+        const storyboardDirectorMaxTokens = input.generateVideos ? 4000 : 2200;
         const directorResult = await runGameChatComplete(
           provider,
           directorMessages.messages,
@@ -9149,7 +9249,7 @@ export async function gameRoutes(app: FastifyInstance) {
             conn.model ?? "",
             {
               stream: false,
-              maxTokens: 4000,
+              maxTokens: storyboardDirectorMaxTokens,
               responseFormat: { type: "json_object" },
               signal: storyboardAbortSignal,
             },
@@ -9168,6 +9268,7 @@ export async function gameRoutes(app: FastifyInstance) {
           keyframeCount: input.keyframeCount,
           durationSeconds: input.durationSeconds,
           aspectRatio: input.aspectRatio,
+          includeVideoPrompts: input.generateVideos,
         });
       } catch (err) {
         directorErrorMessage =
@@ -9181,6 +9282,7 @@ export async function gameRoutes(app: FastifyInstance) {
           keyframeCount: input.keyframeCount,
           durationSeconds: input.durationSeconds,
           aspectRatio: input.aspectRatio,
+          includeVideoPrompts: input.generateVideos,
         });
       }
 
@@ -9310,6 +9412,8 @@ export async function gameRoutes(app: FastifyInstance) {
       }
 
       const frameRows = await storyboards.listKeyframes(storyboardRow.id);
+      const backgroundController = new AbortController();
+      const backgroundSignal = backgroundController.signal;
       type StoryboardFrameRenderResult = {
         generatedImage: boolean;
         generatedVideo: boolean;
@@ -9317,7 +9421,7 @@ export async function gameRoutes(app: FastifyInstance) {
         videoFailure: boolean;
       };
       const renderStoryboardFrame = async (frame: (typeof frameRows)[number]): Promise<StoryboardFrameRenderResult> => {
-        if (storyboardAbortSignal.aborted) {
+        if (backgroundSignal.aborted) {
           await storyboards.updateKeyframe(frame.id, { status: "failed", error: "Storyboard generation was cancelled." });
           return { generatedImage: false, generatedVideo: false, imageFailure: true, videoFailure: false };
         }
@@ -9375,7 +9479,7 @@ export async function gameRoutes(app: FastifyInstance) {
             onCompiledPrompt: (compiled) => {
               sentIllustrationPrompt = compiled.prompt;
             },
-            signal: storyboardAbortSignal,
+            signal: backgroundSignal,
           });
           if (!tag) throw new Error("Image provider did not return a storyboard keyframe.");
           const galleryImage = await addGeneratedIllustrationToGallery({
@@ -9414,7 +9518,7 @@ export async function gameRoutes(app: FastifyInstance) {
                   aspectRatio: plannedFrame.aspectRatio,
                   resolution: videoRuntime.resolution,
                   referenceImage,
-                  signal: storyboardAbortSignal,
+                  signal: backgroundSignal,
                 },
               );
               const filePath = await saveVideoToDisk(input.chatId, generated.base64);
@@ -9469,32 +9573,61 @@ export async function gameRoutes(app: FastifyInstance) {
         ? GAME_STORYBOARD_VIDEO_FRAME_CONCURRENCY
         : GAME_STORYBOARD_IMAGE_FRAME_CONCURRENCY;
       const frameWorkerCount = Math.min(frameWorkerLimit, frameRows.length);
-      await Promise.all(Array.from({ length: frameWorkerCount }, () => runFrameWorker()));
-      const imageFailures = frameResults.filter((result) => result.imageFailure).length;
-      const generatedImages = frameResults.filter((result) => result.generatedImage).length;
-      const videoFailures = frameResults.filter((result) => result.videoFailure).length;
-      const generatedVideos = frameResults.filter((result) => result.generatedVideo).length;
+      const initialStoryboard = await serializeGameTurnStoryboard({ storyboards, gallery, sceneVideos, row: storyboardRow });
+      const releaseBackgroundStoryboardLock = releaseStoryboardLock;
+      releaseStoryboardLock = null;
 
-      const finalStatus: GameStoryboardStatus =
-        generatedImages === 0
-          ? "failed"
-          : imageFailures > 0 ||
-              generatedImages < plan.keyframes.length ||
-              videoFailures > 0 ||
-              (videoRuntime && generatedVideos < plan.keyframes.length)
-            ? "partial"
-            : "complete";
-      const updatedStoryboard = await storyboards.update(storyboardRow.id, { status: finalStatus });
-      if (!updatedStoryboard) throw new Error("Storyboard metadata could not be reloaded");
+      void (async () => {
+        const backgroundTimeout = setTimeout(() => {
+          backgroundController.abort(
+            new Error(`Game storyboard media rendering timed out after ${Math.round(GAME_SCENE_VIDEO_GENERATION_TIMEOUT_MS / 1000)} seconds`),
+          );
+        }, GAME_SCENE_VIDEO_GENERATION_TIMEOUT_MS);
+        backgroundTimeout.unref?.();
+
+        try {
+          await Promise.all(Array.from({ length: frameWorkerCount }, () => runFrameWorker()));
+          const imageFailures = frameResults.filter((result) => result.imageFailure).length;
+          const generatedImages = frameResults.filter((result) => result.generatedImage).length;
+          const videoFailures = frameResults.filter((result) => result.videoFailure).length;
+          const generatedVideos = frameResults.filter((result) => result.generatedVideo).length;
+
+          const finalStatus: GameStoryboardStatus =
+            generatedImages === 0
+              ? "failed"
+              : imageFailures > 0 ||
+                  generatedImages < plan.keyframes.length ||
+                  videoFailures > 0 ||
+                  (videoRuntime && generatedVideos < plan.keyframes.length)
+                ? "partial"
+                : "complete";
+          const updatedStoryboard = await storyboards.update(storyboardRow.id, { status: finalStatus });
+          if (!updatedStoryboard) throw new Error("Storyboard metadata could not be reloaded");
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Storyboard media rendering failed";
+          logger.warn(err, "[game/storyboard] background media rendering failed for storyboard %s", storyboardRow.id);
+          await storyboards.update(storyboardRow.id, { status: "failed", error: message }).catch((updateErr) => {
+            logger.warn(
+              updateErr,
+              "[game/storyboard] failed to persist background media rendering error for storyboard %s",
+              storyboardRow.id,
+            );
+          });
+        } finally {
+          clearTimeout(backgroundTimeout);
+          releaseBackgroundStoryboardLock?.();
+        }
+      })();
+
       return {
-        storyboard: await serializeGameTurnStoryboard({ storyboards, gallery, sceneVideos, row: updatedStoryboard }),
+        storyboard: initialStoryboard,
       };
     } catch (err) {
       logger.warn(err, "[game/storyboard] Storyboard generation failed for chat %s", input.chatId);
       const message = err instanceof Error ? err.message : "Storyboard generation failed";
       return reply.status(502).send({ error: message });
     } finally {
-      releaseStoryboardLock();
+      releaseStoryboardLock?.();
     }
   });
 

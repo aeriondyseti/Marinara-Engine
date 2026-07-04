@@ -52,6 +52,7 @@ import {
   ShieldCheck,
   Loader2,
   Wrench,
+  Phone,
 } from "lucide-react";
 import {
   ROLEPLAY_POPOVER_CLOSE_BUTTON,
@@ -88,6 +89,7 @@ import { useCharacters, usePersonas, useCharacterGroups, type SpriteInfo } from 
 import { useLorebooks, useEntriesAcrossLorebooks } from "../../hooks/use-lorebooks";
 import { useDefaultPreset, usePresetFull, usePresets } from "../../hooks/use-presets";
 import { useConnections } from "../../hooks/use-connections";
+import { useTTSConfig, useUpdateTTSConfig } from "../../hooks/use-tts";
 import { useKnowledgeSources, useUploadKnowledgeSource } from "../../hooks/use-knowledge-sources";
 import { useGenerate } from "../../hooks/use-generate";
 import {
@@ -112,10 +114,7 @@ import {
 import { useUpdateGameWidgets } from "../../hooks/use-game";
 import { useRegexScripts, useUpdateRegexScript, type RegexScriptRow } from "../../hooks/use-regex-scripts";
 import { api } from "../../lib/api-client";
-import {
-  appendLocalSidecarConnectionOption,
-  filterLanguageGenerationConnections,
-} from "../../lib/connection-filters";
+import { appendLocalSidecarConnectionOption, filterLanguageGenerationConnections } from "../../lib/connection-filters";
 import {
   deriveActiveLorebookViews,
   getChatActiveLorebookIds,
@@ -162,6 +161,8 @@ import type {
   KnowledgeAgentSourceSettings,
   Message,
   PromptPreset,
+  TTSConfig,
+  TTSConversationCallAudioInputMode,
 } from "@marinara-engine/shared";
 import { useAgentConfigs, useCreateAgent, useUpdateAgent, type AgentConfigRow } from "../../hooks/use-agents";
 import { useAgentStore } from "../../stores/agent.store";
@@ -398,6 +399,11 @@ const CONVERSATION_COMMAND_TOGGLE_OPTIONS: Array<{
     id: "note",
     label: "Notes",
     description: "Let characters save durable notes for a connected chat.",
+  },
+  {
+    id: "call",
+    label: "Calls",
+    description: "Let characters ring you for a Conversation call.",
   },
   {
     id: "uno",
@@ -700,6 +706,8 @@ export function ChatSettingsDrawer({
     );
   }, [effectiveModePromptPresetId, fallbackPromptPreset, promptPresetOptions]);
   const { data: connections } = useConnections();
+  const { data: ttsConfig } = useTTSConfig();
+  const updateTtsConfig = useUpdateTTSConfig();
   const imageConnectionsList = useMemo(
     () =>
       ((connections as Array<{ id: string; name: string; model?: string; provider?: string }>) ?? []).filter(
@@ -721,6 +729,16 @@ export function ChatSettingsDrawer({
       ),
     [connections],
   );
+  const patchConversationCallTtsConfig = useCallback(
+    (patch: Partial<TTSConfig>) => {
+      if (!ttsConfig) {
+        toast.error("Conversation call settings are still loading.");
+        return;
+      }
+      updateTtsConfig.mutate({ ...ttsConfig, callSttConnectionId: "", callSttModel: "", ...patch });
+    },
+    [ttsConfig, updateTtsConfig],
+  );
   const sidecarModelDownloaded = useSidecarStore((state) => state.modelDownloaded);
   const sidecarModelDisplayName = useSidecarStore((state) => state.modelDisplayName);
   const chatGenerationConnectionsList = useMemo(
@@ -732,22 +750,19 @@ export function ChatSettingsDrawer({
       ),
     [isGame, sidecarModelDisplayName, sidecarModelDownloaded, textConnectionsList],
   );
-  const illustratorPromptConnectionsList = useMemo(
-    () => {
-      const options: Array<{ id: string; name: string; model?: string | null }> = [];
-      for (const connection of chatGenerationConnectionsList) {
-        const id = typeof connection.id === "string" ? connection.id.trim() : "";
-        if (!id) continue;
-        options.push({
-          id,
-          name: connection.name || "Connection",
-          model: connection.model ?? null,
-        });
-      }
-      return options;
-    },
-    [chatGenerationConnectionsList],
-  );
+  const illustratorPromptConnectionsList = useMemo(() => {
+    const options: Array<{ id: string; name: string; model?: string | null }> = [];
+    for (const connection of chatGenerationConnectionsList) {
+      const id = typeof connection.id === "string" ? connection.id.trim() : "";
+      if (!id) continue;
+      options.push({
+        id,
+        name: connection.name || "Connection",
+        model: connection.model ?? null,
+      });
+    }
+    return options;
+  }, [chatGenerationConnectionsList]);
   const { data: allPersonas } = usePersonas();
   const { data: agentConfigs } = useAgentConfigs();
   const { data: customTools } = useCustomTools();
@@ -840,6 +855,28 @@ export function ChatSettingsDrawer({
     () => readConversationCommandToggles(metadata.conversationCommandToggles),
     [metadata.conversationCommandToggles],
   );
+  const conversationCommandsEnabled = metadata.characterCommands !== false;
+  const callAudioEnabled = ttsConfig?.callAudioEnabled === true;
+  const callAudioInputMode = ttsConfig?.callAudioInputMode ?? "local_whisper";
+  const callVideoInputEnabled = ttsConfig?.callVideoInputEnabled === true;
+  const callSoundboardEnabled = ttsConfig?.callSoundboardEnabled ?? true;
+  const callSettingsDisabled = !ttsConfig || updateTtsConfig.isPending;
+  const selfieConnectionId = typeof metadata.imageGenConnectionId === "string" ? metadata.imageGenConnectionId : "";
+  const selfieCommandAllowed = conversationCommandToggles.selfie !== false;
+  const selfieSettingsOpen =
+    selfieCommandAllowed && (conversationCommandToggles.selfie === true || selfieConnectionId.length > 0);
+  const selfieFeatureEnabled = conversationCommandsEnabled && selfieSettingsOpen;
+  const toggleConversationSelfies = useCallback(() => {
+    const nextEnabled = !selfieFeatureEnabled;
+    updateMeta.mutate({
+      id: chat.id,
+      ...(nextEnabled ? { characterCommands: true } : {}),
+      conversationCommandToggles: {
+        ...conversationCommandToggles,
+        selfie: nextEnabled,
+      },
+    });
+  }, [chat.id, conversationCommandToggles, selfieFeatureEnabled, updateMeta]);
   const inactiveCharacterIds = useMemo<string[]>(
     () =>
       Array.isArray(metadata.inactiveCharacterIds)
@@ -1083,8 +1120,6 @@ export function ChatSettingsDrawer({
     },
     [agentConfigsByType],
   );
-  const conversationCommandsEnabled = metadata.characterCommands !== false;
-
   // Build the available agent list: built-in + custom agents from DB
   // Mode capabilities decide which built-ins are exposed for each chat mode.
   // Custom agents are user-authored and can be attached to any chat mode.
@@ -1268,10 +1303,7 @@ export function ChatSettingsDrawer({
     () => mergeBuiltInAgentSettings("continuity", continuityConfig?.settings),
     [continuityConfig?.settings],
   );
-  const htmlDefaults = useMemo(
-    () => mergeBuiltInAgentSettings("html", htmlConfig?.settings),
-    [htmlConfig?.settings],
-  );
+  const htmlDefaults = useMemo(() => mergeBuiltInAgentSettings("html", htmlConfig?.settings), [htmlConfig?.settings]);
   const directorDefaults = useMemo(
     () => mergeBuiltInAgentSettings("director", directorConfig?.settings),
     [directorConfig?.settings],
@@ -1311,6 +1343,7 @@ export function ChatSettingsDrawer({
     illustratorPromptConnectionId.length > 0 &&
     !illustratorPromptConnectionsList.some((connection) => connection.id === illustratorPromptConnectionId);
   const selfieUseAvatarReferences = metadata.selfieUseAvatarReferences === true;
+  const selfieIncludeCharacterAppearance = metadata.selfieIncludeCharacterAppearance === true;
   const gameImageUseAvatarReferences = metadata.gameImageUseAvatarReferences !== false;
   const gameImageIncludeCharacterAppearance = metadata.gameImageIncludeCharacterAppearance !== false;
   const gameImageAutoGenerationEnabled = metadata.gameImageAutoGenerationEnabled !== false;
@@ -4674,7 +4707,7 @@ export function ChatSettingsDrawer({
 
                 {conversationCommandsEnabled && (
                   <div className="grid gap-1.5 sm:grid-cols-2">
-                    {CONVERSATION_COMMAND_TOGGLE_OPTIONS.map((command) => {
+                    {CONVERSATION_COMMAND_TOGGLE_OPTIONS.filter((command) => command.id !== "selfie").map((command) => {
                       const enabled = isConversationCommandToggleEnabled(conversationCommandToggles, command.id);
                       return (
                         <button
@@ -4722,139 +4755,352 @@ export function ChatSettingsDrawer({
                   </div>
                 )}
 
-                {/* Selfie Connection — connection picker for character selfies */}
-                <div className="space-y-2">
-                  <label className="flex flex-col gap-1">
-                    <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Selfie Connection</span>
-                    <select
-                      value={(metadata.imageGenConnectionId as string) ?? ""}
-                      onChange={(e) =>
-                        updateMeta.mutate({ id: chat.id, imageGenConnectionId: e.target.value || null })
-                      }
-                      className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
-                    >
-                      <option value="">None (selfies disabled)</option>
-                      {imageConnectionsList.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.name} ({c.provider})
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  {renderIllustratorPromptConnectionSelect()}
-                  <label className="flex flex-col gap-1">
-                    <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Image Style</span>
-                    <select
-                      value={(metadata.imageStyleProfileId as string) ?? ""}
-                      onChange={(e) => updateMeta.mutate({ id: chat.id, imageStyleProfileId: e.target.value || null })}
-                      className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
-                    >
-                      <option value="">Use default style from Style Profiles in Advanced settings</option>
-                      {imageStyleProfiles.profiles.map((profile) => (
-                        <option key={profile.id} value={profile.id}>
-                          {profile.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <AgentSettingsToggle
-                    label="Send Avatar References"
-                    description="Send the matching character avatar or sprite as a reference image for generated selfies when the provider supports it."
-                    enabled={selfieUseAvatarReferences}
-                    onToggle={() =>
-                      updateMeta.mutate({
-                        id: chat.id,
-                        selfieUseAvatarReferences: !selfieUseAvatarReferences,
-                      })
-                    }
-                  />
-                  <p className="text-[0.55rem] text-[var(--muted-foreground)]">
-                    Used for character selfies when Commands are enabled. The prompt model writes the selfie prompt;
-                    the selfie connection renders the final image.
-                  </p>
+                <div
+                  className={cn(
+                    "mari-chat-option-field space-y-3 rounded-lg px-3 py-2.5 transition-all",
+                    (metadata.conversationCallsEnabled === true || callAudioEnabled) &&
+                      "mari-chat-option-field--active",
+                  )}
+                >
+                  <div className="flex items-start gap-2">
+                    <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[var(--secondary)] text-[var(--muted-foreground)]">
+                      <Phone size="0.875rem" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="block text-xs font-medium text-[var(--foreground)]">Conversation Calls</span>
+                      <p className="text-[0.625rem] leading-snug text-[var(--muted-foreground)]">
+                        Per-chat call access, microphone handling, camera/screen input, and soundboard setup.
+                      </p>
+                    </div>
+                  </div>
 
-                  {/* Selfie resolution picker */}
-                  {(metadata.imageGenConnectionId as string) && (
-                    <div className="mt-2 space-y-1">
-                      <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Resolution</span>
-                      <div className="flex flex-wrap gap-1.5">
-                        {[
-                          { label: "512x512", w: 512, h: 512 },
-                          { label: "512x768", w: 512, h: 768 },
-                          { label: "768x768", w: 768, h: 768 },
-                          { label: "768x1024", w: 768, h: 1024 },
-                          { label: "896x1152", w: 896, h: 1152 },
-                          { label: "1024x1024", w: 1024, h: 1024 },
-                        ].map((opt) => {
-                          const current =
-                            (metadata.selfieResolution as string) ?? `${imageSelfieWidth}x${imageSelfieHeight}`;
-                          const val = `${opt.w}x${opt.h}`;
-                          const active = current === val;
-                          return (
-                            <button
-                              key={val}
-                              type="button"
-                              onClick={() => updateMeta.mutate({ id: chat.id, selfieResolution: val })}
-                              className={`rounded-md px-2 py-1 text-[0.625rem] font-medium transition-colors ${
-                                active
-                                  ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
-                                  : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
-                              }`}
-                            >
-                              {opt.label}
-                            </button>
-                          );
-                        })}
-                        {(() => {
-                          const inactiveCustom = availableAgents.filter(
-                            (agent) => agent.category === "custom" && !activeAgentIds.includes(agent.id),
-                          );
-                          if (inactiveCustom.length === 0) return null;
-                          return (
-                            <div className="mt-2 rounded-lg bg-[var(--background)]/55 p-2 ring-1 ring-[var(--border)]">
-                              <div className="mb-1.5 flex items-center gap-1.5 px-1 text-[0.625rem] font-medium text-[var(--muted-foreground)]">
-                                <Settings2 size="0.6875rem" />
-                                Custom Agents
-                              </div>
-                              <div className="flex flex-col gap-1">
-                                {inactiveCustom.map((agent) => (
-                                  <button
-                                    key={agent.id}
-                                    onClick={() => openAgentAddModal(agent)}
-                                    className="flex items-center gap-2.5 rounded-lg bg-[var(--secondary)] px-3 py-2 text-left transition-all hover:bg-[var(--accent)]"
-                                  >
-                                    <Plus size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
-                                    <div className="min-w-0 flex-1">
-                                      <span className="block truncate text-xs">{agent.name}</span>
-                                      <span className="mt-0.5 block text-[0.625rem] leading-tight text-[var(--muted-foreground)] line-clamp-2">
-                                        {agent.description}
-                                      </span>
-                                    </div>
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          );
-                        })()}
+                  <div className="space-y-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        updateMeta.mutate({
+                          id: chat.id,
+                          conversationCallsEnabled: metadata.conversationCallsEnabled === true ? false : true,
+                        });
+                      }}
+                      className="flex w-full items-center justify-between gap-3 rounded-lg bg-[var(--background)]/35 px-2.5 py-2 text-left transition-colors hover:bg-[var(--secondary)]/50"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <span className="block text-[0.6875rem] font-medium text-[var(--foreground)]">
+                          Audio/Video Calls
+                        </span>
+                        <p className="mt-0.5 text-[0.59375rem] leading-snug text-[var(--muted-foreground)]">
+                          Show the call button for you in this conversation.
+                        </p>
+                      </div>
+                      <div
+                        className={cn(
+                          "mari-chat-option-switch h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+                          metadata.conversationCallsEnabled === true && "mari-chat-option-switch--active",
+                        )}
+                      >
+                        <div
+                          className={cn(
+                            "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                            metadata.conversationCallsEnabled === true && "translate-x-3.5",
+                          )}
+                        />
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={callSettingsDisabled}
+                      onClick={() => {
+                        patchConversationCallTtsConfig({
+                          callAudioEnabled: !callAudioEnabled,
+                          ...(!callAudioEnabled ? { callAudioInputMode: "local_whisper" } : {}),
+                        });
+                      }}
+                      className={cn(
+                        "flex w-full items-center justify-between gap-3 rounded-lg bg-[var(--background)]/35 px-2.5 py-2 text-left transition-colors hover:bg-[var(--secondary)]/50",
+                        callSettingsDisabled && "cursor-not-allowed opacity-60 hover:bg-[var(--background)]/35",
+                      )}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <span className="block text-[0.6875rem] font-medium text-[var(--foreground)]">
+                          Call Audio Pipeline
+                        </span>
+                        <p className="mt-0.5 text-[0.59375rem] leading-snug text-[var(--muted-foreground)]">
+                          Request microphone access, listen while unmuted, and transcribe speech into the call.
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        {updateTtsConfig.isPending && <Loader2 size="0.75rem" className="animate-spin" />}
+                        <div
+                          className={cn(
+                            "mari-chat-option-switch h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+                            callAudioEnabled && "mari-chat-option-switch--active",
+                          )}
+                        >
+                          <div
+                            className={cn(
+                              "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                              callAudioEnabled && "translate-x-3.5",
+                            )}
+                          />
+                        </div>
+                      </div>
+                    </button>
+                  </div>
+
+                  {callAudioEnabled ? (
+                    <div className="space-y-2 border-t border-[var(--border)]/60 pt-3">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Audio input mode</span>
+                        <select
+                          value={callAudioInputMode}
+                          disabled={callSettingsDisabled}
+                          onChange={(event) =>
+                            patchConversationCallTtsConfig({
+                              callAudioInputMode: event.target.value as TTSConversationCallAudioInputMode,
+                            })
+                          }
+                          className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <option value="local_whisper">Mic recording + Local Whisper</option>
+                          <option value="transcribe">Browser speech recognition</option>
+                          <option value="system">Manual system dictation</option>
+                          <option value="auto">Provider-native audio/video</option>
+                        </select>
+                        <span className="text-[0.55rem] leading-snug text-[var(--muted-foreground)]">
+                          Local Whisper records mic audio while you are unmuted, ignores silence, and transcribes speech
+                          locally. Browser speech uses Web Speech where supported and falls back to Local Whisper when
+                          it is not. Manual system dictation only focuses the call input so OS dictation can type there.
+                          Provider-native mode sends media to the selected conversation model.
+                        </span>
+                      </label>
+
+                      <div className="grid gap-1.5 sm:grid-cols-2">
+                        <button
+                          type="button"
+                          disabled={callSettingsDisabled}
+                          onClick={() =>
+                            patchConversationCallTtsConfig({ callVideoInputEnabled: !callVideoInputEnabled })
+                          }
+                          className={cn(
+                            "mari-chat-option-field flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left transition-all",
+                            callVideoInputEnabled && "mari-chat-option-field--active",
+                            callSettingsDisabled && "cursor-not-allowed opacity-60",
+                          )}
+                        >
+                          <span className="text-[0.625rem] font-medium text-[var(--foreground)]">
+                            Camera and screen input
+                          </span>
+                          <div
+                            className={cn(
+                              "mari-chat-option-switch h-4 w-7 shrink-0 rounded-full p-0.5 transition-colors",
+                              callVideoInputEnabled && "mari-chat-option-switch--active",
+                            )}
+                          >
+                            <div
+                              className={cn(
+                                "h-3 w-3 rounded-full bg-white shadow-sm transition-transform",
+                                callVideoInputEnabled && "translate-x-3",
+                              )}
+                            />
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          disabled={callSettingsDisabled}
+                          onClick={() =>
+                            patchConversationCallTtsConfig({ callSoundboardEnabled: !callSoundboardEnabled })
+                          }
+                          className={cn(
+                            "mari-chat-option-field flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left transition-all",
+                            callSoundboardEnabled && "mari-chat-option-field--active",
+                            callSettingsDisabled && "cursor-not-allowed opacity-60",
+                          )}
+                        >
+                          <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Soundboard</span>
+                          <div
+                            className={cn(
+                              "mari-chat-option-switch h-4 w-7 shrink-0 rounded-full p-0.5 transition-colors",
+                              callSoundboardEnabled && "mari-chat-option-switch--active",
+                            )}
+                          >
+                            <div
+                              className={cn(
+                                "h-3 w-3 rounded-full bg-white shadow-sm transition-transform",
+                                callSoundboardEnabled && "translate-x-3",
+                              )}
+                            />
+                          </div>
+                        </button>
                       </div>
                     </div>
+                  ) : (
+                    <p className="rounded-lg border border-dashed border-[var(--border)] px-2.5 py-2 text-[0.59375rem] leading-snug text-[var(--muted-foreground)]">
+                      Turn on the call audio pipeline here to use local mic transcription, browser speech recognition,
+                      manual system dictation, optional provider-native audio/video input, and the soundboard.
+                    </p>
                   )}
+                </div>
 
-                  {/* Selfie prompt controls */}
-                  {(metadata.imageGenConnectionId as string) && (
-                    <SelfiePromptControls
-                      promptTemplate={metadata.selfiePrompt as string | null | undefined}
-                      positivePrompt={metadata.selfiePositivePrompt as string | undefined}
-                      legacyTags={(metadata.selfieTags as string[]) ?? []}
-                      negativePrompt={(metadata.selfieNegativePrompt as string) ?? ""}
-                      onCommitPromptTemplate={(selfiePrompt) => updateMeta.mutate({ id: chat.id, selfiePrompt })}
-                      onCommitPositivePrompt={(selfiePositivePrompt) =>
-                        updateMeta.mutate({ id: chat.id, selfiePositivePrompt })
-                      }
-                      onCommitNegativePrompt={(selfieNegativePrompt) =>
-                        updateMeta.mutate({ id: chat.id, selfieNegativePrompt })
-                      }
-                    />
+                <div
+                  className={cn(
+                    "mari-chat-option-field space-y-3 rounded-lg px-3 py-2.5 transition-all",
+                    selfieFeatureEnabled && "mari-chat-option-field--active",
+                  )}
+                >
+                  <div className="flex items-start gap-2">
+                    <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[var(--secondary)] text-[var(--muted-foreground)]">
+                      <Image size="0.875rem" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="block text-xs font-medium text-[var(--foreground)]">Selfies</span>
+                      <p className="text-[0.625rem] leading-snug text-[var(--muted-foreground)]">
+                        Let characters use [selfie], then choose the image connection, prompt model, style, references,
+                        and resolution.
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={toggleConversationSelfies}
+                    className="flex w-full items-center justify-between gap-3 rounded-lg bg-[var(--background)]/35 px-2.5 py-2 text-left transition-colors hover:bg-[var(--secondary)]/50"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <span className="block text-[0.6875rem] font-medium text-[var(--foreground)]">
+                        Generated Selfies
+                      </span>
+                      <p className="mt-0.5 text-[0.59375rem] leading-snug text-[var(--muted-foreground)]">
+                        Enable the Selfies command for this conversation.
+                      </p>
+                    </div>
+                    <div
+                      className={cn(
+                        "mari-chat-option-switch h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+                        selfieFeatureEnabled && "mari-chat-option-switch--active",
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                          selfieFeatureEnabled && "translate-x-3.5",
+                        )}
+                      />
+                    </div>
+                  </button>
+
+                  {selfieSettingsOpen ? (
+                    <div className="space-y-2 border-t border-[var(--border)]/60 pt-3">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Selfie Connection</span>
+                        <select
+                          value={selfieConnectionId}
+                          onChange={(e) =>
+                            updateMeta.mutate({ id: chat.id, imageGenConnectionId: e.target.value || null })
+                          }
+                          className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
+                        >
+                          <option value="">None (selfies disabled)</option>
+                          {imageConnectionsList.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name} ({c.provider})
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      {renderIllustratorPromptConnectionSelect()}
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Image Style</span>
+                        <select
+                          value={(metadata.imageStyleProfileId as string) ?? ""}
+                          onChange={(e) =>
+                            updateMeta.mutate({ id: chat.id, imageStyleProfileId: e.target.value || null })
+                          }
+                          className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-2.5 py-2 text-xs text-[var(--foreground)] outline-none transition-colors focus:border-[var(--primary)]/50"
+                        >
+                          <option value="">Use default style from Style Profiles in Advanced settings</option>
+                          {imageStyleProfiles.profiles.map((profile) => (
+                            <option key={profile.id} value={profile.id}>
+                              {profile.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <AgentSettingsToggle
+                        label="Send Avatar References"
+                        description="Send the matching character avatar or sprite as a reference image for generated selfies when the provider supports it."
+                        enabled={selfieUseAvatarReferences}
+                        onToggle={() =>
+                          updateMeta.mutate({
+                            id: chat.id,
+                            selfieUseAvatarReferences: !selfieUseAvatarReferences,
+                          })
+                        }
+                      />
+                      <AgentSettingsToggle
+                        label="Attach Card Appearance"
+                        description="Append the matching character card appearance text to generated selfie prompts."
+                        enabled={selfieIncludeCharacterAppearance}
+                        onToggle={() =>
+                          updateMeta.mutate({
+                            id: chat.id,
+                            selfieIncludeCharacterAppearance: !selfieIncludeCharacterAppearance,
+                          })
+                        }
+                      />
+                      <p className="text-[0.55rem] text-[var(--muted-foreground)]">
+                        Used for character selfies when Commands are enabled. The prompt model writes the selfie prompt;
+                        the selfie connection renders the final image.
+                      </p>
+
+                      {selfieConnectionId ? (
+                        <div className="mt-2 space-y-1">
+                          <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">
+                            Resolution
+                          </span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {[
+                              { label: "512x512", w: 512, h: 512 },
+                              { label: "512x768", w: 512, h: 768 },
+                              { label: "768x768", w: 768, h: 768 },
+                              { label: "768x1024", w: 768, h: 1024 },
+                              { label: "896x1152", w: 896, h: 1152 },
+                              { label: "1024x1024", w: 1024, h: 1024 },
+                            ].map((opt) => {
+                              const current =
+                                (metadata.selfieResolution as string) ?? `${imageSelfieWidth}x${imageSelfieHeight}`;
+                              const val = `${opt.w}x${opt.h}`;
+                              const active = current === val;
+                              return (
+                                <button
+                                  key={val}
+                                  type="button"
+                                  onClick={() => updateMeta.mutate({ id: chat.id, selfieResolution: val })}
+                                  className={cn(
+                                    "rounded-md px-2 py-1 text-[0.625rem] font-medium transition-colors",
+                                    active
+                                      ? "bg-[var(--primary)] text-[var(--primary-foreground)]"
+                                      : "bg-[var(--secondary)] text-[var(--muted-foreground)] hover:bg-[var(--accent)]",
+                                  )}
+                                >
+                                  {opt.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="rounded-lg border border-dashed border-[var(--border)] px-2.5 py-2 text-[0.59375rem] leading-snug text-[var(--muted-foreground)]">
+                          Choose a Selfie Connection to let characters generate selfie images.
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="rounded-lg border border-dashed border-[var(--border)] px-2.5 py-2 text-[0.59375rem] leading-snug text-[var(--muted-foreground)]">
+                      Turn on Selfies to reveal connection, prompt model, image style, reference, and resolution
+                      settings.
+                    </p>
                   )}
                 </div>
 
@@ -5341,15 +5587,17 @@ export function ChatSettingsDrawer({
                 )}
                 <button
                   onClick={() => setShowAgentSuiteModal(true)}
-                  className="flex w-full items-center justify-between rounded-lg bg-[var(--secondary)] px-3 py-2.5 text-left transition-all hover:bg-[var(--accent)]"
+                  className="flex w-full items-center justify-between gap-3 rounded-lg bg-[var(--secondary)] px-3 py-2.5 text-left transition-all hover:bg-[var(--accent)]"
                 >
-                  <div className="flex-1 min-w-0">
+                  <div className="min-w-0 flex-1">
                     <span className="text-[0.6875rem] font-medium">Agent Suite</span>
                     <p className="text-[0.625rem] text-[var(--muted-foreground)]">
                       View and edit everything agents have stored in this chat — manually or with AI.
                     </p>
                   </div>
-                  <Wrench size="0.875rem" className="shrink-0 text-[var(--muted-foreground)]" />
+                  <div className="flex h-5 w-9 shrink-0 items-center justify-center text-[var(--muted-foreground)]">
+                    <Wrench size="0.75rem" />
+                  </div>
                 </button>
                 {roleplayAgentMenuLinks.length > 0 && (
                   <div className="rounded-lg bg-[var(--background)]/45 px-2.5 py-2 ring-1 ring-[var(--border)]">
@@ -6097,10 +6345,7 @@ export function ChatSettingsDrawer({
                                     </div>
                                   </button>
 
-                                  <SpriteToggleButton
-                                    active={spriteActive}
-                                    onToggle={() => toggleSprite(subject.id)}
-                                  />
+                                  <SpriteToggleButton active={spriteActive} onToggle={() => toggleSprite(subject.id)} />
                                 </div>
                               );
                             })}
@@ -6634,9 +6879,7 @@ export function ChatSettingsDrawer({
                         />
                         {renderIllustratorPromptConnectionSelect()}
                         <label className="flex flex-col gap-1">
-                          <span className="text-[0.625rem] font-medium text-[var(--foreground)]">
-                            Image Connection
-                          </span>
+                          <span className="text-[0.625rem] font-medium text-[var(--foreground)]">Image Connection</span>
                           <select
                             value={(metadata.gameImageConnectionId as string) ?? ""}
                             onChange={(e) =>
@@ -7250,9 +7493,7 @@ export function ChatSettingsDrawer({
               excludePastReasoning={metadata.excludePastReasoning as boolean | undefined}
               imageCaptioningEnabled={metadata.imageCaptioningEnabled as boolean | undefined}
               imageCaptioningConnectionId={
-                typeof metadata.imageCaptioningConnectionId === "string"
-                  ? metadata.imageCaptioningConnectionId
-                  : null
+                typeof metadata.imageCaptioningConnectionId === "string" ? metadata.imageCaptioningConnectionId : null
               }
               onChatParametersChange={(chatParameters) => updateMeta.mutate({ id: chat.id, chatParameters })}
               onContextMessageLimitChange={(contextMessageLimit) =>
@@ -8429,13 +8670,7 @@ function SpriteDisplayModeToggle({
 }
 
 // ── Sprite toggle button (per character) ──
-function SpriteToggleButton({
-  active,
-  onToggle,
-}: {
-  active: boolean;
-  onToggle: () => void;
-}) {
+function SpriteToggleButton({ active, onToggle }: { active: boolean; onToggle: () => void }) {
   return (
     <button
       onClick={onToggle}
@@ -8470,95 +8705,6 @@ interface ScheduleBlock {
   status: "online" | "idle" | "dnd" | "offline";
 }
 
-function SelfiePromptControls({
-  promptTemplate,
-  positivePrompt,
-  legacyTags,
-  negativePrompt,
-  onCommitPromptTemplate,
-  onCommitPositivePrompt,
-  onCommitNegativePrompt,
-}: {
-  promptTemplate: string | null | undefined;
-  positivePrompt: string | undefined;
-  legacyTags: string[];
-  negativePrompt: string;
-  onCommitPromptTemplate: (value: string | null) => void;
-  onCommitPositivePrompt: (value: string) => void;
-  onCommitNegativePrompt: (value: string) => void;
-}) {
-  const legacyTagText = legacyTags.join(", ");
-  const displayPositivePrompt = positivePrompt ?? legacyTagText;
-  const displayPromptTemplate = promptTemplate ?? "";
-  const [promptDraft, setPromptDraft] = useState(displayPromptTemplate);
-  const [positiveDraft, setPositiveDraft] = useState(displayPositivePrompt);
-  const [negativeDraft, setNegativeDraft] = useState(negativePrompt);
-
-  useEffect(() => {
-    setPromptDraft(displayPromptTemplate);
-  }, [displayPromptTemplate]);
-
-  useEffect(() => {
-    setPositiveDraft(displayPositivePrompt);
-  }, [displayPositivePrompt]);
-
-  useEffect(() => {
-    setNegativeDraft(negativePrompt);
-  }, [negativePrompt]);
-
-  const commitPromptTemplate = useCallback(() => {
-    const nextValue = promptDraft.trim().length > 0 ? promptDraft : null;
-    if ((nextValue ?? "") !== displayPromptTemplate) onCommitPromptTemplate(nextValue);
-  }, [displayPromptTemplate, onCommitPromptTemplate, promptDraft]);
-
-  const commitPositivePrompt = useCallback(() => {
-    if (positiveDraft !== displayPositivePrompt) onCommitPositivePrompt(positiveDraft);
-  }, [displayPositivePrompt, onCommitPositivePrompt, positiveDraft]);
-
-  const commitNegativePrompt = useCallback(() => {
-    if (negativeDraft !== negativePrompt) onCommitNegativePrompt(negativeDraft);
-  }, [negativeDraft, negativePrompt, onCommitNegativePrompt]);
-
-  return (
-    <div className="mt-2 space-y-2">
-      <label className="flex flex-col gap-1">
-        <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Selfie prompt</span>
-        <textarea
-          value={promptDraft}
-          onChange={(e) => setPromptDraft(e.target.value)}
-          onBlur={commitPromptTemplate}
-          placeholder={`You are an image prompt generator. Create a concise selfie prompt for ${"${charName}"} using this appearance: ${"${appearance}"}.\nOutput ONLY the prompt text, nothing else.`}
-          className="min-h-[7rem] resize-y rounded-lg border border-[var(--border)] bg-[var(--secondary)] p-2 text-[0.6875rem] text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--muted-foreground)]/45 focus:border-[var(--primary)]/50"
-        />
-      </label>
-      <label className="flex flex-col gap-1">
-        <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Positive tags</span>
-        <textarea
-          value={positiveDraft}
-          onChange={(e) => setPositiveDraft(e.target.value)}
-          onBlur={commitPositivePrompt}
-          placeholder="masterpiece, best quality, detailed eyes"
-          className="min-h-[4rem] resize-y rounded-lg border border-[var(--border)] bg-[var(--secondary)] p-2 text-[0.6875rem] text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--muted-foreground)]/45 focus:border-[var(--primary)]/50"
-        />
-      </label>
-      <label className="flex flex-col gap-1">
-        <span className="text-[0.6875rem] font-medium text-[var(--muted-foreground)]">Negative prompt</span>
-        <textarea
-          value={negativeDraft}
-          onChange={(e) => setNegativeDraft(e.target.value)}
-          onBlur={commitNegativePrompt}
-          placeholder="lowres, bad anatomy, extra fingers"
-          className="min-h-[4rem] resize-y rounded-lg border border-[var(--border)] bg-[var(--secondary)] p-2 text-[0.6875rem] text-[var(--foreground)] outline-none transition-colors placeholder:text-[var(--muted-foreground)]/45 focus:border-[var(--primary)]/50"
-        />
-      </label>
-      <p className="text-[0.55rem] text-[var(--muted-foreground)]">
-        Saved for this chat. Leave the selfie prompt blank to use the default prompt. The template can use{" "}
-        {"${charName}"} and {"${appearance}"}. Positive tags are appended to the generated selfie prompt; negative tags
-        are sent directly to the image generator.
-      </p>
-    </div>
-  );
-}
 function ScheduleEditor({
   characterSchedules,
   chatCharIds,

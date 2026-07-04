@@ -28,6 +28,7 @@ export * from "./types/video-generation-defaults.js";
 export * from "./types/image-style-profile.js";
 export * from "./types/professor-mari-workspace.js";
 export * from "./types/achievement.js";
+export * from "./types/conversation-call.js";
 
 // Schemas
 export * from "./schemas/chat.schema.js";
@@ -44,6 +45,7 @@ export * from "./schemas/custom-sticker.schema.js";
 export * from "./schemas/theme.schema.js";
 export * from "./schemas/extension.schema.js";
 export * from "./schemas/app-settings.schema.js";
+export * from "./schemas/conversation-call.schema.js";
 
 // Constants
 export * from "./constants/providers.js";
@@ -100,5 +102,6 @@ export * from "./utils/thinking-tags.js";
 export * from "./utils/rpg-stats.js";
 export * from "./utils/lorebook-folder-tree.js";
 export * from "./utils/text-matching.js";
+export * from "./utils/speaker-segments.js";
 export * from "./utils/sprite-labels.js";
 export * from "./utils/conversation-presence.js";

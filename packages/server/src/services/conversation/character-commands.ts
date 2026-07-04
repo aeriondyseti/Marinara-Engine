@@ -11,11 +11,13 @@
 // - [selfie], [selfie: context="description of the selfie"], [selfie: "description"], or [selfie: description]
 // - [memory: target="CharName", summary="description of the memory"]
 // - [scene: scenario="...", background="...", plan="..."] (initiate a mini-roleplay scene)
+// - [call] or [call: reason="..."] (ring the user for an audio call; Conversation mode)
 // - [uno] (start a game of UNO at the table; Conversation mode)
 // - [chess] (start a one-on-one chess game against the user; Conversation mode)
 // - [spotify: title="Song title", artist="Artist"] (play a song on the user's active Spotify player)
 // - [youtube: query="Song title Artist"] (play a song on the user's active YouTube player)
 // - [react: emoji="😂"] or [react: emoji=":custom_name:"] (react to the user's latest message; Conversation mode)
+//   with optional `to "Character Name"` suffix to react to that character's most recent part instead
 // - [haptic: action="vibrate", intensity=0.5, duration=3] (haptic device feedback)
 // - <influence>text</influence> (OOC influence for connected roleplay, one-shot)
 // - <note>text</note> (durable note for connected roleplay, persists until cleared)
@@ -72,6 +74,12 @@ export interface SceneCommand {
   background?: string;
   /** Optional plot plan / outline for how the scene unfolds */
   plan?: string;
+}
+
+export interface CallCommand {
+  /** Ring the user for a Conversation-mode audio call. Param-less or optional reason. */
+  type: "call";
+  reason?: string;
 }
 
 export interface UnoCommand {
@@ -137,6 +145,13 @@ export interface ReactCommand {
   type: "react";
   /** The reaction token: a unicode emoji (e.g. "😂") or a custom-emoji ref `:name:`. */
   emoji: string;
+  /**
+   * Optional target character name (`[react: 😂 to "Name"]`): react to that
+   * character's most recent part instead of the user's latest message. Resolved
+   * against chat characters at execution time; unresolvable names fall back to
+   * the default user-message target.
+   */
+  targetCharacter?: string;
 }
 
 // ── Assistant commands (Professor Mari) ──
@@ -332,6 +347,7 @@ export type CharacterCommand =
   | SelfieCommand
   | MemoryCommand
   | SceneCommand
+  | CallCommand
   | UnoCommand
   | ChessCommand
   | InfluenceCommand
@@ -357,6 +373,7 @@ const CROSS_POST_RE = /\[cross_post:\s*target="([^"]+)"\]/gi;
 const SELFIE_RE = /\[selfie(?::\s*(?:context="([^"]*)"|"([^"]*)"|([^\]\r\n"]+)))?\]/gi;
 const MEMORY_RE = /\[memory:\s*target="([^"]+)"\s*,\s*summary="([^"]+)"\]/gi;
 const SCENE_RE = new RegExp(`\\[scene:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
+const CALL_RE = new RegExp(`\\[call(?::\\s*(${QUOTED_PARAM_BLOCK}))?\\]`, "gi");
 // Param-less UNO trigger. Tolerates a stray `[uno: ...]` so a chatty model can't dodge the match.
 const UNO_RE = /\[uno(?::[^\]\r\n]*)?\]/gi;
 // Param-less chess trigger. Same tolerant shape as UNO_RE.
@@ -364,12 +381,60 @@ const CHESS_RE = /\[chess(?::[^\]\r\n]*)?\]/gi;
 const HAPTIC_RE = new RegExp(`\\[haptic:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 const SPOTIFY_RE = new RegExp(`\\[spotify:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 const YOUTUBE_RE = new RegExp(`\\[youtube:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
-// React to the user's latest message. Accepts [react: emoji="😂"], [react: "😂"], or
-// [react: 😂] — and likewise for a custom emoji ref :name:.
-const REACT_RE = /\[react:\s*(?:emoji="([^"\]]+)"|"([^"\]]+)"|([^\]\r\n"]+))\]/gi;
+// React with an emoji. Accepts [react: emoji="😂"], [react: "😂"], or [react: 😂]
+// — and likewise for a custom emoji ref :name:. An optional trailing
+// `to "Character Name"` (quotes optional) aims the reaction at that character's
+// most recent part instead of the user's latest message.
+// Deliberately a single-quantifier capture of the whole bracket body: a
+// suffix-aware regex with overlapping whitespace quantifiers is super-linear on
+// degenerate inputs (ReDoS), so the short captured body is split
+// deterministically in parseReactBody instead.
+const REACT_RE = /\[react:([^\]\r\n]+)\]/gi;
+
+/** Split a `[react: ...]` body into its emoji token + optional `to "Name"` target. */
+function parseReactBody(body: string): { emoji: string; targetCharacter?: string } | null {
+  const trimmed = body.trim();
+  let emoji: string;
+  let rest: string;
+  if (trimmed.toLowerCase().startsWith('emoji="')) {
+    const close = trimmed.indexOf('"', 7);
+    if (close === -1) return null;
+    emoji = trimmed.slice(7, close).trim();
+    rest = trimmed.slice(close + 1);
+  } else if (trimmed.startsWith('"')) {
+    const close = trimmed.indexOf('"', 1);
+    if (close === -1) return null;
+    emoji = trimmed.slice(1, close).trim();
+    rest = trimmed.slice(close + 1);
+  } else {
+    const ws = trimmed.search(/\s/);
+    emoji = ws === -1 ? trimmed : trimmed.slice(0, ws);
+    rest = ws === -1 ? "" : trimmed.slice(ws);
+  }
+  if (!emoji || /^to$/i.test(emoji)) return null;
+  const suffix = rest.trim();
+  if (suffix) {
+    const toMatch = suffix.match(/^to\s+(.+)$/i);
+    if (toMatch) {
+      let target = toMatch[1]!.trim();
+      if (target.startsWith('"')) {
+        // Take the quoted name, tolerating junk after (or a missing) closing quote.
+        const close = target.indexOf('"', 1);
+        target = (close > 0 ? target.slice(1, close) : target.slice(1)).trim();
+      }
+      return target ? { emoji, targetCharacter: target } : { emoji };
+    }
+    // No recognizable target marker after a bare token — keep the old grammar's
+    // behavior where the whole body was the (possibly junk) emoji token.
+    if (!trimmed.startsWith('"') && !trimmed.toLowerCase().startsWith('emoji="')) return { emoji: trimmed };
+  }
+  return { emoji };
+}
 const DIRECT_MESSAGE_RE = new RegExp(`\\[dm:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 const INFLUENCE_RE = /<influence>([\s\S]*?)<\/influence>/gi;
 const NOTE_RE = /<note>([\s\S]*?)<\/note>/gi;
+const INFLUENCE_BRACKET_RE = new RegExp(`\\[influence:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
+const NOTE_BRACKET_RE = new RegExp(`\\[note:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 
 // Assistant command regexes
 const CREATE_PERSONA_RE = new RegExp(`\\[create_persona:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
@@ -443,6 +508,18 @@ function parseQuotedParam(params: string, key: string, allowEmpty = false): stri
   const value = decodeQuotedParamValue(rawValue);
   if (!allowEmpty && value.length === 0) return undefined;
   return value;
+}
+
+function parseCommandTextParam(params: string, keys: string[]): string {
+  for (const key of keys) {
+    const value = parseQuotedParam(params, key);
+    if (value !== undefined) return value;
+  }
+  return params
+    .trim()
+    .replace(/^["“”‘’]\s*/, "")
+    .replace(/\s*["“”‘’]$/, "")
+    .trim();
 }
 
 function parseStringList(value: string | undefined): string[] | undefined {
@@ -684,11 +761,37 @@ function parseCreatePresetBlock(raw: string): CreatePresetCommand | null {
       .map((choiceBlock): CreatePresetChoiceBlockCommand | null => {
         if (!choiceBlock || typeof choiceBlock !== "object") return null;
         const data = choiceBlock as Record<string, unknown>;
-        const variableName = typeof data.variableName === "string" ? data.variableName.trim() : "";
-        const question = typeof data.question === "string" ? data.question.trim() : "";
-        const rawOptions = Array.isArray(data.options) ? data.options : [];
+        const variableName =
+          typeof data.variableName === "string"
+            ? data.variableName.trim()
+            : typeof data.variable === "string"
+              ? data.variable.trim()
+              : typeof data.name === "string"
+                ? data.name.trim()
+                : typeof data.key === "string"
+                  ? data.key.trim()
+                  : "";
+        const question =
+          typeof data.question === "string"
+            ? data.question.trim()
+            : typeof data.prompt === "string"
+              ? data.prompt.trim()
+              : typeof data.label === "string"
+                ? data.label.trim()
+                : "";
+        const rawOptions = Array.isArray(data.options)
+          ? data.options
+          : Array.isArray(data.choices)
+            ? data.choices
+            : Array.isArray(data.values)
+              ? data.values
+              : [];
         const options = rawOptions
           .map((option): CreatePresetChoiceOptionCommand | null => {
+            if (typeof option === "string" || typeof option === "number" || typeof option === "boolean") {
+              const text = String(option).trim();
+              return text ? { label: text, value: text } : null;
+            }
             if (!option || typeof option !== "object") return null;
             const optionData = option as Record<string, unknown>;
             const label =
@@ -872,6 +975,14 @@ export function parseCharacterCommands(content: string): {
     if (cmd.scenario) commands.push(cmd);
   }
 
+  // Parse call command — ring the user for an audio call. Only one per message.
+  for (const match of content.matchAll(CALL_RE)) {
+    const params = match[1] ?? "";
+    const reason = parseQuotedParam(params, "reason") ?? params.replace(/^"|"$/g, "").trim();
+    commands.push({ type: "call", reason: reason || undefined });
+    break;
+  }
+
   // Parse uno command — start a game of UNO. Param-less; only one per message.
   for (const _unoMatch of content.matchAll(UNO_RE)) {
     commands.push({ type: "uno" });
@@ -890,9 +1001,21 @@ export function parseCharacterCommands(content: string): {
     if (text) commands.push({ type: "influence", content: text });
   }
 
+  // Backward compatibility for older prompts that described this as [influence: summary="..."].
+  for (const match of content.matchAll(INFLUENCE_BRACKET_RE)) {
+    const text = stripConversationPromptTimestamps(parseCommandTextParam(match[1]!, ["summary", "text", "content"]));
+    if (text) commands.push({ type: "influence", content: text });
+  }
+
   // Parse note commands (<note>text</note>)
   for (const match of content.matchAll(NOTE_RE)) {
     const text = stripConversationPromptTimestamps(match[1]!.trim());
+    if (text) commands.push({ type: "note", content: text });
+  }
+
+  // Backward compatibility for older prompts that described this as [note: text="..."].
+  for (const match of content.matchAll(NOTE_BRACKET_RE)) {
+    const text = stripConversationPromptTimestamps(parseCommandTextParam(match[1]!, ["text", "summary", "content"]));
     if (text) commands.push({ type: "note", content: text });
   }
 
@@ -941,10 +1064,11 @@ export function parseCharacterCommands(content: string): {
     }
   }
 
-  // Parse reaction commands — react to the user's latest message with an emoji
+  // Parse reaction commands — react with an emoji to the user's latest message,
+  // or to a specific character's most recent part via the `to "Name"` suffix.
   for (const match of content.matchAll(REACT_RE)) {
-    const emoji = (match[1] ?? match[2] ?? match[3])?.trim();
-    if (emoji) commands.push({ type: "react", emoji });
+    const parsed = parseReactBody(match[1]!);
+    if (parsed) commands.push({ type: "react", ...parsed });
   }
 
   // Parse assistant commands (Professor Mari)
@@ -1072,6 +1196,7 @@ export function parseCharacterCommands(content: string): {
     .replace(SELFIE_RE, "")
     .replace(MEMORY_RE, "")
     .replace(SCENE_RE, "")
+    .replace(CALL_RE, "")
     .replace(UNO_RE, "")
     .replace(CHESS_RE, "")
     .replace(HAPTIC_RE, "")
@@ -1080,6 +1205,8 @@ export function parseCharacterCommands(content: string): {
     .replace(REACT_RE, "")
     .replace(INFLUENCE_RE, "")
     .replace(NOTE_RE, "")
+    .replace(INFLUENCE_BRACKET_RE, "")
+    .replace(NOTE_BRACKET_RE, "")
     .replace(CREATE_PERSONA_RE, "")
     .replace(CREATE_CHARACTER_RE, "")
     .replace(UPDATE_CHARACTER_RE, "")

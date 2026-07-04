@@ -543,7 +543,7 @@ export function YouTubePlayer({ mobile = false }: { mobile?: boolean } = {}) {
       <>
         {showPlayer && (
           <div
-            className="fixed z-[35] touch-none select-none md:hidden"
+            className="fixed z-[45] touch-none select-none md:hidden"
             style={mobileWidgetStyle}
             onPointerDown={startDrag}
             onPointerMove={moveDrag}

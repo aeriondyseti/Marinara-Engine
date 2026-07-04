@@ -1132,7 +1132,15 @@ interface EmojiPickerProps {
   embedded?: boolean;
 }
 
-export function EmojiPicker({ open, onClose, onSelect, anchorRef, containerRef, customTab, embedded }: EmojiPickerProps) {
+export function EmojiPicker({
+  open,
+  onClose,
+  onSelect,
+  anchorRef,
+  containerRef,
+  customTab,
+  embedded,
+}: EmojiPickerProps) {
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState<number | "custom">(0);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -1168,6 +1176,7 @@ export function EmojiPicker({ open, onClose, onSelect, anchorRef, containerRef, 
   const [pos, setPos] = useState<{
     top?: number;
     left?: number;
+    right?: number;
     maxHeight?: number;
   }>({});
 
@@ -1203,8 +1212,12 @@ export function EmojiPicker({ open, onClose, onSelect, anchorRef, containerRef, 
         const left = visibleLeft + Math.max(pad, (vw - panelWidth) / 2);
         setPos({ top, left, maxHeight });
       } else {
-        const left = Math.max(visibleLeft + pad, Math.min(btnRight - panelWidth, visibleRight - panelWidth - pad));
-        setPos({ top, left, maxHeight });
+        const alignedLeft = btnRight - panelWidth;
+        if (alignedLeft < visibleLeft + pad) {
+          setPos({ top, left: visibleLeft + pad, maxHeight });
+        } else {
+          setPos({ top, right: Math.max(pad, visibleRight - btnRight), maxHeight });
+        }
       }
       return;
     }
@@ -1358,6 +1371,7 @@ export function EmojiPicker({ open, onClose, onSelect, anchorRef, containerRef, 
       style={{
         ...(pos.top != null ? { top: pos.top } : {}),
         ...(pos.left != null ? { left: pos.left } : {}),
+        ...(pos.right != null ? { right: pos.right } : {}),
         ...(pos.maxHeight != null ? { maxHeight: pos.maxHeight } : {}),
       }}
     >

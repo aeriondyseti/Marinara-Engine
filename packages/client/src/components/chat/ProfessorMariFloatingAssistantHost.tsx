@@ -61,6 +61,17 @@ export function ProfessorMariFloatingAssistantHost({ active }: ProfessorMariFloa
     return () => window.clearTimeout(timeout);
   }, [hasActiveGeneration, mounted, visible]);
 
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    if (visible) {
+      document.documentElement.dataset.professorMariFloating = "true";
+      return () => {
+        delete document.documentElement.dataset.professorMariFloating;
+      };
+    }
+    delete document.documentElement.dataset.professorMariFloating;
+  }, [visible]);
+
   if (!mounted) return null;
 
   return (

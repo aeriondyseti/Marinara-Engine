@@ -22,7 +22,14 @@ import { useTTSConfig, useUpdateTTSConfig, useTTSVoices } from "../../../hooks/u
 import { useCharacters } from "../../../hooks/use-characters";
 import { ttsService } from "../../../lib/tts-service";
 import { parseCharacterDisplayData } from "../../../lib/character-display";
-import type { TTSConfig, TTSSource, TTSVoiceAssignment, TTSVoiceMode, TTSAudioFormat } from "@marinara-engine/shared";
+import type {
+  TTSConfig,
+  TTSSource,
+  TTSVoiceAssignment,
+  TTSVoiceMode,
+  TTSAudioFormat,
+  TTSConversationCallAudioInputMode,
+} from "@marinara-engine/shared";
 import { ELEVENLABS_TTS_LANGUAGE_OPTIONS, TTS_API_KEY_MASK } from "@marinara-engine/shared";
 import { HelpTooltip } from "../../ui/HelpTooltip";
 import { SettingsCheckbox, SettingsSwitch } from "./SettingControls";
@@ -69,12 +76,20 @@ const TTS_SOURCE_DEFAULTS: Record<
     voice: "alba",
     idleText: "Local PocketTTS",
   },
+  xai: {
+    label: "xAI Voice",
+    baseUrl: "https://api.x.ai/v1",
+    model: "grok-tts",
+    voice: "eve",
+    idleText: "xAI Voice",
+  },
 };
 
 const TTS_SOURCE_OPTIONS: Array<{ value: TTSSource; label: string }> = [
   { value: "openai", label: "OpenAI-compatible" },
   { value: "elevenlabs", label: "ElevenLabs" },
   { value: "pockettts", label: "PocketTTS" },
+  { value: "xai", label: "xAI Voice" },
 ];
 
 const ELEVENLABS_TTS_MODELS = [
@@ -324,6 +339,10 @@ export function TTSConfigCard() {
   const [progressivePlayback, setProgressivePlayback] = useState(false);
   const [dialogueOnly, setDialogueOnly] = useState(false);
   const [audioFormat, setAudioFormat] = useState<TTSAudioFormat>("mp3");
+  const [callAudioEnabled, setCallAudioEnabled] = useState(false);
+  const [callAudioInputMode, setCallAudioInputMode] = useState<TTSConversationCallAudioInputMode>("local_whisper");
+  const [callVideoInputEnabled, setCallVideoInputEnabled] = useState(false);
+  const [callSoundboardEnabled, setCallSoundboardEnabled] = useState(true);
 
   const [expanded, setExpanded] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -370,6 +389,10 @@ export function TTSConfigCard() {
     setProgressivePlayback(savedConfig.progressivePlayback ?? false);
     setDialogueOnly(savedConfig.dialogueOnly ?? false);
     setAudioFormat(savedConfig.audioFormat ?? "mp3");
+    setCallAudioEnabled(savedConfig.callAudioEnabled ?? false);
+    setCallAudioInputMode(savedConfig.callAudioInputMode ?? "local_whisper");
+    setCallVideoInputEnabled(savedConfig.callVideoInputEnabled ?? false);
+    setCallSoundboardEnabled(savedConfig.callSoundboardEnabled ?? true);
     setSaveStatus("idle");
   }, [savedConfig]);
 
@@ -419,6 +442,12 @@ export function TTSConfigCard() {
     audioFormat,
     dialogueScope: "all",
     dialogueCharacterName: "",
+    callAudioEnabled,
+    callSttConnectionId: "",
+    callSttModel: "",
+    callAudioInputMode,
+    callVideoInputEnabled,
+    callSoundboardEnabled,
     ...overrides,
   });
 
@@ -617,15 +646,17 @@ export function TTSConfigCard() {
   const selectedLanguage =
     ELEVENLABS_TTS_LANGUAGE_OPTIONS.find((option) => option.code === elevenLabsLanguageCode) ??
     ELEVENLABS_TTS_LANGUAGE_OPTIONS[0];
-  const speedMin = source === "elevenlabs" ? 0.7 : 0.25;
-  const speedMax = source === "elevenlabs" ? 1.2 : 4.0;
+  const speedMin = source === "elevenlabs" || source === "xai" ? 0.7 : 0.25;
+  const speedMax = source === "elevenlabs" ? 1.2 : source === "xai" ? 1.5 : 4.0;
   const speedHelp =
     source === "elevenlabs"
       ? "Playback speed. ElevenLabs supports 0.7×–1.2×; wider saved values are clamped when spoken."
-      : "Playback speed. 1.0 is normal; range is 0.25×–4.0×.";
+      : source === "xai"
+        ? "Playback speed. xAI Voice supports 0.7×–1.5×; wider saved values are clamped when spoken."
+        : "Playback speed. 1.0 is normal; range is 0.25×–4.0×.";
   const speedSliderValue = Math.min(speedMax, Math.max(speedMin, speed));
   const speedLabel =
-    source === "elevenlabs" && speedSliderValue !== speed
+    (source === "elevenlabs" || source === "xai") && speedSliderValue !== speed
       ? `Speed — ${speedSliderValue.toFixed(2)}× (clamped from ${speed.toFixed(2)}×)`
       : `Speed — ${speed.toFixed(2)}×`;
   const previewDisabled = !enabled || ttsState === "loading" || (source === "elevenlabs" && !previewVoice);
@@ -637,7 +668,6 @@ export function TTSConfigCard() {
         : ttsState === "playing"
           ? "Stop preview"
           : "Preview voice";
-
   const updateVoiceAssignments = (nextAssignments: TTSVoiceAssignment[]) => {
     setVoiceAssignments(nextAssignments);
     mark({ voiceAssignments: nextAssignments });
@@ -798,7 +828,9 @@ export function TTSConfigCard() {
                 ? "The ElevenLabs API root. Use the default unless you proxy ElevenLabs through another server."
                 : source === "pockettts"
                   ? "The PocketTTS server root. Start it with pocket-tts serve, then use http://localhost:8000 unless you changed the port."
-                  : "The OpenAI-compatible TTS API endpoint. Use the default for OpenAI or point to a self-hosted server."
+                  : source === "xai"
+                    ? "The xAI Voice API root. Use https://api.x.ai/v1 unless you proxy xAI through another server."
+                    : "The OpenAI-compatible TTS API endpoint. Use the default for OpenAI or point to a self-hosted server."
             }
           >
             <div className="relative">
@@ -846,7 +878,9 @@ export function TTSConfigCard() {
                 ? "ElevenLabs model_id to use. Use eleven_v3 for Eleven v3 speech; eleven_ttv_v3 is a voice-design model and cannot generate TTS."
                 : source === "pockettts"
                   ? "PocketTTS selects its language/model when you start the local server. This field is kept for clarity and future compatible servers."
-                  : "TTS model to use. e.g. tts-1, tts-1-hd, gpt-4o-mini-tts, or any model your provider supports."
+                  : source === "xai"
+                    ? "xAI Voice currently uses the /tts endpoint; this is saved for compatibility with future model selection."
+                    : "TTS model to use. e.g. tts-1, tts-1-hd, gpt-4o-mini-tts, or any model your provider supports."
             }
           >
             <div className="relative">
@@ -909,7 +943,9 @@ export function TTSConfigCard() {
                   ? "ElevenLabs voices are fetched by name and saved by voice ID."
                   : source === "pockettts"
                     ? "PocketTTS built-in voice name or a voice URL/path accepted by your PocketTTS server."
-                    : "Voice to use for synthesis. Fetched from your configured provider when available."
+                    : source === "xai"
+                      ? "xAI Voice ID. Built-ins include eve, ara, rex, sal, and leo; custom xAI voice IDs can be typed after saving."
+                      : "Voice to use for synthesis. Fetched from your configured provider when available."
               }
             >
               <div className="flex gap-2">
@@ -980,6 +1016,11 @@ export function TTSConfigCard() {
               {!voicesFromProvider && source === "pockettts" && voices.length > 0 && (
                 <p className="text-[0.625rem] text-[var(--muted-foreground)]">
                   Showing PocketTTS built-in voices. You can type a custom voice URL or path accepted by your server.
+                </p>
+              )}
+              {!voicesFromProvider && source === "xai" && voices.length > 0 && (
+                <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                  Showing xAI built-in voices. Save with an API key, then refresh to load account/custom voices.
                 </p>
               )}
             </FieldRow>
