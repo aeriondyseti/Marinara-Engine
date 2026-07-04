@@ -777,7 +777,7 @@ export const ConversationMessage = memo(function ConversationMessage({
               <Trash2 size="0.75rem" />
             </button>
           )}
-          <span className="rounded-full bg-[var(--secondary)] px-3 py-1 text-[0.6875rem] text-[var(--muted-foreground)]">
+          <span className="rounded-full bg-[var(--secondary)] px-3 py-1 text-[0.6875rem] text-[var(--marinara-chat-chrome-panel-muted)]">
             {message.content}
           </span>
         </div>

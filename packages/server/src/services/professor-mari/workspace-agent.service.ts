@@ -18,9 +18,14 @@ import { createLLMProvider } from "../llm/provider-registry.js";
 import { getLocalSidecarProvider, LOCAL_SIDECAR_MODEL } from "../llm/local-sidecar.js";
 import { createChatsStorage } from "../storage/chats.storage.js";
 import {
+  appendReadableAttachmentsToContent,
+  extractFileAttachmentInputs,
+  extractImageAttachmentDataUrls,
+  getAttachmentFilename,
   resolveBaseUrl,
   mergeCustomParameters,
   normalizeServiceTier,
+  type PromptAttachment,
 } from "../../routes/generate/generate-route-utils.js";
 import { getFileStorageDir, getMonorepoRoot, getPort, getServerProtocol } from "../../config/runtime-config.js";
 import { apiConnections } from "../../db/schema/index.js";
@@ -67,12 +72,7 @@ type WorkspaceConnection = Pick<
   | "cachingAtDepth"
 > & { provider: string; isLocalSidecar?: boolean };
 type PromptEventSink = (event: MariWorkspacePromptEvent) => void;
-type ProfessorMariPromptAttachment = {
-  type: string;
-  data: string;
-  name?: string;
-  filename?: string;
-};
+type ProfessorMariPromptAttachment = PromptAttachment;
 type WorkspaceCommandCall = {
   id: string;
   name: MariWorkspaceToolName;
@@ -490,7 +490,7 @@ function parseExtra(value: unknown): Record<string, unknown> {
   return parseJsonObject(value) ?? {};
 }
 
-function normalizeProfessorMariImageAttachments(value: unknown): ProfessorMariPromptAttachment[] {
+function normalizeProfessorMariAttachments(value: unknown): ProfessorMariPromptAttachment[] {
   if (!Array.isArray(value)) return [];
   return value
     .map((attachment): ProfessorMariPromptAttachment | null => {
@@ -498,26 +498,28 @@ function normalizeProfessorMariImageAttachments(value: unknown): ProfessorMariPr
       const record = attachment as Record<string, unknown>;
       const type = typeof record.type === "string" ? record.type.trim() : "";
       const data = typeof record.data === "string" ? record.data.trim() : "";
-      if (!type.startsWith("image/") || !data.startsWith("data:image/")) return null;
+      if (!type || !data.startsWith("data:")) return null;
       const name =
         typeof record.name === "string" && record.name.trim()
           ? record.name.trim()
           : typeof record.filename === "string" && record.filename.trim()
             ? record.filename.trim()
-            : "image";
+            : "attachment";
       return { type, data, name, filename: name };
     })
     .filter((attachment): attachment is ProfessorMariPromptAttachment => attachment !== null);
 }
 
-function professorMariPromptImages(extra: Record<string, unknown>): string[] {
-  return normalizeProfessorMariImageAttachments(extra.attachments).map((attachment) => attachment.data);
-}
-
 function appendProfessorMariAttachmentNames(content: string, attachments: ProfessorMariPromptAttachment[]): string {
-  if (attachments.length === 0) return content;
-  const names = attachments.map((attachment) => `[Attached image: ${attachment.name ?? "image"}]`).join("\n");
-  return `${content.trim() || "Please inspect the attached image."}\n\n${names}`;
+  const withReadableFiles = appendReadableAttachmentsToContent(content, attachments);
+  if (attachments.length === 0) return withReadableFiles;
+  const names = attachments
+    .map((attachment) => {
+      const label = typeof attachment.type === "string" && attachment.type.startsWith("image/") ? "image" : "file";
+      return `[Attached ${label}: ${getAttachmentFilename(attachment)}]`;
+    })
+    .join("\n");
+  return `${withReadableFiles.trim() || "Please inspect the attached file."}\n\n${names}`;
 }
 
 type MariWorkspaceTraceTool = Extract<MariWorkspaceTraceItem, { type: "tool" }>["tool"];
@@ -1353,15 +1355,15 @@ export class ProfessorMariWorkspaceService {
   }) {
     if (!this.enabled) throw new Error("Professor Mari workspace mode is disabled.");
     const chatStorage = createChatsStorage(this.app.db);
-    const imageAttachments = normalizeProfessorMariImageAttachments(args.attachments);
+    const attachments = normalizeProfessorMariAttachments(args.attachments);
     const userMessage = await chatStorage.createMessage({
       chatId: args.chatId,
       role: "user",
       characterId: null,
       content: args.text,
     });
-    if (imageAttachments.length > 0 && userMessage) {
-      const extra = { attachments: imageAttachments };
+    if (attachments.length > 0 && userMessage) {
+      const extra = { attachments };
       await chatStorage.updateMessageExtra(userMessage.id, extra);
       await chatStorage.updateSwipeExtra(userMessage.id, 0, extra);
     }
@@ -1642,16 +1644,18 @@ export class ProfessorMariWorkspaceService {
       const content = typeof row.content === "string" ? row.content : String(row.content ?? "");
       if (!content.trim()) continue;
       const role = roleForMessage(row);
-      const imageAttachments = role === "user" ? normalizeProfessorMariImageAttachments(extra.attachments) : [];
-      const images = professorMariPromptImages(extra);
+      const attachments = role === "user" ? normalizeProfessorMariAttachments(extra.attachments) : [];
+      const images = extractImageAttachmentDataUrls(attachments);
+      const files = extractFileAttachmentInputs(attachments);
       messages.push({
         role,
         content:
           role === "assistant"
             ? assistantHistoryContentFromVisibleText(content)
-            : appendProfessorMariAttachmentNames(content, imageAttachments),
+            : appendProfessorMariAttachmentNames(content, attachments),
         contextKind: "history",
         ...(role === "user" && images.length > 0 ? { images } : {}),
+        ...(role === "user" && files.length > 0 ? { files } : {}),
       });
     }
     if (continuityPrompt) messages.push({ role: "system", content: continuityPrompt, contextKind: "injection" });

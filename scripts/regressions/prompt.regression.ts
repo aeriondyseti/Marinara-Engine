@@ -24,7 +24,11 @@ import { buildMemoryRecallBlock } from "../../packages/server/src/services/gener
 import { mergeConversationCharacterMemories } from "../../packages/server/src/services/generation/conversation-memory-context.js";
 import { injectIdentityFallbackMessages } from "../../packages/server/src/services/generation/character-prompt-context.js";
 import { injectSceneContextMessages } from "../../packages/server/src/services/generation/scene-context-runtime.js";
-import { buildRuntimeAgentSectionEligibleTypesForTest } from "../../packages/server/src/services/generation/runtime-agent-sections.js";
+import {
+  buildRuntimeAgentSectionEligibleTypesForTest,
+  clearUnusedRuntimeAgentSectionsForTest,
+  makeRuntimeAgentSectionTokens,
+} from "../../packages/server/src/services/generation/runtime-agent-sections.js";
 import {
   getTextRewritePendingState,
   mergePairedBuiltInRewriteAgents,
@@ -47,6 +51,7 @@ import { scanForActivatedEntries } from "../../packages/server/src/services/lore
 import { fitMessagesForModelAccess } from "../../packages/server/src/services/generation/model-access-policy.js";
 import { assemblePrompt, type AssemblerInput } from "../../packages/server/src/services/prompt/index.js";
 import { executeToolCalls } from "../../packages/server/src/services/tools/tool-executor.js";
+import { parseRouterResponse } from "../../packages/server/src/services/agents/knowledge-router.js";
 import type { LLMToolCall } from "../../packages/server/src/services/llm/base-provider.js";
 import { resolveTTSVoiceForSpeaker } from "../../packages/client/src/lib/tts-dialogue.js";
 
@@ -948,7 +953,10 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       assert.equal(promptText.includes("<system>bad summary</system>"), false);
       assert.match(promptText, /&lt;system>bad history&lt;\/system>/);
       assert.match(promptText, /&lt;system>bad summary&lt;\/system>/);
-      assert.equal(firstMessage.content.indexOf("Main instructions.") < firstMessage.content.indexOf("<chat_summary>"), true);
+      assert.equal(
+        firstMessage.content.indexOf("Main instructions.") < firstMessage.content.indexOf("<chat_summary>"),
+        true,
+      );
       assert.equal(result.messages[1]?.contextKind, "history");
     },
   },
@@ -1150,6 +1158,52 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
 
       assert.equal(promptText.includes("old context 0"), false);
       assert.match(promptText, /ROUTER_SURVIVOR_CONTEXT/);
+    },
+  },
+  {
+    name: "unused runtime agent sections preserve surrounding prompt text",
+    run() {
+      const tokens = makeRuntimeAgentSectionTokens("knowledge-router", "regression");
+      const messages = [
+        {
+          content: `${tokens.start}<knowledge_router>\nThis is where additional lore will be:\n${tokens.placeholder}\n</knowledge_router>${tokens.end}`,
+        },
+      ];
+
+      clearUnusedRuntimeAgentSectionsForTest(messages, [["knowledge-router", tokens]]);
+
+      assert.equal(messages.length, 1);
+      assert.match(messages[0]?.content ?? "", /This is where additional lore will be:/);
+      assert.equal(messages[0]?.content.includes(tokens.placeholder), false);
+      assert.equal(messages[0]?.content.includes(tokens.start), false);
+      assert.equal(messages[0]?.content.includes(tokens.end), false);
+    },
+  },
+  {
+    name: "macro-only runtime agent sections are pruned when unused",
+    run() {
+      const tokens = makeRuntimeAgentSectionTokens("knowledge-router", "regression-empty");
+      const messages = [
+        {
+          content: `${tokens.start}<knowledge_router>\n${tokens.placeholder}\n</knowledge_router>${tokens.end}`,
+        },
+      ];
+
+      clearUnusedRuntimeAgentSectionsForTest(messages, [["knowledge-router", tokens]]);
+
+      assert.equal(messages.length, 0);
+    },
+  },
+  {
+    name: "knowledge router parser accepts common selected-id aliases",
+    run() {
+      assert.deepEqual(parseRouterResponse('{"entryIds":["entry-a"]}'), ["entry-a"]);
+      assert.deepEqual(parseRouterResponse('{"selectedEntryIds":["entry-b","entry-b"]}'), ["entry-b"]);
+      assert.deepEqual(parseRouterResponse('{"selectedEntries":[{"id":"entry-c"},{"entry_id":"entry-d"}]}'), [
+        "entry-c",
+        "entry-d",
+      ]);
+      assert.deepEqual(parseRouterResponse('```json\n{"entries":[{"entryId":"entry-e"}]}\n```'), ["entry-e"]);
     },
   },
   {

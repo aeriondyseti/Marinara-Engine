@@ -1092,7 +1092,9 @@ export function ConversationView({
             return (
               <div key={item.key} className="relative my-4 flex items-center px-4">
                 <div className="flex-1 border-t border-[var(--border)]/40" />
-                <span className="mx-4 text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">{item.label}</span>
+                <span className="mx-4 text-[0.6875rem] font-semibold text-[var(--marinara-chat-chrome-panel-muted)]">
+                  {item.label}
+                </span>
                 <div className="flex-1 border-t border-[var(--border)]/40" />
               </div>
             );
