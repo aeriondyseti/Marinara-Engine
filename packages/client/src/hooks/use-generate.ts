@@ -3178,6 +3178,22 @@ function formatAgentBubble(agentType: string, agentName: string, data: unknown):
       return updates.map((u: any) => `📖 ${u.action === "create" ? "New" : "Updated"}: ${u.entryName}`).join("\n");
     }
 
+    case "knowledge-router": {
+      const selectedEntries = Array.isArray(d.selectedEntries) ? (d.selectedEntries as Array<Record<string, unknown>>) : [];
+      const candidateCount =
+        typeof d.candidateCount === "number" && Number.isFinite(d.candidateCount) ? d.candidateCount : null;
+      if (selectedEntries.length > 0) {
+        const names = selectedEntries
+          .map((entry) => (typeof entry.name === "string" ? entry.name.trim() : ""))
+          .filter(Boolean);
+        const list = names.slice(0, 5).join(", ");
+        const suffix = names.length > 5 ? ` +${names.length - 5} more` : "";
+        return `Selected ${selectedEntries.length}${candidateCount != null ? `/${candidateCount}` : ""} lorebook entries${list ? `: ${list}${suffix}` : ""}`;
+      }
+      if (candidateCount != null) return `Selected 0/${candidateCount} lorebook entries`;
+      return "Selected 0 lorebook entries";
+    }
+
     case "html": {
       const text = d.text as string;
       return `🎨 ${text || "HTML formatting active"}`;

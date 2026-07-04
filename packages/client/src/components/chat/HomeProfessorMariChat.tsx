@@ -64,6 +64,7 @@ import { useChatStore } from "../../stores/chat.store";
 import { useSidecarStore } from "../../stores/sidecar.store";
 import { useUIStore } from "../../stores/ui.store";
 import { applyInlineMarkdown, renderMarkdownBlocks } from "../../lib/markdown";
+import { prepareImageAttachment } from "../../lib/chat-attachment-images";
 import { cn } from "../../lib/utils";
 import { ProfessorMariWorkingWindow } from "../ui/ProfessorMariWorkingWindow";
 import { SettingsSwitch } from "../panels/settings/SettingControls";
@@ -93,6 +94,13 @@ Use this skill when the request matches a workflow you want Professor Mari to fo
 - Add the steps Professor Mari should follow.
 - Add any checks or evidence she should collect before saying the work is done.
 `;
+
+type ProfessorMariImageAttachment = {
+  type: string;
+  data: string;
+  name: string;
+  resized?: boolean;
+};
 const PROFESSOR_MARI_PANE_TRANSITION = { duration: 0.24, ease: [0.16, 1, 0.3, 1] } as const;
 const PROFESSOR_MARI_FLOATING_EDGE_GAP = 12;
 const PROFESSOR_MARI_FLOATING_MOBILE_TOP_GAP = 64;
@@ -185,6 +193,26 @@ function toMessageExtra(message: Message): Message["extra"] {
   return message.extra;
 }
 
+function getProfessorMariImageAttachments(message: Message): ProfessorMariImageAttachment[] {
+  const extra = toMessageExtra(message);
+  const rawAttachments =
+    extra && typeof extra === "object" && "attachments" in extra
+      ? (extra as { attachments?: unknown }).attachments
+      : undefined;
+  if (!Array.isArray(rawAttachments)) return [];
+  return rawAttachments.filter((attachment): attachment is ProfessorMariImageAttachment => {
+    if (!attachment || typeof attachment !== "object") return false;
+    const candidate = attachment as Partial<ProfessorMariImageAttachment>;
+    return (
+      typeof candidate.type === "string" &&
+      candidate.type.startsWith("image/") &&
+      typeof candidate.data === "string" &&
+      candidate.data.startsWith("data:image/") &&
+      typeof candidate.name === "string"
+    );
+  });
+}
+
 function isProfessorMariChatActive(chat: ProfessorMariChatSummary) {
   const raw = chat.metadata;
   try {
@@ -215,7 +243,11 @@ function createWelcomeMessage(chatId: string | null): Message {
   };
 }
 
-function createLocalUserMessage(chatId: string, content: string): Message {
+function createLocalUserMessage(
+  chatId: string,
+  content: string,
+  attachments: ProfessorMariImageAttachment[] = [],
+): Message {
   return {
     id: `__professor_mari_local_${Date.now()}`,
     chatId,
@@ -229,6 +261,7 @@ function createLocalUserMessage(chatId: string, content: string): Message {
       isGenerated: false,
       tokenCount: null,
       generationInfo: null,
+      ...(attachments.length > 0 ? { attachments } : {}),
     },
   };
 }
@@ -997,6 +1030,31 @@ function CompactMarkdown({ content, streaming }: { content: string; streaming?: 
   );
 }
 
+function ProfessorMariAttachedImages({ attachments }: { attachments: ProfessorMariImageAttachment[] }) {
+  if (attachments.length === 0) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-2">
+      {attachments.map((attachment, index) => (
+        <a
+          key={`${attachment.name}-${index}`}
+          href={attachment.data}
+          target="_blank"
+          rel="noreferrer"
+          className="block overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--background)]/70"
+          title={attachment.name}
+        >
+          <img
+            src={attachment.data}
+            alt={attachment.name || "Attached image"}
+            className="h-24 w-24 object-cover sm:h-28 sm:w-28"
+            draggable={false}
+          />
+        </a>
+      ))}
+    </div>
+  );
+}
+
 function MariAvatar({ active }: { active?: boolean }) {
   return (
     <span
@@ -1198,6 +1256,7 @@ function WorkspaceTimelineList({
 
 function CompactMariMessage({ message, thinking }: { message: Message; thinking?: string | null }) {
   const content = message.content ?? "";
+  const imageAttachments = getProfessorMariImageAttachments(message);
 
   if (message.role === "user") {
     return (
@@ -1205,6 +1264,7 @@ function CompactMariMessage({ message, thinking }: { message: Message; thinking?
         marker={<span className="pt-0.5 text-[0.6875rem] font-semibold text-[var(--muted-foreground)]">You</span>}
       >
         <CompactMarkdown content={content} />
+        <ProfessorMariAttachedImages attachments={imageAttachments} />
       </TranscriptRow>
     );
   }
@@ -1651,6 +1711,8 @@ export function HomeProfessorMariChat({
   const [chatId, setChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
+  const [imageAttachments, setImageAttachments] = useState<ProfessorMariImageAttachment[]>([]);
+  const [isReadingImages, setIsReadingImages] = useState(false);
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(() => readStoredConnectionId());
   const [workspaceStatus, setWorkspaceStatus] = useState<MariWorkspaceStatus | null>(null);
   const [workspaceActive, setWorkspaceActive] = useState(false);
@@ -1689,6 +1751,7 @@ export function HomeProfessorMariChat({
   const connectionButtonRef = useRef<HTMLButtonElement>(null);
   const connectionMenuRef = useRef<HTMLDivElement>(null);
   const skillFileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const workspaceAbortRef = useRef<AbortController | null>(null);
   const handledWorkspaceRefreshIdsRef = useRef<Set<string>>(new Set());
   const workspaceStatusErrorToastShownRef = useRef(false);
@@ -1724,6 +1787,7 @@ export function HomeProfessorMariChat({
     selectedConnection ?? connectionOptions.find((connection) => connection.isDefault) ?? connectionOptions[0] ?? null;
   const effectiveConnectionId = effectiveConnection?.id ?? null;
   const isBusy = sending || hasActiveGeneration || workspaceActive;
+  const canSubmitMessage = (draft.trim().length > 0 || imageAttachments.length > 0) && !isReadingImages;
   const selectedSkill = useMemo(
     () => skills.find((skill) => skill.id === selectedSkillId) ?? null,
     [selectedSkillId, skills],
@@ -2428,8 +2492,36 @@ export function HomeProfessorMariChat({
     [chatHistory, chatId, effectiveConnectionId, ensureProfessorMariChat, loadChatHistory, loadMessages],
   );
 
+  const handleImageUpload = useCallback(async (files: FileList | null) => {
+    const imageFiles = Array.from(files ?? []).filter((file) => file.type.startsWith("image/"));
+    if (imageFiles.length === 0) {
+      if (files && files.length > 0) toast.error("Professor Mari only accepts image attachments here.");
+      return;
+    }
+
+    setIsReadingImages(true);
+    try {
+      const prepared = await Promise.all(imageFiles.map((file) => prepareImageAttachment(file, file.name)));
+      setImageAttachments((current) => [...current, ...prepared]);
+      const resizedCount = prepared.filter((attachment) => attachment.resized).length;
+      if (resizedCount > 0) {
+        toast.info(
+          `${resizedCount} image${resizedCount === 1 ? "" : "s"} resized for Professor Mari's vision prompt.`,
+        );
+      }
+    } catch (error) {
+      console.error("[Professor Mari] Failed to prepare image attachment", error);
+      toast.error("Professor Mari could not attach that image.", {
+        description: error instanceof Error ? error.message : "The image could not be read.",
+        duration: PROFESSOR_MARI_ERROR_TOAST_DURATION_MS,
+      });
+    } finally {
+      setIsReadingImages(false);
+    }
+  }, []);
+
   const sendWorkspaceMessage = useCallback(
-    async (chat: Chat, text: string) => {
+    async (chat: Chat, text: string, attachments: ProfessorMariImageAttachment[] = []) => {
       const controller = new AbortController();
       workspaceAbortRef.current = controller;
       setWorkspaceActive(true);
@@ -2443,7 +2535,7 @@ export function HomeProfessorMariChat({
       try {
         for await (const event of api.streamEvents(
           "/professor-mari/workspace/prompt",
-          { chatId: chat.id, message: text, connectionId: effectiveConnectionId },
+          { chatId: chat.id, message: text, connectionId: effectiveConnectionId, attachments },
           controller.signal,
         )) {
           if (event.type === "token" && typeof event.data === "string") {
@@ -2525,9 +2617,11 @@ export function HomeProfessorMariChat({
 
   const handleSubmit = async () => {
     const text = draft.trim();
-    if (!text || isBusy) return;
+    const submittedAttachments = imageAttachments;
+    const messageText = text || (submittedAttachments.length > 0 ? "Please inspect the attached image." : "");
+    if (!messageText || isBusy || isReadingImages) return;
 
-    if (text === "/restart") {
+    if (messageText === "/restart") {
       await runRestart();
       return;
     }
@@ -2543,9 +2637,10 @@ export function HomeProfessorMariChat({
     try {
       const chat = await ensureProfessorMariChat(effectiveConnectionId);
       setDraft("");
-      setMessages((current) => [...current, createLocalUserMessage(chat.id, text)]);
+      setImageAttachments([]);
+      setMessages((current) => [...current, createLocalUserMessage(chat.id, messageText, submittedAttachments)]);
       trackAchievement.mutate("prof_mari_message_sent");
-      const received = await sendWorkspaceMessage(chat, text);
+      const received = await sendWorkspaceMessage(chat, messageText, submittedAttachments);
       await loadMessages(chat.id);
       useChatStore.getState().clearStreamBuffer(chat.id);
       useChatStore.getState().clearThinkingBuffer(chat.id);
@@ -2559,6 +2654,8 @@ export function HomeProfessorMariChat({
         });
       }
     } catch (error) {
+      setDraft(text);
+      setImageAttachments(submittedAttachments);
       console.error("[Professor Mari] Failed to send", error);
       toast.error("Professor Mari could not answer right now.", {
         description: describeProfessorMariError(error),
@@ -2612,6 +2709,54 @@ export function HomeProfessorMariChat({
           void handleSubmit();
         }}
       >
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(event: ChangeEvent<HTMLInputElement>) => {
+            void handleImageUpload(event.target.files);
+            event.target.value = "";
+          }}
+        />
+        {(imageAttachments.length > 0 || isReadingImages) && (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {imageAttachments.map((attachment, index) => (
+              <div
+                key={`${attachment.name}-${index}`}
+                className="group relative flex max-w-[9rem] items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--background)]/70 p-1.5 pr-7"
+              >
+                <img
+                  src={attachment.data}
+                  alt={attachment.name}
+                  className="h-9 w-9 shrink-0 rounded-md object-cover"
+                  draggable={false}
+                />
+                <span className="min-w-0 flex-1 truncate text-[0.6875rem] text-[var(--muted-foreground)]">
+                  {attachment.name}
+                </span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setImageAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))
+                  }
+                  className="absolute right-1.5 top-1.5 rounded-md p-0.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                  aria-label={`Remove ${attachment.name}`}
+                  title="Remove image"
+                >
+                  <X size="0.7rem" />
+                </button>
+              </div>
+            ))}
+            {isReadingImages && (
+              <div className="flex min-h-12 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--background)]/70 px-2 text-[0.6875rem] text-[var(--muted-foreground)]">
+                <Loader2 size="0.8rem" className="animate-spin" />
+                Reading image...
+              </div>
+            )}
+          </div>
+        )}
         <div className="relative flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] px-2 py-1.5 shadow-inner shadow-black/10 focus-within:border-[var(--primary)]/50">
           <button
             ref={connectionButtonRef}
@@ -2679,6 +2824,23 @@ export function HomeProfessorMariChat({
             </div>
           )}
 
+          <button
+            type="button"
+            onClick={() => imageInputRef.current?.click()}
+            disabled={isBusy || isReadingImages}
+            className={cn(
+              "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all",
+              imageAttachments.length > 0
+                ? "bg-foreground/10 text-foreground/75"
+                : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
+              (isBusy || isReadingImages) && "cursor-not-allowed opacity-40",
+            )}
+            title="Attach images"
+            aria-label="Attach images"
+          >
+            {isReadingImages ? <Loader2 size="1rem" className="animate-spin" /> : <ImageIcon size="1rem" />}
+          </button>
+
           <textarea
             value={draft}
             onChange={(event) => {
@@ -2698,15 +2860,15 @@ export function HomeProfessorMariChat({
           />
           <button
             type="submit"
-            disabled={!draft.trim() || isBusy}
+            disabled={!canSubmitMessage || isBusy}
             className={cn(
               "mari-chat-send-btn inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-white transition-all duration-200",
-              draft.trim() && !isBusy ? "hover:text-white active:scale-90" : "cursor-not-allowed opacity-40",
+              canSubmitMessage && !isBusy ? "hover:text-white active:scale-90" : "cursor-not-allowed opacity-40",
             )}
             aria-label="Send to Professor Mari"
             title="Send"
           >
-            <Send size="0.9375rem" className={cn(draft.trim() && "translate-x-[1px]")} />
+            <Send size="0.9375rem" className={cn(canSubmitMessage && "translate-x-[1px]")} />
           </button>
         </div>
       </form>
@@ -3160,6 +3322,56 @@ export function HomeProfessorMariChat({
                           void handleSubmit();
                         }}
                       >
+                        <input
+                          ref={imageInputRef}
+                          type="file"
+                          accept="image/*"
+                          multiple
+                          className="hidden"
+                          onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                            void handleImageUpload(event.target.files);
+                            event.target.value = "";
+                          }}
+                        />
+                        {(imageAttachments.length > 0 || isReadingImages) && (
+                          <div className="mb-2 flex flex-wrap gap-2">
+                            {imageAttachments.map((attachment, index) => (
+                              <div
+                                key={`${attachment.name}-${index}`}
+                                className="group relative flex max-w-[9rem] items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--background)]/70 p-1.5 pr-7"
+                              >
+                                <img
+                                  src={attachment.data}
+                                  alt={attachment.name}
+                                  className="h-9 w-9 shrink-0 rounded-md object-cover"
+                                  draggable={false}
+                                />
+                                <span className="min-w-0 flex-1 truncate text-[0.6875rem] text-[var(--muted-foreground)]">
+                                  {attachment.name}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setImageAttachments((current) =>
+                                      current.filter((_, itemIndex) => itemIndex !== index),
+                                    )
+                                  }
+                                  className="absolute right-1.5 top-1.5 rounded-md p-0.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                                  aria-label={`Remove ${attachment.name}`}
+                                  title="Remove image"
+                                >
+                                  <X size="0.7rem" />
+                                </button>
+                              </div>
+                            ))}
+                            {isReadingImages && (
+                              <div className="flex min-h-12 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--background)]/70 px-2 text-[0.6875rem] text-[var(--muted-foreground)]">
+                                <Loader2 size="0.8rem" className="animate-spin" />
+                                Reading image...
+                              </div>
+                            )}
+                          </div>
+                        )}
                         <div className="relative flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--card)] px-2 py-1.5 shadow-inner shadow-black/10 focus-within:border-[var(--primary)]/50">
                           <button
                             ref={connectionButtonRef}
@@ -3233,6 +3445,23 @@ export function HomeProfessorMariChat({
                             </div>
                           )}
 
+                          <button
+                            type="button"
+                            onClick={() => imageInputRef.current?.click()}
+                            disabled={isBusy || isReadingImages}
+                            className={cn(
+                              "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all",
+                              imageAttachments.length > 0
+                                ? "bg-foreground/10 text-foreground/75"
+                                : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
+                              (isBusy || isReadingImages) && "cursor-not-allowed opacity-40",
+                            )}
+                            title="Attach images"
+                            aria-label="Attach images"
+                          >
+                            {isReadingImages ? <Loader2 size="1rem" className="animate-spin" /> : <ImageIcon size="1rem" />}
+                          </button>
+
                           <textarea
                             value={draft}
                             onChange={(event) => {
@@ -3252,17 +3481,17 @@ export function HomeProfessorMariChat({
                           />
                           <button
                             type="submit"
-                            disabled={!draft.trim() || isBusy}
+                            disabled={!canSubmitMessage || isBusy}
                             className={cn(
                               "mari-chat-send-btn inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-white transition-all duration-200",
-                              draft.trim() && !isBusy
+                              canSubmitMessage && !isBusy
                                 ? "hover:text-white active:scale-90"
                                 : "cursor-not-allowed opacity-40",
                             )}
                             aria-label="Send to Professor Mari"
                             title="Send"
                           >
-                            <Send size="0.9375rem" className={cn(draft.trim() && "translate-x-[1px]")} />
+                            <Send size="0.9375rem" className={cn(canSubmitMessage && "translate-x-[1px]")} />
                           </button>
                         </div>
                       </form>

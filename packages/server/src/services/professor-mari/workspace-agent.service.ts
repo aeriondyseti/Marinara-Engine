@@ -67,6 +67,12 @@ type WorkspaceConnection = Pick<
   | "cachingAtDepth"
 > & { provider: string; isLocalSidecar?: boolean };
 type PromptEventSink = (event: MariWorkspacePromptEvent) => void;
+type ProfessorMariPromptAttachment = {
+  type: string;
+  data: string;
+  name?: string;
+  filename?: string;
+};
 type WorkspaceCommandCall = {
   id: string;
   name: MariWorkspaceToolName;
@@ -482,6 +488,36 @@ function normalizeMariMaxTokens(value: unknown): number | undefined {
 
 function parseExtra(value: unknown): Record<string, unknown> {
   return parseJsonObject(value) ?? {};
+}
+
+function normalizeProfessorMariImageAttachments(value: unknown): ProfessorMariPromptAttachment[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((attachment): ProfessorMariPromptAttachment | null => {
+      if (!attachment || typeof attachment !== "object") return null;
+      const record = attachment as Record<string, unknown>;
+      const type = typeof record.type === "string" ? record.type.trim() : "";
+      const data = typeof record.data === "string" ? record.data.trim() : "";
+      if (!type.startsWith("image/") || !data.startsWith("data:image/")) return null;
+      const name =
+        typeof record.name === "string" && record.name.trim()
+          ? record.name.trim()
+          : typeof record.filename === "string" && record.filename.trim()
+            ? record.filename.trim()
+            : "image";
+      return { type, data, name, filename: name };
+    })
+    .filter((attachment): attachment is ProfessorMariPromptAttachment => attachment !== null);
+}
+
+function professorMariPromptImages(extra: Record<string, unknown>): string[] {
+  return normalizeProfessorMariImageAttachments(extra.attachments).map((attachment) => attachment.data);
+}
+
+function appendProfessorMariAttachmentNames(content: string, attachments: ProfessorMariPromptAttachment[]): string {
+  if (attachments.length === 0) return content;
+  const names = attachments.map((attachment) => `[Attached image: ${attachment.name ?? "image"}]`).join("\n");
+  return `${content.trim() || "Please inspect the attached image."}\n\n${names}`;
 }
 
 type MariWorkspaceTraceTool = Extract<MariWorkspaceTraceItem, { type: "tool" }>["tool"];
@@ -1308,10 +1344,27 @@ export class ProfessorMariWorkspaceService {
     if (options?.clearHistory === true) await getMariDbService(this.app.db).clearHistory();
   }
 
-  async prompt(args: { chatId: string; text: string; connectionId?: string | null; onEvent: PromptEventSink }) {
+  async prompt(args: {
+    chatId: string;
+    text: string;
+    connectionId?: string | null;
+    attachments?: ProfessorMariPromptAttachment[];
+    onEvent: PromptEventSink;
+  }) {
     if (!this.enabled) throw new Error("Professor Mari workspace mode is disabled.");
     const chatStorage = createChatsStorage(this.app.db);
-    await chatStorage.createMessage({ chatId: args.chatId, role: "user", characterId: null, content: args.text });
+    const imageAttachments = normalizeProfessorMariImageAttachments(args.attachments);
+    const userMessage = await chatStorage.createMessage({
+      chatId: args.chatId,
+      role: "user",
+      characterId: null,
+      content: args.text,
+    });
+    if (imageAttachments.length > 0 && userMessage) {
+      const extra = { attachments: imageAttachments };
+      await chatStorage.updateMessageExtra(userMessage.id, extra);
+      await chatStorage.updateSwipeExtra(userMessage.id, 0, extra);
+    }
 
     const connection = await this.resolveConnection(args.connectionId);
     if (!connection) throw new Error("Set up a language connection before using Professor Mari workspace mode.");
@@ -1589,10 +1642,16 @@ export class ProfessorMariWorkspaceService {
       const content = typeof row.content === "string" ? row.content : String(row.content ?? "");
       if (!content.trim()) continue;
       const role = roleForMessage(row);
+      const imageAttachments = role === "user" ? normalizeProfessorMariImageAttachments(extra.attachments) : [];
+      const images = professorMariPromptImages(extra);
       messages.push({
         role,
-        content: role === "assistant" ? assistantHistoryContentFromVisibleText(content) : content,
+        content:
+          role === "assistant"
+            ? assistantHistoryContentFromVisibleText(content)
+            : appendProfessorMariAttachmentNames(content, imageAttachments),
         contextKind: "history",
+        ...(role === "user" && images.length > 0 ? { images } : {}),
       });
     }
     if (continuityPrompt) messages.push({ role: "system", content: continuityPrompt, contextKind: "injection" });
@@ -2124,7 +2183,7 @@ ${sections.join("\n\n")}
     }
 
     const rows = (await this.app.db.select().from(apiConnections)) as Array<typeof apiConnections.$inferSelect>;
-    const languageRows = rows.filter((row) => row.provider !== "image_generation");
+    const languageRows = rows.filter((row) => row.provider !== "image_generation" && row.provider !== "video_generation");
     const selected = connectionId ? languageRows.find((row) => row.id === connectionId) : null;
     const fallback =
       selected ??

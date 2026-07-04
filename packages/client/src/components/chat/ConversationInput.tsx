@@ -88,6 +88,8 @@ const PDF_ATTACHMENT_MIME_TYPE = "application/pdf";
 const CONVERSATION_HIDDEN_SLASH_COMMANDS = new Set(["impersonate", "impersonate_prompt"]);
 const QUOTE_INPUT_TRIGGER_RE = /["'\u2018\u2019\u201a\u201b\u201c\u201d\u201e\u201f]/;
 
+type MobilePickerTab = "emoji" | "gifs" | "stickers" | "tools";
+
 type ConversationSlashCompletion = {
   key: string;
   label: string;
@@ -317,7 +319,7 @@ export function ConversationInput({
   const [gifOpen, setGifOpen] = useState(false);
   const [stickerOpen, setStickerOpen] = useState(false);
   const [mobilePickerOpen, setMobilePickerOpen] = useState(false);
-  const [mobilePickerTab, setMobilePickerTab] = useState<"emoji" | "gifs" | "stickers">("emoji");
+  const [mobilePickerTab, setMobilePickerTab] = useState<MobilePickerTab>("emoji");
   const isMobileComposerViewport = useIsMobileComposerViewport();
   const [isDragging, setIsDragging] = useState(false);
   // @mention autocomplete
@@ -1699,6 +1701,24 @@ export function ConversationInput({
 
   const showCharPicker = groupResponseOrder === "manual" && !!activeChatCharacters && activeChatCharacters.length > 1;
   const showDraftTranslateButton = chatMetadata.showInputTranslateButton === true;
+  const showMobileToolsTab =
+    showCharPicker ||
+    showDraftTranslateButton ||
+    speechToTextEnabled ||
+    (showQuickRepliesMenu && quickReplyActions.length > 0);
+  const mobilePickerTabs = useMemo<Array<{ id: MobilePickerTab; label: string }>>(() => {
+    const tabs: Array<{ id: MobilePickerTab; label: string }> = [
+      { id: "emoji", label: "Emoji" },
+      { id: "gifs", label: "GIFs" },
+      { id: "stickers", label: "Stickers" },
+    ];
+    if (showMobileToolsTab) tabs.push({ id: "tools", label: "Tools" });
+    return tabs;
+  }, [showMobileToolsTab]);
+
+  useEffect(() => {
+    if (!showMobileToolsTab && mobilePickerTab === "tools") setMobilePickerTab("emoji");
+  }, [mobilePickerTab, showMobileToolsTab]);
 
   const handleTranslateDraft = useCallback(async () => {
     if (!activeChatId || isTranslatingDraft) return;
@@ -1890,23 +1910,23 @@ export function ConversationInput({
         </div>
       )}
 
-      {/* Mobile multipurpose picker sheet — Emoji / GIFs / Stickers (desktop uses the popovers) */}
+      {/* Mobile multipurpose picker sheet — Emoji / GIFs / Stickers / Tools (desktop uses the popovers) */}
       {mobilePickerOpen && (
         <div className="absolute bottom-full left-0 right-0 z-20 mb-1 flex h-[22rem] max-h-[60vh] flex-col overflow-hidden rounded-xl border border-foreground/10 bg-[var(--card)] shadow-xl sm:hidden">
           <div className="flex shrink-0 items-center gap-1 border-b border-foreground/10 px-2 py-1.5">
-            {(["emoji", "gifs", "stickers"] as const).map((tab) => (
+            {mobilePickerTabs.map((tab) => (
               <button
-                key={tab}
+                key={tab.id}
                 type="button"
-                onClick={() => setMobilePickerTab(tab)}
+                onClick={() => setMobilePickerTab(tab.id)}
                 className={cn(
                   "flex-1 rounded-md px-2 py-1 text-xs font-medium transition-colors",
-                  mobilePickerTab === tab
+                  mobilePickerTab === tab.id
                     ? "bg-foreground/10 text-foreground/80 ring-1 ring-foreground/15"
                     : "text-foreground/45 hover:bg-foreground/10 hover:text-foreground/70",
                 )}
               >
-                {tab === "gifs" ? "GIFs" : tab === "stickers" ? "Stickers" : "Emoji"}
+                {tab.label}
               </button>
             ))}
           </div>
@@ -1929,6 +1949,137 @@ export function ConversationInput({
             )}
             {mobilePickerTab === "stickers" && (
               <StickerPicker embedded open onClose={() => setMobilePickerOpen(false)} onSelect={handleStickerSelect} />
+            )}
+            {mobilePickerTab === "tools" && (
+              <div className="flex h-full flex-col gap-3 overflow-y-auto p-3">
+                {showCharPicker && activeChatCharacters && (
+                  <div className="space-y-1.5">
+                    <div className="px-1 text-[0.6875rem] font-semibold uppercase text-foreground/45">
+                      Trigger Response
+                    </div>
+                    <div className="grid gap-1">
+                      {activeChatCharacters.map((char) => (
+                        <button
+                          key={char.id}
+                          type="button"
+                          onClick={() => {
+                            setMobilePickerOpen(false);
+                            handleCharacterResponse(char.id);
+                          }}
+                          className={cn(
+                            "flex min-h-11 w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-all hover:bg-foreground/10",
+                            (char.conversationStatus === "dnd" || char.conversationStatus === "offline") &&
+                              "opacity-60",
+                          )}
+                        >
+                          <div className="relative shrink-0">
+                            {char.avatarUrl ? (
+                              <span className="relative block h-7 w-7 overflow-hidden rounded-full">
+                                <img
+                                  src={char.avatarUrl}
+                                  alt={char.name}
+                                  className="h-full w-full object-cover"
+                                  style={getAvatarCropStyle(char.avatarCrop)}
+                                />
+                              </span>
+                            ) : (
+                              <div className="flex h-7 w-7 items-center justify-center rounded-full bg-foreground/10 text-[0.6875rem] font-semibold text-foreground/45">
+                                {(char.name || "?")[0].toUpperCase()}
+                              </div>
+                            )}
+                            <span
+                              className={cn(
+                                "absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-[var(--card)]",
+                                statusDotClass(char.conversationStatus),
+                              )}
+                            />
+                          </div>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium">{char.name}</span>
+                            {(char.conversationActivity || statusLabel(char.conversationStatus)) && (
+                              <span className="block truncate text-xs text-foreground/45">
+                                {char.conversationActivity || statusLabel(char.conversationStatus)}
+                              </span>
+                            )}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid gap-2">
+                  {showDraftTranslateButton && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMobilePickerOpen(false);
+                        void handleTranslateDraft();
+                      }}
+                      disabled={!activeChatId || !hasInput || isTranslatingDraft}
+                      className={cn(
+                        "flex min-h-11 w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors",
+                        activeChatId && hasInput && !isTranslatingDraft
+                          ? "text-foreground/80 hover:bg-foreground/10"
+                          : "cursor-not-allowed text-foreground/25",
+                      )}
+                    >
+                      {isTranslatingDraft ? (
+                        <Loader2 size="1rem" className="shrink-0 animate-spin" />
+                      ) : (
+                        <Languages size="1rem" className="shrink-0" />
+                      )}
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium">Translate draft</span>
+                    </button>
+                  )}
+
+                  {speechToTextEnabled && (
+                    <div className="flex min-h-11 items-center justify-between gap-2 rounded-lg px-3 py-2">
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground/80">
+                        Voice input
+                      </span>
+                      <SpeechToTextButton
+                        disabled={!activeChatId}
+                        onTranscript={(transcript) => {
+                          setMobilePickerOpen(false);
+                          handleSpeechTranscript(transcript);
+                        }}
+                        className="h-10 w-10 rounded-lg"
+                        iconSize={16}
+                      />
+                    </div>
+                  )}
+
+                  {showQuickRepliesMenu &&
+                    quickReplyActions.map((action) => (
+                      <button
+                        key={action.id}
+                        type="button"
+                        onClick={() => {
+                          if (action.disabled) return;
+                          setMobilePickerOpen(false);
+                          void action.onSelect();
+                        }}
+                        disabled={action.disabled}
+                        title={action.disabled ? (action.disabledReason ?? action.description) : action.description}
+                        className={cn(
+                          "flex min-h-11 w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors",
+                          action.disabled
+                            ? "cursor-not-allowed text-foreground/25"
+                            : "text-foreground/80 hover:bg-foreground/10",
+                        )}
+                      >
+                        <span className="shrink-0">{action.icon}</span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium">{action.label}</span>
+                          <span className="block truncate text-xs text-foreground/45">
+                            {action.disabledReason ?? action.description}
+                          </span>
+                        </span>
+                      </button>
+                    ))}
+                </div>
+              </div>
             )}
           </div>
         </div>
@@ -2040,7 +2191,7 @@ export function ConversationInput({
 
         {/* Right actions */}
         <div className="ml-0 flex shrink-0 flex-nowrap items-center justify-end gap-0 sm:ml-auto sm:gap-0.5">
-          {/* Mobile: one multipurpose button → Emoji/GIFs/Stickers sheet (desktop uses the separate buttons) */}
+          {/* Mobile: one multipurpose button → Emoji/GIFs/Stickers/Tools sheet (desktop uses the separate buttons) */}
           <button
             type="button"
             onClick={() => {
@@ -2057,8 +2208,20 @@ export function ConversationInput({
                 ? "bg-foreground/10 text-foreground/75 ring-1 ring-foreground/20"
                 : "text-foreground/40 hover:bg-foreground/10 hover:text-foreground/70",
             )}
-            title={mobilePickerOpen ? "Show keyboard" : "Emoji, GIFs & stickers"}
-            aria-label={mobilePickerOpen ? "Show keyboard" : "Emoji, GIFs and stickers"}
+            title={
+              mobilePickerOpen
+                ? "Show keyboard"
+                : showMobileToolsTab
+                  ? "Emoji, GIFs, stickers & tools"
+                  : "Emoji, GIFs & stickers"
+            }
+            aria-label={
+              mobilePickerOpen
+                ? "Show keyboard"
+                : showMobileToolsTab
+                  ? "Emoji, GIFs, stickers, and tools"
+                  : "Emoji, GIFs and stickers"
+            }
           >
             {mobilePickerOpen ? <Keyboard size="1.25rem" /> : <Smile size="1.25rem" />}
           </button>

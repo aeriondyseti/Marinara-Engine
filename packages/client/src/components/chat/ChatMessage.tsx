@@ -11,6 +11,7 @@ import {
 } from "../../lib/utils";
 import { applyInlineMarkdown, renderMarkdownBlocks, applyInlineMarkdownHTML } from "../../lib/markdown";
 import { normalizeCardAssetImageSyntax, resolveCardAssetUrl } from "../../lib/card-asset-links";
+import { PendingTypingDots } from "./PendingTypingDots";
 import {
   User,
   Bot,
@@ -1757,11 +1758,7 @@ export const ChatMessage = memo(function ChatMessage({
         style={messageTextStyle}
       >
         {isStreaming && !message.content ? (
-          <div className="mari-message-typing flex items-center gap-1 py-0.5">
-            <span className="h-2 w-2 animate-bounce rounded-full bg-blue-400/60 [animation-delay:0ms]" />
-            <span className="h-2 w-2 animate-bounce rounded-full bg-blue-400/60 [animation-delay:150ms]" />
-            <span className="h-2 w-2 animate-bounce rounded-full bg-blue-400/60 [animation-delay:300ms]" />
-          </div>
+          <PendingTypingDots className="mari-message-typing py-0.5" dotClassName="bg-blue-400/60" />
         ) : (
           <>
             {renderedContent}
@@ -2602,11 +2599,10 @@ export const ChatMessage = memo(function ChatMessage({
                   style={messageTextStyle}
                 >
                   {isStreaming && !message.content ? (
-                    <div className="mari-message-typing flex items-center gap-1 py-0.5">
-                      <span className="h-2 w-2 animate-bounce rounded-full bg-[var(--muted-foreground)]/60 [animation-delay:0ms]" />
-                      <span className="h-2 w-2 animate-bounce rounded-full bg-[var(--muted-foreground)]/60 [animation-delay:150ms]" />
-                      <span className="h-2 w-2 animate-bounce rounded-full bg-[var(--muted-foreground)]/60 [animation-delay:300ms]" />
-                    </div>
+                    <PendingTypingDots
+                      className="mari-message-typing py-0.5"
+                      dotClassName="bg-[var(--muted-foreground)]/60"
+                    />
                   ) : (
                     <>
                       {renderedContent}

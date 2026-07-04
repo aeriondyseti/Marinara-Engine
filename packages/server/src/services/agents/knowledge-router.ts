@@ -274,7 +274,16 @@ export async function executeKnowledgeRouter(
       agentId: config.id,
       agentType: config.type,
       type: "context_injection",
-      data: { text: "" },
+      data: {
+        text: "",
+        candidateCount: 0,
+        totalEntryCount: 0,
+        selectedEntryIds: [],
+        selectedEntries: [],
+        returnedEntryIds: [],
+        unknownEntryIds: [],
+        catalogTruncated: false,
+      },
       tokensUsed: 0,
       durationMs: Date.now() - startTime,
       success: true,
@@ -293,7 +302,8 @@ export async function executeKnowledgeRouter(
   // truncation is order-preserving (matches `listEntriesByLorebooks` order).
   const candidates =
     routerEntries.length > MAX_ROUTER_CANDIDATES ? routerEntries.slice(0, MAX_ROUTER_CANDIDATES) : routerEntries;
-  if (routerEntries.length > MAX_ROUTER_CANDIDATES) {
+  const catalogTruncated = routerEntries.length > MAX_ROUTER_CANDIDATES;
+  if (catalogTruncated) {
     logger.warn(
       "[knowledge-router] catalog truncated to %d/%d entries (MAX_ROUTER_CANDIDATES)",
       candidates.length,
@@ -337,13 +347,24 @@ export async function executeKnowledgeRouter(
   const selectedEntries = dedupedIds
     .map((id) => entriesById.get(id))
     .filter((entry): entry is LorebookEntry => entry !== undefined);
+  const unknownEntryIds = dedupedIds.filter((id) => !entriesById.has(id));
+  const routerData = {
+    candidateCount: candidates.length,
+    totalEntryCount: entries.length,
+    routedEntryCount: routerEntries.length,
+    selectedEntryIds: selectedEntries.map((entry) => entry.id),
+    selectedEntries: selectedEntries.map((entry) => ({ id: entry.id, name: entry.name })),
+    returnedEntryIds: selectedIds,
+    unknownEntryIds,
+    catalogTruncated,
+  };
 
   if (selectedEntries.length === 0) {
     logger.debug("[knowledge-router] no entries selected from %d candidates", candidates.length);
     return {
       ...result,
       type: "context_injection",
-      data: { text: "" },
+      data: { text: "", ...routerData },
     };
   }
 
@@ -361,6 +382,6 @@ export async function executeKnowledgeRouter(
   return {
     ...result,
     type: "context_injection",
-    data: { text: injectionText },
+    data: { text: injectionText, ...routerData },
   };
 }

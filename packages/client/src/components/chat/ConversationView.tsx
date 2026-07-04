@@ -26,6 +26,7 @@ import { ActiveLorebookEntriesButton } from "./ActiveLorebookEntriesButton";
 import { ChatToolbarButton, ChatToolbarMenu } from "./ChatToolbarControls";
 import { groupConsecutiveSegments, parseNamePrefixFormat, parseSpeakerTags } from "./ConversationMessageShared";
 import { ConversationPresenceCard } from "./ConversationPresenceCard";
+import { PendingTypingDots } from "./PendingTypingDots";
 import { TranscriptWindowControls } from "./TranscriptWindowControls";
 import { PinnedImageOverlay } from "./PinnedImageOverlay";
 import { useChatStore } from "../../stores/chat.store";
@@ -1255,20 +1256,12 @@ export function ConversationView({
             data-typing-name={liveTypingName}
             data-card-css={typingCardCssId}
           >
-            <span className="mari-typing-dots flex gap-0.5">
-              <span
-                className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--text-secondary)]"
-                style={{ animationDelay: "0ms" }}
-              />
-              <span
-                className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--text-secondary)]"
-                style={{ animationDelay: "150ms" }}
-              />
-              <span
-                className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-[var(--text-secondary)]"
-                style={{ animationDelay: "300ms" }}
-              />
-            </span>
+            <PendingTypingDots
+              className="mari-typing-dots gap-0.5"
+              dotClassName="bg-[var(--text-secondary)]"
+              label={`${liveTypingName} ${liveTypingVerb} typing`}
+              small
+            />
             <span className="mari-typing-text italic">
               {liveTypingName} {liveTypingVerb} typing...
             </span>

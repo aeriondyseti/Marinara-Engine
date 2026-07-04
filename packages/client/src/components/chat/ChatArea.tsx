@@ -52,6 +52,7 @@ import { parseCharacterDisplayData } from "../../lib/character-display";
 import { showConfirmDialog } from "../../lib/app-dialogs";
 import { chatBackgroundMetadataToUrl, chatBackgroundUrlToMetadata } from "../../lib/backgrounds";
 import { useGameStateStore } from "../../stores/game-state.store";
+import { useGalleryStore } from "../../stores/gallery.store";
 import { toast } from "sonner";
 import { Check, HelpCircle, List, X } from "lucide-react";
 import {
@@ -60,6 +61,7 @@ import {
   PROFESSOR_MARI_ID,
   buildGuidedGenerationInstructionMessage,
   type AchievementEvent,
+  type GeneratedSceneVideo,
   type SpritePlacement,
   type SpriteSide,
 } from "@marinara-engine/shared";
@@ -105,6 +107,7 @@ import { HomeProfessorMariChat } from "./HomeProfessorMariChat";
 import { HomeAchievements } from "./HomeAchievements";
 import { NewChatConnectionGate } from "./NewChatConnectionGate";
 import { ChatCommonOverlays, preloadChatSettingsDrawer, type ChatSettingsInitialSection } from "./ChatCommonOverlays";
+import { PendingTypingDots } from "./PendingTypingDots";
 import { CreatorNotesCssInjector, type CardCssMode } from "./CreatorNotesCssInjector";
 import type { ChatModeFilter } from "../../lib/card-css";
 import { ImagePromptReviewModal, type ImagePromptOverride, type ImagePromptReviewItem } from "../ui/ImagePromptReviewModal";
@@ -271,6 +274,7 @@ function suppressBuiltInProfessorMariForMode(mode: string | undefined): boolean 
 
 const INTUITIVE_SWIPE_MIN_DISTANCE = 56;
 const INTUITIVE_SWIPE_MAX_VERTICAL_DRIFT = 44;
+const SCENE_VIDEO_GENERATION_TIMEOUT_MS = 1_800_000;
 
 const shouldIgnoreIntuitiveSwipeTarget = (target: EventTarget | null): boolean => {
   if (!(target instanceof Element)) return false;
@@ -1015,6 +1019,7 @@ export function ChatArea() {
   const summaryContextSize: number = (chatMeta.summaryContextSize as number) ?? 50;
   const [roleplayBackgroundReviewItems, setRoleplayBackgroundReviewItems] = useState<ImagePromptReviewItem[]>([]);
   const [roleplayBackgroundReviewSubmitting, setRoleplayBackgroundReviewSubmitting] = useState(false);
+  const roleplaySceneVideoGeneratingRef = useRef(false);
   const roleplayBackgroundReviewResolveRef = useRef<((overrides: ImagePromptOverride[] | null) => void) | null>(null);
 
   const openRoleplayBackgroundPromptReview = useCallback((items: ImagePromptReviewItem[]) => {
@@ -1096,6 +1101,43 @@ export function ChatArea() {
     queryClient,
     updateMeta,
   ]);
+
+  const handleGenerateRoleplaySceneVideo = useCallback(
+    async (source?: { galleryImageId?: string }) => {
+      if (!activeChatId || !chat || (chatMode !== "roleplay" && chatMode !== "visual_novel")) return;
+      if (roleplaySceneVideoGeneratingRef.current) return;
+      const sceneVideoConnectionId =
+        typeof chatMeta.sceneVideoConnectionId === "string" ? chatMeta.sceneVideoConnectionId.trim() : "";
+      if (!sceneVideoConnectionId) {
+        toast.error("Choose a Scene Video connection in Chat Settings first.");
+        return;
+      }
+
+      const galleryImageId = source?.galleryImageId?.trim();
+      roleplaySceneVideoGeneratingRef.current = true;
+      try {
+        const result = await api.post<{ video: GeneratedSceneVideo }>(
+          "/gallery/generate-scene-video",
+          {
+            chatId: activeChatId,
+            ...(galleryImageId ? { galleryImageId } : {}),
+            debugMode: useUIStore.getState().debugMode,
+          },
+          { signal: AbortSignal.timeout(SCENE_VIDEO_GENERATION_TIMEOUT_MS) },
+        );
+        const galleryStore = useGalleryStore.getState();
+        galleryStore.pinVideo(result.video);
+        galleryStore.syncLatestViewer({ ...result.video, kind: "video" as const });
+        void queryClient.invalidateQueries({ queryKey: ["gallery", "scene-videos", activeChatId] });
+        toast.success("Scene video generated.", { duration: 1800 });
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Scene video generation failed.");
+      } finally {
+        roleplaySceneVideoGeneratingRef.current = false;
+      }
+    },
+    [activeChatId, chat, chatMeta.sceneVideoConnectionId, chatMode, queryClient],
+  );
 
   // Creator-notes card CSS: resolve the per-chat mode (default "chat") and map
   // the chat mode onto the @chat-mode filter surface (visual novel shares the
@@ -2820,6 +2862,8 @@ export function ChatArea() {
           onCloseGallery={handleCloseGalleryPanel}
           onIllustrate={() => retryAgents(activeChatId, ["illustrator"])}
           onGenerateBackground={handleGenerateRoleplayBackground}
+          onGenerateVideo={() => handleGenerateRoleplaySceneVideo()}
+          onAnimateImage={(image) => handleGenerateRoleplaySceneVideo({ galleryImageId: image.id })}
           onWizardFinish={() => {
             setWizardOpen(false);
             handleOpenSettingsPanel();
@@ -2877,9 +2921,7 @@ function TypingIndicator() {
   return (
     <div className="flex items-center gap-1 px-4 py-3">
       <div className="flex items-center gap-1 rounded-xl bg-[var(--secondary)] px-4 py-2.5">
-        <span className="h-2 w-2 animate-bounce rounded-full bg-[var(--muted-foreground)]/60 [animation-delay:0ms]" />
-        <span className="h-2 w-2 animate-bounce rounded-full bg-[var(--muted-foreground)]/60 [animation-delay:150ms]" />
-        <span className="h-2 w-2 animate-bounce rounded-full bg-[var(--muted-foreground)]/60 [animation-delay:300ms]" />
+        <PendingTypingDots dotClassName="bg-[var(--muted-foreground)]/60" />
       </div>
     </div>
   );

@@ -257,3 +257,96 @@ export const GAME_NARRATION_SUMMARIZER: PromptOverrideKeyDef<GameNarrationSummar
       "Korr drops to one knee in the rain, his sword biting into the mud. Lyra stands over him, shaking but unblinking, while shattered moonlight catches on the wet stones.",
   },
 };
+
+// ── Game video prompt (scene illustration -> animated clip) ──
+
+export interface GameVideoCtx extends Record<string, string | number | undefined> {
+  sceneTitle: string;
+  narrationSummary: string;
+  illustrationPrompt: string;
+  charactersLine: string;
+  settingLine: string;
+  artStyleLine: string;
+  durationSeconds: number;
+  aspectRatio: string;
+  sourceIllustrationLine: string;
+}
+
+export const GAME_VIDEO: PromptOverrideKeyDef<GameVideoCtx> = {
+  key: "game.video",
+  legacyKeys: ["game.omniVideo"],
+  description: "Game video prompt for animating a generated Game Mode or Gallery illustration.",
+  variables: [
+    { name: "sceneTitle", description: "Short scene title or visual subject.", example: "Moonlit duel aftermath" },
+    {
+      name: "narrationSummary",
+      description: "Compact story beat from the latest visible scene narration.",
+      example: "Korr kneels in the rain as Lyra steadies herself over the fallen blade.",
+    },
+    {
+      name: "illustrationPrompt",
+      description: "Excerpt from the prompt used for the source scene illustration.",
+      example: "Visual novel CG, moonlit graveyard, rain, dramatic duel aftermath...",
+    },
+    {
+      name: "charactersLine",
+      description: "Pre-formatted visible character line.",
+      example: "Characters: Lyra, Korr.",
+    },
+    {
+      name: "settingLine",
+      description: "Pre-formatted setting/location line.",
+      example: "Setting: moonlit graveyard, cold rain, broken tombstones.",
+    },
+    {
+      name: "artStyleLine",
+      description: "Pre-formatted art style line.",
+      example: "Art style: watercolor fantasy illustration, soft edges, warm palette.",
+    },
+    { name: "durationSeconds", description: "Requested video duration in seconds.", example: "10" },
+    { name: "aspectRatio", description: "Requested video aspect ratio.", example: "16:9" },
+    {
+      name: "sourceIllustrationLine",
+      description: "Pre-formatted reminder that the provided image is the first frame/reference.",
+      example: "Use the provided scene illustration as the first frame/reference image.",
+    },
+  ],
+  defaultBuilder: (ctx) => {
+    const charactersLine = labelVideoPromptLine("Characters", ctx.charactersLine);
+    const settingLine = labelVideoPromptLine("Setting", ctx.settingLine);
+    const artStyleLine = labelVideoPromptLine("Art style", ctx.artStyleLine);
+    return [
+      `Create a ${ctx.durationSeconds}-second ${ctx.aspectRatio} animated game scene from the provided first-frame illustration.`,
+      ctx.sourceIllustrationLine,
+      ctx.sceneTitle ? `Scene: ${ctx.sceneTitle}.` : "",
+      ctx.narrationSummary ? `Story beat: ${ctx.narrationSummary}` : "",
+      charactersLine,
+      settingLine,
+      artStyleLine,
+      ctx.illustrationPrompt ? `Reference prompt excerpt: ${ctx.illustrationPrompt}` : "",
+      "Use the reference image as the visual anchor. Keep recognizable characters, setting, and mood while adding motion that feels natural for this moment.",
+      "You may choose the most cinematic camera drift, focus shift, gestures, atmospheric movement, and ending pose that fit the scene.",
+      "Avoid subtitles, captions, UI, logos, watermarks, unrelated new characters, distorted anatomy, and abrupt cuts.",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  },
+  exampleContext: {
+    sceneTitle: "Moonlit duel aftermath",
+    narrationSummary: "Korr kneels in the rain as Lyra steadies herself over the fallen blade.",
+    illustrationPrompt: "Visual novel CG, moonlit graveyard, rain, dramatic duel aftermath.",
+    charactersLine: "Characters: Lyra, Korr.",
+    settingLine: "Setting: moonlit graveyard, cold rain, broken tombstones.",
+    artStyleLine: "Art style: watercolor fantasy illustration, soft edges, warm palette.",
+    durationSeconds: 10,
+    aspectRatio: "16:9",
+    sourceIllustrationLine: "Use the provided scene illustration as the first frame/reference image.",
+  },
+};
+
+function labelVideoPromptLine(label: string, value: string | number | undefined): string {
+  const clean = typeof value === "string" ? value.trim() : value == null ? "" : String(value).trim();
+  if (!clean) return "";
+  if (/^[A-Z][A-Za-z ]{1,30}:\s/.test(clean)) return clean;
+  return `${label}: ${clean.replace(/[.]?$/, ".")}`;
+}
