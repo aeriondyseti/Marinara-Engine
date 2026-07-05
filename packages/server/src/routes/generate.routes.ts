@@ -3193,6 +3193,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 stripLeakedTimestamps(msg.content),
                 msg.role,
                 personaName,
+                msg.role === "assistant" ? author : null,
               );
               buckets.push({ ...msg, content: `[${fmtTime(ts)}] ${promptContent}` });
             } else {
@@ -3356,13 +3357,18 @@ export async function generateRoutes(app: FastifyInstance) {
           };
           const buildTailTurns = () => {
             if (tailEntries.length === 0) return [];
-            // Match today's verbatim format: timestamp prefix, with user turns speaker-labeled.
+            // Match today's verbatim format: timestamp prefix, with visible speaker labels.
             // The [DD.MM HH:MM] prefix unambiguously distinguishes tail turns
             // from today's [HH:MM] turns, so no wrapper tag is needed — the
             // model can see from the timestamps alone where today begins.
             return tailEntries.map((m) => ({
               role: m.role as "user" | "assistant" | "system",
-              content: `${fmtTailPrefix(m.ts)} ${formatConversationPromptTurn(m.content, m.role, personaName)}`,
+              content: `${fmtTailPrefix(m.ts)} ${formatConversationPromptTurn(
+                m.content,
+                m.role,
+                personaName,
+                m.role === "assistant" ? m.author : null,
+              )}`,
             }));
           };
 

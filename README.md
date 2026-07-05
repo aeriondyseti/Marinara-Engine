@@ -173,6 +173,7 @@ Export individual chats or bulk transcript zips as JSONL or plain text. Fully lo
 | ---------------------------------------------------- | --------------------------------------------------------------- |
 | [docs/INSTALLATION.md](docs/INSTALLATION.md)         | Installation guide index (all platforms)                        |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md)       | Environment variables and `.env` reference                      |
+| [docs/CONVERSATION_CALLS.md](docs/CONVERSATION_CALLS.md) | Conversation audio-call setup, Local Whisper, TTS, and troubleshooting |
 | [docs/IMAGE_GENERATION.md](docs/IMAGE_GENERATION.md) | Image provider setup, style profiles, and prompt cleanup        |
 | [docs/SCENE_VIDEO_GENERATION.md](docs/SCENE_VIDEO_GENERATION.md) | Scene-video setup, Game Mode storyboards, Gallery animation workflow, and prompt templates |
 | [docs/STORYBOARD_ENGINE_GUIDE.md](docs/STORYBOARD_ENGINE_GUIDE.md) | Step-by-step guide to manual and automatic Game Mode storyboards |

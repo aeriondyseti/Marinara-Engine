@@ -26,10 +26,12 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Added first-class scene video generation for Game Mode, Roleplay, and Visual Novel galleries, including Video Generation connections for Gemini Omni and xAI Imagine, editable `game.video` prompts, manual Gallery video actions, per-image Animate buttons, Gallery video previews with prompt copy, live View Latest media, and draggable/resizable pinned video overlays.
 - Added Game Mode turn storyboards: a `game.storyboardDirector` Prompt Director splits completed GM narration into manga keyframes with image/video prompts, renders keyframe media concurrently, follows the current story section in a draggable/resizable viewer, can be reopened from Game Assets, and supports an off-by-default **Automatic Storyboard Animations** chat setting.
 - Added Gallery **Images** and **Videos** tabs so generated clips are reachable without scrolling through every still image first.
+- Added an optional Game Illustrator toggle for Dynamic LLM Prompt Generation, letting the selected prompt model rewrite Game Mode NPC portrait, location background, and key-moment illustration prompts before image generation (#3225).
 
 ### Changed
 
 - Bumped release metadata to v2.1.0 across packages, the PWA manifest, README release pointer, Windows installer sources, Android APK metadata, and the home-page-visible app version.
+- Documented Conversation audio-call setup, Local Whisper download, audio input modes, character-initiated call behavior, and Professor Mari's built-in guidance for the feature.
 - Made Android/Termux update builds use low-memory build wrappers: server builds transpile runtime JS with esbuild, client builds skip memory-heavy typechecking/PWA generation on Android, and the updater builds shared, server, and client sequentially on Android devices (#3156).
 
 ### Fixed
@@ -37,6 +39,8 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Fixed Conversation call prompt assembly so call output JSON format and command instructions stay attached to the latest call input, adjacent same-role call history messages are merged, older TTS cue tags are stripped from call history, command turns use the same descriptive command guidance as normal Conversation mode, and `[end_call]` waits until prior voice lines finish before ending the call.
 - Fixed Conversation call command execution so hidden commands such as selfies, memories, music, haptics, influences, notes, soundboard actions, character leave, and call end are executed as call actions instead of leaking into the visible call chat.
 - Fixed Conversation call media and UI reliability by keeping speech-only transcripts out of the visible call chat, returning server-resolved character IDs for playback, preserving active calls while navigating elsewhere in Marinara, stacking the call popout with Professor Mari, improving mobile control scaling/participant tiling, and keeping offline characters out of calls.
+- Fixed 1:1 Conversation prompt history so assistant turns are speaker-labeled with the character name, preserving multi-turn user/assistant roles while making prior DM replies unambiguous to the model.
+- Fixed the Mari CLI flag parser so boolean flags such as `--tail`, `--raw`, `--patch`, `--strict`, and `--staged` no longer swallow positional arguments in commands like `mari chats messages --tail <chat-id>` (#3222).
 - Fixed Local Whisper availability after updates by adding a post-install native dependency repair step that rebuilds or refreshes `onnxruntime-node` for the Node architecture used to run Marinara, and documented the repair path for Windows, macOS/Linux, and Termux installs.
 - Renamed the editable scene-video prompt template from `game.omniVideo` to `game.video`, with legacy override fallback, and shortened scene-video prompts for smaller video providers by summarizing narration into a compact story beat, excerpting source illustration prompts, and loosening default motion guidance.
 - Fixed escaped roleplay HTML such as `&lt;font color=...&gt;` rendering as visible code by decoding allowed escaped tags before the existing sanitized HTML render path (#3206).
@@ -46,6 +50,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Fixed Smart group response order so hidden responder selection no longer overrides `/guided` or `/impersonate` directives in Roleplay group chats (#3212).
 - Fixed stopped partial replies being cache-only placeholders, so editing a kept unfinished reply persists it as a real message instead of deleting it on refresh (#3213).
 - Fixed Game Mode party recruitment for mid-session NPCs by creating a game-scoped tracked NPC/card fallback instead of throwing when the NPC was not generated at setup (#3216).
+- Fixed starting the next Game Mode session when backup branches exist by using the active concluded session as the source and preventing branch labels from carrying into newly created sessions (#3229).
 - Removed the hard-coded three-sprite limit from Roleplay sprite selection, setup, and display paths so chats can enable all uploaded sprite owners they need (#3169).
 - Let Image Captioning use any non-image-generation connection instead of hiding local or custom multimodal models behind model-name heuristics (#3170).
 - Stabilized emoji and sticker popover positioning above the mobile composer when Android browsers resize the visual viewport around the keyboard (#3171).

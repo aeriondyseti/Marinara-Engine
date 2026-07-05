@@ -8344,7 +8344,7 @@ function GameSurfaceComponent({
     startSessionGuardRef.current = true;
     setStartSessionRequested(true);
     startSession.mutate(
-      { gameId },
+      { gameId, sourceChatId: activeChatId },
       {
         onSettled: () => {
           startSessionGuardRef.current = false;
@@ -8352,7 +8352,7 @@ function GameSurfaceComponent({
         },
       },
     );
-  }, [gameId, startSession, startSessionLocked]);
+  }, [activeChatId, gameId, startSession, startSessionLocked]);
 
   const handleStartNewSession = useCallback(() => {
     if (!gameId || startSessionLocked || startSessionGuardRef.current) return;
