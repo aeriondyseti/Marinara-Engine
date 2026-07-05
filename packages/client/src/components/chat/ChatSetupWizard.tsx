@@ -164,6 +164,7 @@ const CONVERSATION_COMMAND_TOGGLE_OPTIONS: Array<{
   { id: "influence", label: "Influence", description: "Let characters influence a connected chat." },
   { id: "note", label: "Notes", description: "Let characters save durable notes for a connected chat." },
   { id: "call", label: "Calls", description: "Let characters ring you for a Conversation call." },
+  { id: "react", label: "Reactions", description: "Let characters react to messages with emoji badges." },
   { id: "uno", label: "UNO", description: "Let characters start a game of UNO at the table when you agree to play." },
   { id: "chess", label: "Chess", description: "Let characters accept a one-on-one chess challenge at the table." },
 ];

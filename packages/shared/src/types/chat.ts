@@ -41,6 +41,7 @@ export const CONVERSATION_COMMAND_KEYS = [
   "haptic",
   "influence",
   "note",
+  "react",
 ] as const;
 
 export type ConversationCommandKey = (typeof CONVERSATION_COMMAND_KEYS)[number];

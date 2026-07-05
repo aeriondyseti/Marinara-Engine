@@ -406,6 +406,11 @@ const CONVERSATION_COMMAND_TOGGLE_OPTIONS: Array<{
     description: "Let characters ring you for a Conversation call.",
   },
   {
+    id: "react",
+    label: "Reactions",
+    description: "Let characters react to messages with emoji badges.",
+  },
+  {
     id: "uno",
     label: "UNO",
     description: "Let characters start a game of UNO at the table when you agree to play.",
