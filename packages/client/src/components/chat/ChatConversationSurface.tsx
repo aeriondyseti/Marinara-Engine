@@ -173,6 +173,7 @@ export function ChatConversationSurface({
           onSetActiveSwipe={onSetActiveSwipe}
           onToggleHiddenFromAI={onToggleHiddenFromAI}
           onPeekPrompt={onPeekPrompt}
+          onIllustrate={onIllustrate}
           lastAssistantMessageId={lastAssistantMessageId}
           onOpenSettings={onOpenSettings}
           onOpenGallery={onOpenGallery}

@@ -1980,6 +1980,7 @@ export function ChatRoleplaySurface({
                     })}
                   onExpressionChange={onExpressionChange}
                   onPeekPrompt={onPeekPrompt}
+                  onIllustrate={onIllustrate}
                   interactionsLocked={agentProcessing}
                 />
               </div>

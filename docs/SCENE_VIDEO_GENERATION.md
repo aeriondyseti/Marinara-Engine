@@ -14,7 +14,7 @@ Scene videos are separate from normal image generation. They use a **Video Gener
    - **Gemini Omni** uses `gemini-omni-flash-preview` by default through Google AI Studio's Gemini API.
    - **xAI Imagine** uses `grok-imagine-video-1.5` by default through the xAI Videos API.
 4. Enter the provider API key and save the connection.
-5. Optional: enable **Use as default scene video connection** so new/manual scene-video requests can fall back to this connection when the chat has no explicit video connection selected.
+5. Optional: enable **Use as default video connection** so new/manual scene-video requests can fall back to this connection when the chat has no explicit video connection selected.
 
 Video generation connections have their own defaults. Gemini Omni exposes duration and aspect ratio; duration is rendered into the prompt because Gemini Omni does not currently accept `duration_seconds` in `generation_config.video_config`. xAI exposes duration, aspect ratio, and resolution.
 
@@ -33,7 +33,7 @@ Video connections are selected separately from image-generation connections.
 - **Existing Game Mode chats:** open **Chat Settings -> Agents -> Scene Videos** and choose **Video Connection**.
 - **Roleplay chats:** open **Chat Settings -> Agents -> Scene Videos** and choose **Video Connection**.
 
-If a chat does not have a selected video connection, Marinara tries the connection marked **Default for Scene Videos** in Connections. If neither exists, Gallery video actions show a connection warning.
+If a chat does not have a selected video connection, Marinara tries the connection marked **Default for Videos** in Connections. If neither exists, Gallery video actions show a connection warning.
 
 Game Mode has separate storyboard automation toggles under **Chat Settings -> Agents -> Storyboards**. **Automatic Storyboard Illustrations** creates manga keyframe images after each completed GM narration. **Automatic Storyboard Animations** also creates MP4 clips for those keyframes and requires a Video Generation connection. When disabled, use the manual **Create storyboard** control in **Gallery**.
 
@@ -135,7 +135,7 @@ Automatic storyboards are opt-in. Open **Chat Settings -> Agents -> Storyboards*
 
 ### Storyboard keyframes are images but not videos
 
-Storyboard image generation uses the Game Mode image-generation connection. Storyboard video generation also needs **Automatic Storyboard Animations** plus a Video Generation connection. **Automatic Storyboard Animations** can only be toggled on if Automatic Storyboard Illustrations are also on, because it depends on those for keyframes. If animations are off, or no video connection is selected and no default scene-video connection exists, Marinara can still save keyframe images, but clips cannot be generated.
+Storyboard image generation uses the Game Mode image-generation connection. Storyboard video generation also needs **Automatic Storyboard Animations** plus a Video Generation connection. **Automatic Storyboard Animations** can only be toggled on if Automatic Storyboard Illustrations are also on, because it depends on those for keyframes. If animations are off, or no video connection is selected and no default video connection exists, Marinara can still save keyframe images, but clips cannot be generated.
 
 ### Storyboard generation times out
 

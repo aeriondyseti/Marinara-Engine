@@ -1988,7 +1988,7 @@ export function ConnectionEditor() {
                   setLocalPromptPresetId(e.target.value);
                   markDirty();
                 }}
-                className="w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                className="mari-preset-native-select w-full rounded-xl bg-[var(--secondary)] px-3 py-2.5 text-sm ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
               >
                 <option value="">Use chat&apos;s prompt preset</option>
                 {(allPresets ?? []).map((preset) => (
@@ -2109,7 +2109,7 @@ export function ConnectionEditor() {
               isImageGenerationProvider
                 ? "Default for Illustrator"
                 : isVideoGenerationProvider
-                  ? "Default for Scene Videos"
+                  ? "Default for Videos"
                   : "Default for Agents"
             }
             icon={<Sparkles size="0.875rem" className="text-sky-400" />}
@@ -2117,7 +2117,7 @@ export function ConnectionEditor() {
               isImageGenerationProvider
                 ? "When enabled, the Illustrator agent will use this image generation connection by default whenever it does not have a specific Image Generation Connection assigned."
                 : isVideoGenerationProvider
-                  ? "When enabled, Game Mode uses this video generation connection by default when a game has no specific Video Generation Connection assigned."
+                  ? "When enabled, Marinara uses this video generation connection by default when a chat has no specific Video Generation Connection assigned."
                   : "When enabled, all agents that don't have a specific connection override will use this connection instead of the chat's active connection."
             }
           >
@@ -2126,7 +2126,7 @@ export function ConnectionEditor() {
                 isImageGenerationProvider
                   ? "Use as default Illustrator agent connection"
                   : isVideoGenerationProvider
-                    ? "Use as default scene video connection"
+                    ? "Use as default video connection"
                     : "Use as default agent connection"
               }
               checked={localDefaultForAgents}
@@ -2143,7 +2143,7 @@ export function ConnectionEditor() {
             )}
             {isVideoGenerationProvider && (
               <p className="px-2 text-[0.625rem] text-[var(--muted-foreground)]">
-                Only one video generation connection should be marked as the default scene video connection.
+                Only one video generation connection should be marked as the default video connection.
               </p>
             )}
           </FieldGroup>

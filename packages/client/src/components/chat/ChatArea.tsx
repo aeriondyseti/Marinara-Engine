@@ -246,6 +246,10 @@ function parseMessageExtraRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
+function startsNewAssistantBubble(message: { extra?: unknown } | null | undefined): boolean {
+  return parseMessageExtraRecord(message?.extra).startsNewAssistantBubble === true;
+}
+
 function normalizeMessageSpriteExpressions(value: unknown): Record<string, string> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const expressions: Record<string, string> = {};
@@ -2621,6 +2625,7 @@ export function ChatArea() {
     if (i === 0 || !messages) return false;
     const prev = messages[i - 1];
     const curr = messages[i];
+    if (startsNewAssistantBubble(curr)) return false;
     if (prev.role !== curr.role || prev.characterId !== curr.characterId) return false;
     // Break grouping when persona changes between consecutive user messages
     if (prev.role === "user" && curr.role === "user") {
