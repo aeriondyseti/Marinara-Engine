@@ -62,6 +62,7 @@ type ConversationSurfaceProps = {
   onAbandonScene?: () => void;
   onOpenSettings: ComponentProps<typeof ConversationView>["onOpenSettings"];
   onOpenGallery: ComponentProps<typeof ConversationView>["onOpenGallery"];
+  onOpenScheduleEditor?: ComponentProps<typeof ConversationView>["onOpenScheduleEditor"];
   onCloseSettings: () => void;
   onCloseGallery: () => void;
   onIllustrate?: () => void;
@@ -126,6 +127,7 @@ export function ChatConversationSurface({
   onAbandonScene,
   onOpenSettings,
   onOpenGallery,
+  onOpenScheduleEditor,
   onCloseSettings,
   onCloseGallery,
   onIllustrate,
@@ -174,6 +176,7 @@ export function ChatConversationSurface({
           lastAssistantMessageId={lastAssistantMessageId}
           onOpenSettings={onOpenSettings}
           onOpenGallery={onOpenGallery}
+          onOpenScheduleEditor={onOpenScheduleEditor}
           onBranch={onBranch}
           multiSelectMode={multiSelectMode}
           selectedMessageIds={selectedMessageIds}
@@ -209,6 +212,7 @@ export function ChatConversationSurface({
         }}
         onCloseSettings={onCloseSettings}
         onCloseGallery={onCloseGallery}
+        onOpenScheduleEditor={onOpenScheduleEditor}
         onIllustrate={onIllustrate}
         onWizardFinish={onWizardFinish}
         onClosePeekPrompt={onClosePeekPrompt}

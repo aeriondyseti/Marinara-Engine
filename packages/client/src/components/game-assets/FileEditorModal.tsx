@@ -175,7 +175,7 @@ export function FileEditorModal({ node, onClose, initialMode = "edit" }: FileEdi
             </div>
           ) : mode === "preview" && isMd ? (
             <div className="h-full overflow-y-auto p-6">
-              <div className="prose prose-sm max-w-none text-[var(--foreground)]">
+              <div className="mari-message-content whitespace-pre-wrap break-words text-sm text-[var(--foreground)]">
                 {renderMarkdownBlocks(content, applyInlineMarkdown, "editor-preview")}
               </div>
             </div>

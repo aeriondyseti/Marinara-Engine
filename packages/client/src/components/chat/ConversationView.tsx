@@ -94,6 +94,7 @@ interface ConversationViewProps {
   onPeekPrompt: () => void;
   lastAssistantMessageId: string | null;
   onOpenSettings: (event?: ReactMouseEvent<HTMLElement>, options?: { initialSection?: "autonomous" | null }) => void;
+  onOpenScheduleEditor?: (characterId: string, options?: { initialDay?: string | null }) => void;
   onOpenGallery: (event?: ReactMouseEvent<HTMLElement>) => void;
   onBranch?: (messageId: string) => void;
   multiSelectMode?: boolean;
@@ -297,6 +298,7 @@ export function ConversationView({
   onPeekPrompt,
   lastAssistantMessageId,
   onOpenSettings,
+  onOpenScheduleEditor,
   onOpenGallery,
   onBranch,
   multiSelectMode,
@@ -538,6 +540,7 @@ export function ConversationView({
         characterMap={characterMap}
         messages={messages}
         onOpenSettings={onOpenSettings}
+        onOpenScheduleEditor={onOpenScheduleEditor}
       />
 
       <div className="ml-2 flex min-w-0 flex-1 items-center justify-end gap-2">
@@ -877,6 +880,7 @@ export function ConversationView({
     chatCharIds,
     totalMessageCount,
     conversationMessageStyle,
+    stripTimestamps,
   ]);
 
   const liveStreamCharacterId = streamingCharacterId ?? (chatCharIds.length === 1 ? chatCharIds[0]! : null);
