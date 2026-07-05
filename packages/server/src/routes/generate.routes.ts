@@ -5798,8 +5798,8 @@ export async function generateRoutes(app: FastifyInstance) {
           pipelineAgents = pipelineAgents.filter((a) => !trackerIds.has(a.type));
         }
 
-        // Echo Chamber should only fire on fresh user messages, not swipes/regenerates
-        if (input.regenerateMessageId) {
+        // Echo Chamber should only fire on fresh user messages, not swipes/regenerates/continues.
+        if (input.regenerateMessageId || input.continueMessageId) {
           pipelineAgents = pipelineAgents.filter((a) => a.type !== "echo-chamber");
         }
 
