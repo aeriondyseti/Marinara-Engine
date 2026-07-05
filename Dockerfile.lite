@@ -10,6 +10,7 @@
 #   • Local sidecar model (llama-server / Gemma)
 #   • Local embedding model (onnxruntime + all-MiniLM-L6-v2)
 #   • Memory recall (semantic search)
+#   • Local Whisper voice input (Conversation call speech-to-text)
 # ──────────────────────────────────────────────
 
 # ── Stage 1: Build ──

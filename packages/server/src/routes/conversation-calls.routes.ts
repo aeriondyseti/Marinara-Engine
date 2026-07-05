@@ -179,18 +179,6 @@ function readCharacterAppearance(data: Record<string, unknown>) {
   return raw.replace(/\s+/g, " ").trim() || null;
 }
 
-function readCallVideoCharacterDescription(data: Record<string, unknown>) {
-  const fields = [
-    ["Description", data.description],
-    ["Appearance", readCharacterAppearance(data)],
-    ["Personality", data.personality],
-    ["Scenario", data.scenario],
-  ];
-  return fields
-    .flatMap(([label, value]) => (typeof value === "string" && value.trim() ? [`${label}: ${value.trim()}`] : []))
-    .join("\n");
-}
-
 function readCharacterContext(data: Record<string, unknown>) {
   const fields = [
     ["Name", data.name],
@@ -1736,7 +1724,6 @@ async function applyCallCustomClipCommand(input: {
   const manifest = await startConversationCallCustomVideoClipGeneration({
     characterId: character.id,
     characterName: readName(characterData, "Character"),
-    characterDescription: readCallVideoCharacterDescription(characterData),
     avatarPath: character.avatarPath ?? null,
     connection,
     promptOverridesStorage: createPromptOverridesStorage(input.app.db),
@@ -2166,7 +2153,6 @@ export async function conversationCallsRoutes(app: FastifyInstance) {
     return startConversationCallCharacterVideoGeneration({
       characterId: character.id,
       characterName: readName(data, "Character"),
-      characterDescription: readCallVideoCharacterDescription(data),
       avatarPath: character.avatarPath ?? null,
       connection: videoConnection,
       promptOverridesStorage: createPromptOverridesStorage(app.db),

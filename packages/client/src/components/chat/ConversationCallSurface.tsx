@@ -7,6 +7,7 @@ import {
   type CSSProperties,
   type ChangeEvent,
   type KeyboardEvent,
+  type SyntheticEvent,
 } from "react";
 import {
   Mic,
@@ -156,6 +157,7 @@ const CALL_MIC_MIN_PEAK_RMS = 0.022;
 const CALL_TTS_INTERRUPT_VOICED_MS = 900;
 const CALL_TTS_INTERRUPT_TEXT_MAX_CHARS = 1200;
 const CALL_TTS_MAX_REQUEST_CHARS = 3_900;
+const CALL_MUTED_REMINDER_TIMEOUT_MS = 10_000;
 const DEFAULT_TEXT_TO_VOICE_PAUSE_MS = 1_800;
 const ONLINE_CHARACTER_JOIN_DELAY_MS = 1_600;
 const AWAY_CHARACTER_JOIN_DELAY_MS = 10_000;
@@ -414,6 +416,17 @@ function readCallCustomClipExtra(message: ConversationCallMessage): Conversation
   return { characterId, clipId, label, prompt };
 }
 
+function forceSilentCallVideo(video: HTMLVideoElement | null) {
+  if (!video) return;
+  if (!video.defaultMuted) video.defaultMuted = true;
+  if (!video.muted) video.muted = true;
+  if (video.volume !== 0) video.volume = 0;
+}
+
+function keepCallVideoSilent(event: SyntheticEvent<HTMLVideoElement>) {
+  forceSilentCallVideo(event.currentTarget);
+}
+
 function messageLabel(message: ConversationCallMessage, participants: Participant[]) {
   if (message.participantKind === "user") return participants.find((p) => p.kind === "user")?.name ?? "You";
   return participants.find((p) => p.characterId === message.characterId)?.name ?? "Character";
@@ -586,7 +599,17 @@ function CallCustomClipPreview({ clip }: { clip: ConversationCallCustomClipExtra
   if (customClip?.status === "ready" && customClip.url) {
     return (
       <div className="mt-2 max-w-xl overflow-hidden rounded-lg border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-panel-bg)]">
-        <video src={customClip.url} controls playsInline className="max-h-80 w-full bg-black object-contain" />
+        <video
+          src={customClip.url}
+          controls
+          controlsList="novolume"
+          muted
+          playsInline
+          className="max-h-80 w-full bg-black object-contain"
+          onLoadedMetadata={keepCallVideoSilent}
+          onPlay={keepCallVideoSilent}
+          onVolumeChange={keepCallVideoSilent}
+        />
         <div className="border-t border-[var(--marinara-chat-chrome-panel-border)] px-2.5 py-2">
           <div className="text-xs font-semibold text-[var(--marinara-chat-chrome-panel-title)]">{title}</div>
           {description ? (
@@ -743,6 +766,9 @@ function ParticipantTile({
           playsInline
           loop={videoLoops}
           className="absolute inset-0 h-full w-full object-cover"
+          onLoadedMetadata={keepCallVideoSilent}
+          onPlay={keepCallVideoSilent}
+          onVolumeChange={keepCallVideoSilent}
           onEnded={() => {
             if (videoPlayback?.followKind && videoPlayback.voiceKey) {
               onVideoEmotionEnded(participant.id, videoPlayback.voiceKey);
@@ -807,6 +833,7 @@ export function ConversationCallSurface({
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
   const [soundboardOpen, setSoundboardOpen] = useState(false);
   const [voiceVolumeOpen, setVoiceVolumeOpen] = useState(false);
+  const [mutedReminderVisible, setMutedReminderVisible] = useState(false);
   const [mobileChatOpen, setMobileChatOpen] = useState(false);
   const [mobilePickerOpen, setMobilePickerOpen] = useState(false);
   const [mobilePickerTab, setMobilePickerTab] = useState<MobileCallPickerTab>("emoji");
@@ -1073,6 +1100,20 @@ export function ConversationCallSurface({
     lastUserActivityAtRef.current = Date.now();
     lastIdleCheckAtRef.current = 0;
   }, [session.id, session.status]);
+
+  useEffect(() => {
+    if (session.status !== "active" || !callAudioEnabled) {
+      setMutedReminderVisible(false);
+      return;
+    }
+    setMutedReminderVisible(true);
+    const timeout = window.setTimeout(() => setMutedReminderVisible(false), CALL_MUTED_REMINDER_TIMEOUT_MS);
+    return () => window.clearTimeout(timeout);
+  }, [callAudioEnabled, session.id, session.status]);
+
+  useEffect(() => {
+    if (recording) setMutedReminderVisible(false);
+  }, [recording]);
 
   useEffect(() => {
     setDepartedParticipantIds(new Set());
@@ -2471,16 +2512,33 @@ export function ConversationCallSurface({
                   callControlGridColumns,
                 )}
               >
-                <button
-	                  type="button"
-	                  onClick={recording ? stopRecording : startRecording}
-	                  disabled={!callAudioEnabled}
-	                  aria-pressed={recording}
-	                  className={cn(callControlButtonClass, recording && "mari-chrome-control--selected")}
-                  title={
-                    !callAudioEnabled
-                      ? "Enable call audio in Chat Settings"
-                      : recording
+                <div className="relative flex min-w-0 justify-center max-sm:w-full">
+                  {mutedReminderVisible && !recording ? (
+                    <div
+                      className="absolute bottom-full left-1/2 z-30 mb-3 w-64 max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-xl border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-panel-bg)] px-3 py-2.5 pr-8 text-left text-xs leading-relaxed text-[var(--marinara-chat-chrome-panel-title)] shadow-xl shadow-black/25"
+                      role="status"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setMutedReminderVisible(false)}
+                        className="absolute right-1.5 top-1.5 rounded-md p-1 text-[var(--marinara-chat-chrome-panel-muted)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg-hover)] hover:text-[var(--marinara-chat-chrome-button-text-hover)]"
+                        aria-label="Dismiss muted reminder"
+                      >
+                        <X size="0.75rem" />
+                      </button>
+                      You are muted! Remember to unmute yourself first if you want to talk.
+                    </div>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={recording ? stopRecording : startRecording}
+                    disabled={!callAudioEnabled}
+                    aria-pressed={recording}
+                    className={cn(callControlButtonClass, recording && "mari-chrome-control--selected")}
+                    title={
+                      !callAudioEnabled
+                        ? "Enable call audio in Chat Settings"
+                        : recording
                           ? nativeInputMode
                             ? "Mute microphone"
                             : systemVoiceInputMode
@@ -2490,21 +2548,22 @@ export function ConversationCallSurface({
                             ? "Use manual system dictation"
                             : recordingWillUseLocalWhisperFallback
                               ? "Unmute microphone with Local Whisper"
-                            : nativeInputMode
-                              ? "Unmute microphone with provider-native audio"
-                              : localWhisperInputMode
-                                ? "Unmute microphone with Local Whisper"
-                                : "Speak with browser speech recognition"
-                  }
-	                >
-	                  {recording ? (
-	                    <Mic className={callControlIconClass} />
-	                  ) : systemVoiceInputMode ? (
-	                    <Mic className={callControlIconClass} />
-	                  ) : (
-                    <MicOff className={callControlIconClass} />
-                  )}
-                </button>
+                              : nativeInputMode
+                                ? "Unmute microphone with provider-native audio"
+                                : localWhisperInputMode
+                                  ? "Unmute microphone with Local Whisper"
+                                  : "Speak with browser speech recognition"
+                    }
+                  >
+                    {recording ? (
+                      <Mic className={callControlIconClass} />
+                    ) : systemVoiceInputMode ? (
+                      <Mic className={callControlIconClass} />
+                    ) : (
+                      <MicOff className={callControlIconClass} />
+                    )}
+                  </button>
+                </div>
                 <button
                   type="button"
                   onClick={toggleCamera}

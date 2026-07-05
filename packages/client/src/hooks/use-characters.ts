@@ -45,8 +45,8 @@ export const characterKeys = {
   all: ["characters"] as const,
   list: () => [...characterKeys.all, "list"] as const,
   listWithBuiltIns: () => [...characterKeys.all, "list", "with-built-ins"] as const,
-  page: (includeBuiltIn: boolean, search: string, sort: string) =>
-    [...characterKeys.list(), "page", includeBuiltIn, search, sort] as const,
+  page: (includeBuiltIn: boolean, search: string, sort: string, favoriteFilter: string) =>
+    [...characterKeys.list(), "page", includeBuiltIn, search, sort, favoriteFilter] as const,
   summariesRoot: () => [...characterKeys.all, "summaries"] as const,
   summaries: (idsKey: string) => [...characterKeys.all, "summaries", idsKey] as const,
   detail: (id: string) => [...characterKeys.all, "detail", id] as const,
@@ -105,14 +105,16 @@ export function useCharacterPages(options: {
   includeBuiltIn?: boolean;
   search?: string;
   sort?: string;
+  favoriteFilter?: string;
 }) {
   const enabled = options.enabled ?? true;
   const includeBuiltIn = options.includeBuiltIn === true;
   const search = (options.search ?? "").trim();
   const sort = options.sort ?? "";
+  const favoriteFilter = options.favoriteFilter ?? "";
 
   return useInfiniteQuery({
-    queryKey: characterKeys.page(includeBuiltIn, search, sort),
+    queryKey: characterKeys.page(includeBuiltIn, search, sort, favoriteFilter),
     initialPageParam: 0,
     queryFn: ({ pageParam }) => {
       const params = new URLSearchParams({
@@ -122,6 +124,7 @@ export function useCharacterPages(options: {
       if (includeBuiltIn) params.set("includeBuiltIn", "true");
       if (search) params.set("search", search);
       if (sort) params.set("sort", sort);
+      if (favoriteFilter) params.set("favoriteFilter", favoriteFilter);
       return api.get<PaginatedList<Record<string, unknown>>>(`/characters?${params.toString()}`);
     },
     getNextPageParam: getNextPageOffset,
@@ -516,6 +519,17 @@ export function useGenerateCharacterCallVideoClips(characterId: string) {
   });
 }
 
+export function useDeleteCharacterGalleryClip(characterId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (clipId: string) => api.delete(`/characters/${characterId}/gallery/clips/${encodeURIComponent(clipId)}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: characterKeys.galleryClips(characterId) });
+      qc.invalidateQueries({ queryKey: ["conversation-calls", "character-videos", characterId] });
+    },
+  });
+}
+
 export function useUploadCharacterGalleryImage(characterId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -602,6 +616,17 @@ export function usePersonaGalleryClips(personaId: string | null) {
     queryFn: () => api.get<CharacterGalleryClipsResponse>(`/characters/personas/${personaId}/gallery/clips`),
     enabled: !!personaId,
     staleTime: 15_000,
+  });
+}
+
+export function useDeletePersonaGalleryClip(personaId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (clipId: string) =>
+      api.delete(`/characters/personas/${personaId}/gallery/clips/${encodeURIComponent(clipId)}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: characterKeys.personaGalleryClips(personaId) });
+    },
   });
 }
 

@@ -3,7 +3,6 @@ import type { PromptOverrideKeyDef } from "../types.js";
 
 export interface ConversationCallVideoClipCtx extends Record<string, string | number | undefined> {
   characterName: string;
-  characterDescription?: string;
   clipLabel: string;
   clipInstruction: string;
   durationSeconds: number;
@@ -12,7 +11,6 @@ export interface ConversationCallVideoClipCtx extends Record<string, string | nu
 
 export interface ConversationCallCustomVideoClipCtx extends Record<string, string | number | undefined> {
   characterName: string;
-  characterDescription?: string;
   clipLabel: string;
   customPrompt: string;
   durationSeconds: number;
@@ -36,44 +34,51 @@ const CLIP_PROMPT_SEEDS: ClipPromptSeed[] = [
     kind: "talking",
     label: "talking loop",
     instruction:
-      "Start on the exact same neutral video-call pose used by the idle loop, animate natural speaking with subtle mouth and face movement, then return to that identical neutral pose by the final frame. The clip must loop cleanly without a visible jump.",
+      "Start on the exact same reference-matching neutral video-call pose, animate natural speaking with subtle mouth and face movement, then return to that identical neutral pose by the final frame. The clip must loop cleanly without a visible jump.",
   },
   {
     kind: "laughing",
     label: "laughing reaction",
     instruction:
-      "Start on the exact same neutral video-call pose used by the idle loop, laugh softly with natural face and shoulder movement, then return to that identical neutral pose by the final frame. The first and final frames must match for a clean loop.",
+      "Start on the exact same reference-matching neutral video-call pose, laugh softly with natural face and shoulder movement, then return to that identical neutral pose by the final frame. The first and final frames must match for a clean loop.",
   },
   {
     kind: "angry",
     label: "angry reaction",
     instruction:
-      "Start on the exact same neutral video-call pose used by the idle loop, show anger or irritation in the face and posture, then return to that identical neutral pose by the final frame. The first and final frames must match for a clean loop.",
+      "Start on the exact same reference-matching neutral video-call pose, show anger or irritation in the face and posture, then return to that identical neutral pose by the final frame. The first and final frames must match for a clean loop.",
   },
   {
     kind: "crying",
     label: "crying reaction",
     instruction:
-      "Start on the exact same neutral video-call pose used by the idle loop, show a restrained tearful or crying reaction, then return to that identical neutral pose by the final frame. The first and final frames must match for a clean loop.",
+      "Start on the exact same reference-matching neutral video-call pose, show a restrained tearful or crying reaction, then return to that identical neutral pose by the final frame. The first and final frames must match for a clean loop.",
   },
   {
     kind: "sighing",
     label: "sighing reaction",
     instruction:
-      "Start on the exact same neutral video-call pose used by the idle loop, sigh with a small breath and head movement, then return to that identical neutral pose by the final frame. The first and final frames must match for a clean loop.",
+      "Start on the exact same reference-matching neutral video-call pose, sigh with a small breath and head movement, then return to that identical neutral pose by the final frame. The first and final frames must match for a clean loop.",
   },
+];
+
+const LOCKED_CAMERA_REFERENCE_LINES = [
+  "Use a still camera: the camera must be completely locked off for the entire clip. Do not animate the camera.",
+  "No zoom in, zoom out, push-in, pull-out, dolly, pan, tilt, roll, crop change, reframing, phone movement, handheld drift, or perspective change.",
+  "Keep the character's face at the same screen position and the same apparent size from first frame to final frame. Only the character may move.",
 ];
 
 function buildDefaultPrompt(ctx: ConversationCallVideoClipCtx) {
   return [
     `Create a ${ctx.durationSeconds}-second ${ctx.aspectRatio} ${ctx.clipLabel} for an AI character in a private video call.`,
     `Character name: ${ctx.characterName}.`,
-    ctx.characterDescription ? `Character visual/personality notes:\n${ctx.characterDescription}` : "",
     ctx.clipInstruction,
-    "Use the supplied avatar as the exact identity and art style reference.",
-    "This must be a clean loop: first frame and final frame should be visually interchangeable, with no jump cut, sudden pose reset, or snap in expression.",
-    "Keep camera framing locked and stable like a video-call participant tile. No cuts, zooms, pans, scene changes, or background swaps.",
-    "Preserve the avatar's face, hair, outfit cues, mask/accessories, colors, proportions, and art style for the entire clip.",
+    "Use only the supplied avatar/reference image as the character identity, appearance, outfit, art style, camera framing, and background reference.",
+    "The first frame must match the supplied reference image as closely as the provider allows.",
+    "The final frame must return to that same reference-matching pose, expression, framing, lighting, outfit, and background so the clip loops seamlessly.",
+    "This must be a clean loop with no jump cut, sudden pose reset, snap in expression, or identity drift at the loop point.",
+    ...LOCKED_CAMERA_REFERENCE_LINES,
+    "Preserve the reference image's face, hair, outfit, mask/accessories, colors, proportions, and art style for the entire clip.",
     "No sudden outfit changes, hairstyle changes, identity drift, lighting shifts, new accessories, or altered facial features.",
     "Single character only. No extra people. No UI, captions, subtitles, speech bubbles, text, logos, or watermarks.",
   ]
@@ -85,13 +90,12 @@ function buildDefaultCustomClipPrompt(ctx: ConversationCallCustomVideoClipCtx) {
   return [
     `Create a ${ctx.durationSeconds}-second ${ctx.aspectRatio} custom video-call clip for an AI character.`,
     `Character name: ${ctx.characterName}.`,
-    ctx.characterDescription ? `Character visual/personality notes:\n${ctx.characterDescription}` : "",
     `Clip label: ${ctx.clipLabel}.`,
     `Requested custom action or look: ${ctx.customPrompt}.`,
-    "Use the supplied avatar as the exact identity and art style reference.",
-    "Begin from the character's neutral video-call idle pose, perform the requested visual action or reveal clearly, then settle into a stable natural video-call pose by the final frame.",
-    "Keep camera framing locked and stable like a private video-call participant tile. No cuts, zooms, pans, scene changes, or background swaps.",
-    "Preserve the avatar's face, hair, outfit cues, mask/accessories, colors, proportions, and art style for the entire clip.",
+    "Use only the supplied avatar/reference image as the character identity, appearance, outfit, art style, camera framing, and background reference.",
+    "Begin from the reference-matching neutral video-call pose, perform only the requested visual action or reveal, then settle back into a reference-matching stable pose by the final frame.",
+    ...LOCKED_CAMERA_REFERENCE_LINES,
+    "Preserve the reference image's face, hair, outfit, mask/accessories, colors, proportions, and art style unless the custom request explicitly changes one of those details.",
     "Only change appearance details that the custom request explicitly asks to change; avoid sudden outfit changes, hairstyle changes, identity drift, lighting shifts, or unrelated new accessories.",
     "Single character only. No extra people. No UI, captions, subtitles, speech bubbles, text, logos, or watermarks.",
   ]
@@ -105,11 +109,6 @@ function makeConversationCallVideoPrompt(seed: ClipPromptSeed): PromptOverrideKe
     description: `Conversation Call character video prompt for the ${seed.label} clip.`,
     variables: [
       { name: "characterName", description: "Character display name.", example: "Dottore" },
-      {
-        name: "characterDescription",
-        description: "Character card visual/personality notes to preserve identity constraints.",
-        example: "Description: A masked doctor. Appearance: Wears a mask that covers his eyes.",
-      },
       { name: "clipLabel", description: "Human-readable clip type.", example: seed.label },
       {
         name: "clipInstruction",
@@ -122,7 +121,6 @@ function makeConversationCallVideoPrompt(seed: ClipPromptSeed): PromptOverrideKe
     defaultBuilder: buildDefaultPrompt,
     exampleContext: {
       characterName: "Dottore",
-      characterDescription: "Description: A masked doctor. Appearance: Wears a mask that covers his eyes.",
       clipLabel: seed.label,
       clipInstruction: seed.instruction,
       durationSeconds: 5,
@@ -138,11 +136,6 @@ export const CONVERSATION_CALL_CUSTOM_VIDEO_PROMPT: PromptOverrideKeyDef<Convers
   description: "Conversation Call custom character video prompt for sparse user-requested clips.",
   variables: [
     { name: "characterName", description: "Character display name.", example: "Dottore" },
-    {
-      name: "characterDescription",
-      description: "Character card visual/personality notes to preserve identity constraints.",
-      example: "Description: A masked doctor. Appearance: Wears a mask that covers his eyes.",
-    },
     { name: "clipLabel", description: "Short saved clip label.", example: "Mask off" },
     {
       name: "customPrompt",
@@ -155,7 +148,6 @@ export const CONVERSATION_CALL_CUSTOM_VIDEO_PROMPT: PromptOverrideKeyDef<Convers
   defaultBuilder: buildDefaultCustomClipPrompt,
   exampleContext: {
     characterName: "Dottore",
-    characterDescription: "Description: A masked doctor. Appearance: Wears a mask that covers his eyes.",
     clipLabel: "Mask off",
     customPrompt: "Dottore takes off his mask and reveals red eyes while looking into the phone camera.",
     durationSeconds: 5,
