@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+  Camera,
   Image,
   ImagePlus,
   Paintbrush,
@@ -47,6 +48,9 @@ interface ChatGalleryProps {
   mode?: string;
   /** Manually trigger the Illustrator agent */
   onIllustrate?: () => void | Promise<void>;
+  /** Generate an on-demand Conversation selfie. */
+  onGenerateSelfie?: (characterId?: string) => void | Promise<void>;
+  selfieCharacters?: Array<{ id: string; name: string }>;
   /** Generate and apply a background for the current scene. */
   onGenerateBackground?: () => void | Promise<void>;
   /** Generate a storyboard for the latest completed Game Mode GM turn. */
@@ -79,6 +83,8 @@ export function ChatGallery({
   chatId,
   mode,
   onIllustrate,
+  onGenerateSelfie,
+  selfieCharacters = [],
   onGenerateBackground,
   onGenerateStoryboard,
   onViewStoryboard,
@@ -98,6 +104,7 @@ export function ChatGallery({
   const [assetSearch, setAssetSearch] = useState("");
   const [copiedPromptImageId, setCopiedPromptImageId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<GalleryTab>("images");
+  const [selectedSelfieCharacterId, setSelectedSelfieCharacterId] = useState("");
   const copyResetTimerRef = useRef<number | null>(null);
   const isIllustrating = useGalleryStore((s) => s.illustratingChatIds.has(chatId));
   const isGeneratingVideo = useGalleryStore((s) => s.videoGeneratingChatIds.has(chatId));
@@ -134,6 +141,16 @@ export function ChatGallery({
     };
   }, []);
 
+  useEffect(() => {
+    if (selfieCharacters.length === 0) {
+      if (selectedSelfieCharacterId) setSelectedSelfieCharacterId("");
+      return;
+    }
+    if (!selectedSelfieCharacterId || !selfieCharacters.some((character) => character.id === selectedSelfieCharacterId)) {
+      setSelectedSelfieCharacterId(selfieCharacters[0]!.id);
+    }
+  }, [selectedSelfieCharacterId, selfieCharacters]);
+
   const handleUpload = useCallback(
     (files: File[]) => {
       if (files.length === 0) return;
@@ -167,6 +184,21 @@ export function ChatGallery({
       await onIllustrate();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Image generation failed.");
+    } finally {
+      setChatIllustrating(chatId, false);
+    }
+  };
+
+  const handleGenerateSelfie = async () => {
+    if (!onGenerateSelfie || useGalleryStore.getState().illustratingChatIds.has(chatId)) return;
+
+    const characterId = selfieCharacters.length > 1 ? selectedSelfieCharacterId : selfieCharacters[0]?.id;
+    setChatIllustrating(chatId, true);
+    try {
+      await onGenerateSelfie(characterId);
+      toast.success("Selfie generated.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Selfie generation failed.");
     } finally {
       setChatIllustrating(chatId, false);
     }
@@ -271,7 +303,13 @@ export function ChatGallery({
     [chatId],
   );
 
-  const actionCount = [onIllustrate, onGenerateStoryboard, onGenerateVideo, onGenerateBackground].filter(Boolean).length;
+  const actionCount = [
+    onIllustrate,
+    onGenerateSelfie,
+    onGenerateStoryboard,
+    onGenerateVideo,
+    onGenerateBackground,
+  ].filter(Boolean).length;
   const actionGridClass =
     actionCount >= 4
       ? "grid grid-cols-2 gap-2"
@@ -292,7 +330,7 @@ export function ChatGallery({
   return (
     <>
       <div className="flex flex-col gap-3 p-4">
-        {(onIllustrate || onGenerateStoryboard || onGenerateVideo || onGenerateBackground) && (
+        {(onIllustrate || onGenerateSelfie || onGenerateStoryboard || onGenerateVideo || onGenerateBackground) && (
           <div className={actionGridClass}>
             {onIllustrate && (
               <button
@@ -309,6 +347,39 @@ export function ChatGallery({
                 )}
                 <span className="min-w-0 truncate">{isIllustrating ? "Generating..." : "Illustrate"}</span>
               </button>
+            )}
+            {onGenerateSelfie && (
+              <div className="flex min-w-0 flex-col gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => void handleGenerateSelfie()}
+                  disabled={isIllustrating}
+                  aria-busy={isIllustrating}
+                  className="flex min-w-0 items-center justify-center gap-2 rounded-xl bg-[var(--primary)]/15 px-3 py-3 text-xs font-medium text-[var(--primary)] transition-all hover:bg-[var(--primary)]/25 disabled:cursor-wait disabled:opacity-75"
+                >
+                  {isIllustrating ? (
+                    <Loader2 size="1rem" className="shrink-0 animate-spin" />
+                  ) : (
+                    <Camera size="1rem" className="shrink-0" />
+                  )}
+                  <span className="min-w-0 truncate">{isIllustrating ? "Generating..." : "Selfie"}</span>
+                </button>
+                {selfieCharacters.length > 1 && (
+                  <select
+                    value={selectedSelfieCharacterId}
+                    onChange={(event) => setSelectedSelfieCharacterId(event.target.value)}
+                    disabled={isIllustrating}
+                    className="min-w-0 rounded-lg bg-[var(--secondary)] px-2 py-1.5 text-[0.6875rem] text-[var(--foreground)] outline-none ring-1 ring-[var(--border)] disabled:cursor-wait disabled:opacity-70"
+                    aria-label="Selfie character"
+                  >
+                    {selfieCharacters.map((character) => (
+                      <option key={character.id} value={character.id}>
+                        {character.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
             )}
             {onGenerateStoryboard && (
               <button

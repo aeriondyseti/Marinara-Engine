@@ -130,6 +130,12 @@ type CharacterVideoPlaybackState = {
   voiceKey: string;
   nonce: number;
 };
+type CallVideoReactionKind = Exclude<ConversationCallCharacterVideoClipKind, "idle" | "talking">;
+type CallTtsVideoChunk = {
+  text: string;
+  videoKind: ConversationCallCharacterVideoClipKind;
+  followKind?: "talking";
+};
 
 type ParticipantGridLayout = {
   columns: number;
@@ -248,32 +254,95 @@ function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-function splitCallTtsChunks(lines: string[]): string[] {
-  const chunks: string[] = [];
-  let current = "";
+function detectCallVideoCueKind(value: string | null | undefined): CallVideoReactionKind | null {
+  const searchable = value?.toLowerCase().replace(/[_-]+/g, " ") ?? "";
+  if (!searchable.trim()) return null;
+  if (/\b(laugh|laughs|laughing|laughter|chuckle|chuckles|chuckling|giggle|giggles|giggling)\b/.test(searchable)) {
+    return "laughing";
+  }
+  if (/\b(cry|cries|crying|sob|sobs|sobbing|tearful|tears|weeping)\b/.test(searchable)) return "crying";
+  if (/\b(angry|anger|furious|irritated|irritation|snarl|snarls|seething|growl|growls)\b/.test(searchable)) {
+    return "angry";
+  }
+  if (
+    /\b(sigh|sighs|sighing|exhale|exhales|exhaling|inhale|inhales|inhaling|deep breath|breathes? (?:in|out))\b/.test(
+      searchable,
+    )
+  ) {
+    return "sighing";
+  }
+  return null;
+}
+
+function splitCallTtsVideoChunkByLimit(chunk: CallTtsVideoChunk): CallTtsVideoChunk[] {
+  if (chunk.text.length <= CALL_TTS_MAX_REQUEST_CHARS) return [chunk];
+  const pieces: CallTtsVideoChunk[] = [];
+  for (let start = 0; start < chunk.text.length; start += CALL_TTS_MAX_REQUEST_CHARS) {
+    pieces.push({
+      ...chunk,
+      text: chunk.text.slice(start, start + CALL_TTS_MAX_REQUEST_CHARS),
+      followKind: undefined,
+    });
+  }
+  return pieces;
+}
+
+function pushCallTtsVideoChunk(
+  chunks: CallTtsVideoChunk[],
+  text: string,
+  videoKind: ConversationCallCharacterVideoClipKind,
+  followKind?: "talking",
+) {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  const chunk = { text: trimmed, videoKind, followKind };
+  chunks.push(...splitCallTtsVideoChunkByLimit(chunk));
+}
+
+function hasNonCueSpeech(text: string) {
+  return text.replace(/\[[^\]\r\n]+\]/g, "").trim().length > 0;
+}
+
+function buildCallTtsVideoChunks(lines: string[], tone: string): CallTtsVideoChunk[] {
+  const chunks: CallTtsVideoChunk[] = [];
+  const cuePattern = /\[[^\]\r\n]+\]/g;
+  let recognizedCueCount = 0;
+
   for (const rawLine of lines) {
     const line = rawLine.trim();
     if (!line) continue;
-    if (!current) {
-      current = line;
-      continue;
+    let cursor = 0;
+    for (const match of line.matchAll(cuePattern)) {
+      const cue = match[0] ?? "";
+      const cueStart = match.index ?? 0;
+      const reactionKind = detectCallVideoCueKind(cue);
+      if (!reactionKind) continue;
+
+      const beforeCue = line.slice(cursor, cueStart);
+      if (hasNonCueSpeech(beforeCue)) {
+        pushCallTtsVideoChunk(chunks, beforeCue, "talking");
+        pushCallTtsVideoChunk(chunks, cue, reactionKind, "talking");
+      } else {
+        pushCallTtsVideoChunk(chunks, `${beforeCue.trim()} ${cue}`.trim(), reactionKind, "talking");
+      }
+      recognizedCueCount += 1;
+      cursor = cueStart + cue.length;
     }
-    if (current.length + 1 + line.length <= CALL_TTS_MAX_REQUEST_CHARS) {
-      current = `${current}\n${line}`;
-      continue;
-    }
-    chunks.push(current);
-    current = line;
+    pushCallTtsVideoChunk(chunks, line.slice(cursor), "talking");
   }
-  if (current) chunks.push(current);
-  return chunks.flatMap((chunk) => {
-    if (chunk.length <= CALL_TTS_MAX_REQUEST_CHARS) return [chunk];
-    const pieces: string[] = [];
-    for (let start = 0; start < chunk.length; start += CALL_TTS_MAX_REQUEST_CHARS) {
-      pieces.push(chunk.slice(start, start + CALL_TTS_MAX_REQUEST_CHARS));
+
+  if (chunks.length === 0) return [];
+  if (recognizedCueCount === 0) {
+    const toneKind = detectCallVideoCueKind(tone);
+    if (toneKind) {
+      chunks[0] = { ...chunks[0], videoKind: toneKind, followKind: "talking" };
     }
-    return pieces;
-  });
+  }
+  return chunks;
+}
+
+function makeCallVideoCueKey(voiceKey: string, chunkIndex: number) {
+  return `${voiceKey}::video:${chunkIndex}`;
 }
 
 function getSystemVoiceTypingHint() {
@@ -407,22 +476,6 @@ function handleCallVideoTrimTimeUpdate(
     video.pause();
     options.onEnded?.();
   }
-}
-
-function detectCallVideoEmotionKind(
-  content: string,
-  tone: string | null | undefined,
-): Exclude<ConversationCallCharacterVideoClipKind, "idle" | "talking"> | null {
-  const bracketCues = content.match(/\[[^\]]+\]/g)?.join(" ") ?? "";
-  const searchable = `${bracketCues} ${tone ?? ""}`.toLowerCase();
-  if (!searchable.trim()) return null;
-  if (/\b(laugh|laughs|laughing|chuckle|chuckles|chuckling|giggle|giggles|giggling)\b/.test(searchable)) {
-    return "laughing";
-  }
-  if (/\b(cry|cries|crying|sob|sobs|sobbing|tearful|tears)\b/.test(searchable)) return "crying";
-  if (/\b(angry|anger|furious|irritated|irritation|snarl|snarls|seething)\b/.test(searchable)) return "angry";
-  if (/\b(sigh|sighs|sighing|exhale|exhales|exhaling)\b/.test(searchable)) return "sighing";
-  return null;
 }
 
 function readCallMessageAttachments(message: ConversationCallMessage): MessageAttachment[] {
@@ -1337,7 +1390,9 @@ export function ConversationCallSurface({
     if (!participantId) return;
     setCharacterVideoPlayback((current) => {
       const existing = current[participantId];
-      if (!existing || existing.voiceKey !== voiceKey) return current;
+      if (!existing || (existing.voiceKey !== voiceKey && !existing.voiceKey.startsWith(`${voiceKey}::video:`))) {
+        return current;
+      }
       const next = { ...current };
       delete next[participantId];
       return next;
@@ -1521,11 +1576,14 @@ export function ConversationCallSurface({
                 batchEndIndex += 1;
               }
 
-              const spokenText = voiceBatch.map((item) => item.turn.content.trim()).join("\n");
-              const spokenChunks = splitCallTtsChunks(voiceBatch.map((item) => item.turn.content));
               const tone = Array.from(
                 new Set(voiceBatch.map((item) => item.turn.tone?.trim()).filter((value): value is string => !!value)),
               ).join(", ");
+              const spokenText = voiceBatch.map((item) => item.turn.content.trim()).join("\n");
+              const spokenChunks = buildCallTtsVideoChunks(
+                voiceBatch.map((item) => item.turn.content),
+                tone,
+              );
               const voiceKey = [
                 session.id,
                 participant?.id ?? turn.speakerName,
@@ -1539,19 +1597,10 @@ export function ConversationCallSurface({
               };
               userInterruptionVoicedMsRef.current = 0;
               const participantId = participant?.id ?? null;
-              if (characterVideoEnabled && participantId) {
-                const emotionKind = detectCallVideoEmotionKind(spokenText, tone);
-                setParticipantVideoTalking(
-                  participantId,
-                  voiceKey,
-                  emotionKind ?? "talking",
-                  emotionKind ? "talking" : undefined,
-                );
-              }
               try {
                 await ttsService.speakSequence(
                   spokenChunks.map((chunk) => ({
-                    text: chunk,
+                    text: chunk.text,
                     speaker: turn.speakerName,
                     tone: tone || undefined,
                     voice,
@@ -1561,6 +1610,17 @@ export function ConversationCallSurface({
                     progressive: ttsConfig.progressivePlayback,
                     volume: characterVoicePlaybackVolume,
                     muted: characterVoicesMuted,
+                    onChunkStart: (_request, chunkIndex) => {
+                      if (!characterVideoEnabled || !participantId) return;
+                      const chunk = spokenChunks[chunkIndex];
+                      if (!chunk) return;
+                      setParticipantVideoTalking(
+                        participantId,
+                        makeCallVideoCueKey(voiceKey, chunkIndex),
+                        chunk.videoKind,
+                        chunk.followKind,
+                      );
+                    },
                   },
                 );
               } finally {

@@ -97,6 +97,7 @@ import {
   type ImageStyleProfileSettings,
   type VideoDefaultsService,
   type VideoGenerationDefaultsProfile,
+  type VideoReferenceUploadExpiry,
   type VideoResolution,
 } from "@marinara-engine/shared";
 
@@ -126,15 +127,49 @@ const DEFAULT_VIDEO_MODELS: Record<VideoDefaultsService, string> = {
   google_veo: "veo-3.1-generate-preview",
   xai: "grok-imagine-video-1.5",
   openrouter: "google/veo-3.1",
+  seedance: "seedance-2-0",
 };
 const VIDEO_RESOLUTION_OPTIONS: Array<{ value: VideoResolution; label: string }> = [
   { value: "480p", label: "480p" },
   { value: "720p", label: "720p" },
   { value: "1080p", label: "1080p" },
 ];
+const VIDEO_REFERENCE_UPLOAD_EXPIRY_OPTIONS: Array<{ value: VideoReferenceUploadExpiry; label: string }> = [
+  { value: "1h", label: "1 hour" },
+  { value: "12h", label: "12 hours" },
+  { value: "24h", label: "24 hours" },
+  { value: "72h", label: "72 hours" },
+];
 
 function videoSourceToDefaultsService(value: string | null | undefined): VideoDefaultsService {
-  return value === "xai" || value === "openrouter" || value === "google_veo" ? value : "gemini_omni";
+  return value === "xai" || value === "openrouter" || value === "seedance" || value === "google_veo"
+    ? value
+    : "gemini_omni";
+}
+
+function videoSelectionToDefaultsService(
+  value: string | null | undefined,
+  model = "",
+  baseUrl = "",
+): VideoDefaultsService {
+  const normalized = value?.trim();
+  if (normalized === "google_ai_studio") {
+    return videoSourceToDefaultsService(inferVideoSource(model, baseUrl));
+  }
+  return videoSourceToDefaultsService(normalized || inferVideoSource(model, baseUrl));
+}
+
+function videoSourceToProviderOption(value: string | null | undefined): string {
+  const service = videoSourceToDefaultsService(value);
+  return service === "gemini_omni" || service === "google_veo" ? "google_ai_studio" : service;
+}
+
+function videoProviderServiceForModel(provider: string | null | undefined, model = "", baseUrl = ""): VideoDefaultsService {
+  const normalized = provider?.trim();
+  if (normalized === "google_ai_studio") {
+    return videoSourceToDefaultsService(inferVideoSource(model, baseUrl));
+  }
+  return videoSourceToDefaultsService(normalized);
 }
 
 function defaultVideoModelForService(value: string | null | undefined): string {
@@ -329,24 +364,27 @@ export function ConnectionEditor() {
     const storedImageDefaults = defaultsService
       ? getStoredImageGenerationDefaults(c.defaultParameters, defaultsService)
       : null;
+    const explicitVideoService = ((c.videoService as string | null) ?? null) || null;
     const videoGenerationSource =
       (c.provider as APIProvider) === "video_generation"
         ? ((c.videoGenerationSource as string) ??
-          (c.videoService as string) ??
+          explicitVideoService ??
           inferVideoSource((c.model as string) ?? "", (c.baseUrl as string) ?? ""))
         : "";
-    const videoService = ((c.videoService as string | null) ?? (c.videoGenerationSource as string | null)) || null;
     const storedVideoDefaults =
       (c.provider as APIProvider) === "video_generation" ? getStoredVideoGenerationDefaults(c.defaultParameters) : null;
-    const videoDefaultsService = videoSourceToDefaultsService(
-      videoService || videoGenerationSource || storedVideoDefaults?.service,
+    const videoDefaultsService = videoSelectionToDefaultsService(
+      explicitVideoService || storedVideoDefaults?.service || videoGenerationSource,
+      (c.model as string) ?? "",
+      (c.baseUrl as string) ?? "",
     );
+    const videoProviderSource = videoSourceToProviderOption(videoGenerationSource || explicitVideoService || videoDefaultsService);
     setLocalImageGenerationSource(imageGenerationSource);
     setLocalComfyuiWorkflow((c.comfyuiWorkflow as string) ?? "");
     setLocalImageService(imageService);
     setLocalImageEndpointId((c.imageEndpointId as string) ?? "");
-    setLocalVideoGenerationSource(videoGenerationSource);
-    setLocalVideoService(videoService);
+    setLocalVideoGenerationSource(videoProviderSource);
+    setLocalVideoService(videoDefaultsService);
     setLocalMaxTokensOverride(typeof c.maxTokensOverride === "number" ? (c.maxTokensOverride as number) : null);
     setLocalClaudeFastMode(c.claudeFastMode === "true" || c.claudeFastMode === true);
     setLocalTreatAsLocalEndpoint(c.treatAsLocalEndpoint === "true" || c.treatAsLocalEndpoint === true);
@@ -428,7 +466,9 @@ export function ConnectionEditor() {
 
   const effectiveVideoGenerationSource = useMemo(() => {
     if (localProvider !== "video_generation") return "";
-    return localVideoGenerationSource || localVideoService || inferVideoSource(localModel, localBaseUrl);
+    return videoSourceToProviderOption(
+      localVideoGenerationSource || localVideoService || inferVideoSource(localModel, localBaseUrl),
+    );
   }, [localProvider, localVideoGenerationSource, localVideoService, localModel, localBaseUrl]);
 
   const selectedImageService =
@@ -440,12 +480,15 @@ export function ConnectionEditor() {
     localProvider === "video_generation"
       ? localVideoGenerationSource || localVideoService || effectiveVideoGenerationSource
       : "";
-  const selectedVideoDefaultsService = videoSourceToDefaultsService(selectedVideoService);
+  const selectedVideoProvider = videoSourceToProviderOption(selectedVideoService);
+  const selectedVideoDefaultsService = videoSelectionToDefaultsService(selectedVideoService, localModel, localBaseUrl);
   const apiKeyLink =
     localProvider === "video_generation" && selectedVideoDefaultsService === "xai"
       ? API_KEY_LINKS.xai
       : localProvider === "video_generation" && selectedVideoDefaultsService === "openrouter"
         ? API_KEY_LINKS.openrouter
+      : localProvider === "video_generation" && selectedVideoDefaultsService === "seedance"
+        ? { label: "Open Seedance API docs", url: "https://seedance2.ai/pl/api-docs" }
       : API_KEY_LINKS[localProvider];
 
   useEffect(() => {
@@ -583,8 +626,8 @@ export function ConnectionEditor() {
         isImageProvider && selectedImageService === "runpod_comfyui"
           ? localImageEndpointId || null
           : null,
-      videoGenerationSource: isVideoProvider ? localVideoGenerationSource || localVideoService || null : null,
-      videoService: isVideoProvider ? localVideoGenerationSource || localVideoService || null : null,
+      videoGenerationSource: isVideoProvider ? selectedVideoProvider || null : null,
+      videoService: isVideoProvider ? selectedVideoDefaultsService : null,
       maxTokensOverride: localMaxTokensOverride ?? null,
       claudeFastMode: localClaudeFastMode,
       treatAsLocalEndpoint: canTreatAsLocalEndpoint ? localTreatAsLocalEndpoint : false,
@@ -666,8 +709,6 @@ export function ConnectionEditor() {
     localComfyuiWorkflow,
     localImageService,
     localImageEndpointId,
-    localVideoGenerationSource,
-    localVideoService,
     localMaxTokensOverride,
     localClaudeFastMode,
     localTreatAsLocalEndpoint,
@@ -675,6 +716,7 @@ export function ConnectionEditor() {
     localDefaultParameters,
     selectedImageService,
     selectedImageDefaultsService,
+    selectedVideoProvider,
     selectedVideoDefaultsService,
     localImageDefaults,
     localVideoDefaults,
@@ -731,7 +773,8 @@ export function ConnectionEditor() {
           ? (localDefaultParameters as unknown as Record<string, unknown>)
           : null;
     const imageService = isImageProvider ? localImageGenerationSource || localImageService || null : null;
-    const videoService = isVideoProvider ? localVideoGenerationSource || localVideoService || null : null;
+    const videoProvider = isVideoProvider ? selectedVideoProvider || null : null;
+    const videoService = isVideoProvider ? selectedVideoDefaultsService : null;
     const canTreatAsLocalEndpoint = canProviderTreatAsLocalEndpoint(localProvider);
     const supportsDirectEmbeddings = providerSupportsDirectEmbeddingConfig(localProvider);
     const existingEmbeddingModel = (conn as { embeddingModel?: string | null } | undefined)?.embeddingModel ?? "";
@@ -757,7 +800,7 @@ export function ConnectionEditor() {
       openrouterProvider: localOpenrouterProvider || null,
       imageGenerationSource: imageService,
       imageService,
-      videoGenerationSource: videoService,
+      videoGenerationSource: videoProvider,
       videoService,
       imageEndpointId:
         isImageProvider && selectedImageService === "runpod_comfyui"
@@ -794,8 +837,7 @@ export function ConnectionEditor() {
     localOpenrouterProvider,
     localImageGenerationSource,
     localImageService,
-    localVideoGenerationSource,
-    localVideoService,
+    selectedVideoProvider,
     selectedImageService,
     localImageEndpointId,
     localComfyuiWorkflow,
@@ -969,23 +1011,40 @@ export function ConnectionEditor() {
     });
   }, [connectionDetailId, dirty, handleSave, fetchModels]);
 
-  const selectModel = useCallback((model: { id: string; context?: number; maxOutput?: number; isRemote?: boolean }) => {
-    setLocalModel(model.id);
-    if (model.context) setLocalMaxContext(Number(model.context));
-    if (model.isRemote && model.maxOutput) setLocalMaxTokensOverride(Number(model.maxOutput));
-    setShowModelDropdown(false);
-    setModelSearch("");
-    setDirty(true);
-  }, []);
+  const selectModel = useCallback(
+    (model: { id: string; context?: number; maxOutput?: number; isRemote?: boolean }) => {
+      setLocalModel(model.id);
+      if (localProvider === "video_generation") {
+        const provider = videoSourceToProviderOption(
+          localVideoGenerationSource || localVideoService || inferVideoSource(model.id, localBaseUrl),
+        );
+        setLocalVideoGenerationSource(provider);
+        setLocalVideoService(videoProviderServiceForModel(provider, model.id, localBaseUrl));
+      }
+      if (model.context) setLocalMaxContext(Number(model.context));
+      if (model.isRemote && model.maxOutput) setLocalMaxTokensOverride(Number(model.maxOutput));
+      setShowModelDropdown(false);
+      setModelSearch("");
+      setDirty(true);
+    },
+    [localBaseUrl, localProvider, localVideoGenerationSource, localVideoService],
+  );
 
   const markDirty = useCallback(() => setDirty(true), []);
 
   const handleManualModelChange = useCallback(
     (model: string) => {
       setLocalModel(model);
+      if (localProvider === "video_generation") {
+        const provider = videoSourceToProviderOption(
+          localVideoGenerationSource || localVideoService || inferVideoSource(model, localBaseUrl),
+        );
+        setLocalVideoGenerationSource(provider);
+        setLocalVideoService(videoProviderServiceForModel(provider, model, localBaseUrl));
+      }
       markDirty();
     },
-    [markDirty],
+    [localBaseUrl, localProvider, localVideoGenerationSource, localVideoService, markDirty],
   );
 
   const handleJumpToJsonError = useCallback(() => {
@@ -1496,21 +1555,21 @@ export function ConnectionEditor() {
             >
               <div className="grid grid-cols-2 gap-1.5">
                 {VIDEO_GENERATION_SOURCES.map((src) => {
-                  const isActive = selectedVideoService === src.id;
+                  const isActive = selectedVideoProvider === src.id;
                   return (
                     <button
                       key={src.id}
                       onClick={() => {
                         const previousSource = VIDEO_GENERATION_SOURCES.find(
-                          (candidate) => candidate.id === selectedVideoService,
+                          (candidate) => candidate.id === selectedVideoProvider,
                         );
                         const shouldSeedBaseUrl = !localBaseUrl || localBaseUrl === previousSource?.defaultBaseUrl;
-                        const previousDefaultModel = defaultVideoModelForService(selectedVideoService);
+                        const previousDefaultModel = defaultVideoModelForService(selectedVideoDefaultsService);
                         const nextDefaultModel = defaultVideoModelForService(src.id);
                         const shouldSeedModel = !localModel || localModel === previousDefaultModel;
-                        const nextDefaultsService = videoSourceToDefaultsService(src.id);
+                        const nextDefaultsService = videoProviderServiceForModel(src.id, nextDefaultModel, src.defaultBaseUrl);
                         setLocalVideoGenerationSource(src.id);
-                        setLocalVideoService(src.id);
+                        setLocalVideoService(nextDefaultsService);
                         setLocalVideoDefaults(createDefaultVideoGenerationProfile(nextDefaultsService));
                         if (shouldSeedBaseUrl) {
                           setLocalBaseUrl(src.defaultBaseUrl);
@@ -2152,6 +2211,66 @@ export function ConnectionEditor() {
                 Only one video generation connection should be marked as the default video connection.
               </p>
             )}
+            {isVideoGenerationProvider &&
+              selectedVideoDefaultsService === "seedance" &&
+              localVideoDefaults && (
+                <div className="mx-2 mt-2 space-y-2 rounded-lg bg-[var(--secondary)]/35 p-2 ring-1 ring-[var(--border)]">
+                  <SettingsSwitch
+                    label="Upload Seedance reference frames temporarily"
+                    checked={localVideoDefaults.seedance.temporaryPublicReferenceUploadEnabled}
+                    onChange={(checked) => {
+                      setLocalVideoDefaults(
+                        sanitizeVideoGenerationProfile({
+                          ...localVideoDefaults,
+                          service: "seedance",
+                          seedance: {
+                            ...localVideoDefaults.seedance,
+                            temporaryPublicReferenceUploadEnabled: checked,
+                          },
+                        }),
+                      );
+                      markDirty();
+                    }}
+                    description="Uses temporary public links when Seedance needs first/last-frame references and cannot fetch local Marinara URLs."
+                    className="p-1"
+                  />
+                  {localVideoDefaults.seedance.temporaryPublicReferenceUploadEnabled && (
+                    <label className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-[var(--card)]/70 px-2 py-1.5 ring-1 ring-[var(--border)]">
+                      <span className="text-[0.625rem] font-medium text-[var(--muted-foreground)]">
+                        Temporary link lifetime
+                      </span>
+                      <select
+                        value={localVideoDefaults.seedance.temporaryPublicReferenceUploadExpiry}
+                        onChange={(event) => {
+                          const expiry = event.target.value as VideoReferenceUploadExpiry;
+                          setLocalVideoDefaults(
+                            sanitizeVideoGenerationProfile({
+                              ...localVideoDefaults,
+                              service: "seedance",
+                              seedance: {
+                                ...localVideoDefaults.seedance,
+                                temporaryPublicReferenceUploadExpiry: expiry,
+                              },
+                            }),
+                          );
+                          markDirty();
+                        }}
+                        className="h-8 rounded-md bg-[var(--background)] px-2 text-xs ring-1 ring-[var(--border)] focus:outline-none focus:ring-sky-400/50"
+                      >
+                        {VIDEO_REFERENCE_UPLOAD_EXPIRY_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  <p className="px-1 text-[0.55rem] leading-relaxed text-[var(--muted-foreground)]">
+                    Keep this off if you do not want local avatar or gallery reference frames uploaded outside this
+                    Marinara install.
+                  </p>
+                </div>
+              )}
           </FieldGroup>
 
           {/* ── Claude (Subscription) — Fast Mode toggle ── */}
@@ -3048,7 +3167,10 @@ function VideoGenerationDefaultsPanel({
   onReset: () => void;
 }) {
   const service =
-    value.service === "xai" || value.service === "openrouter" || value.service === "google_veo"
+    value.service === "xai" ||
+    value.service === "openrouter" ||
+    value.service === "seedance" ||
+    value.service === "google_veo"
       ? value.service
       : "gemini_omni";
   const summary =
@@ -3058,6 +3180,8 @@ function VideoGenerationDefaultsPanel({
         ? `${value.googleVeo.durationSeconds}s, ${value.googleVeo.aspectRatio}, ${value.googleVeo.resolution}`
       : service === "openrouter"
         ? `${value.openrouter.durationSeconds}s, ${value.openrouter.aspectRatio}, ${value.openrouter.resolution}`
+      : service === "seedance"
+        ? `${value.seedance.durationSeconds}s, ${value.seedance.aspectRatio}, ${value.seedance.resolution}`
       : `${value.geminiOmni.durationSeconds}s, ${value.geminiOmni.aspectRatio}`;
   const serviceLabel =
     service === "xai"
@@ -3066,7 +3190,9 @@ function VideoGenerationDefaultsPanel({
         ? "Google AI Studio Veo"
         : service === "openrouter"
           ? "OpenRouter Video"
-          : "Gemini Omni";
+        : service === "seedance"
+          ? "Seedance 2.0"
+          : "Google AI Studio Gemini Omni";
 
   const updateGeminiOmni = (patch: Partial<VideoGenerationDefaultsProfile["geminiOmni"]>) => {
     onChange({
@@ -3096,6 +3222,13 @@ function VideoGenerationDefaultsPanel({
       openrouter: { ...value.openrouter, ...patch },
     });
   };
+  const updateSeedance = (patch: Partial<VideoGenerationDefaultsProfile["seedance"]>) => {
+    onChange({
+      ...value,
+      service: "seedance",
+      seedance: { ...value.seedance, ...patch },
+    });
+  };
 
   return (
     <FieldGroup
@@ -3108,6 +3241,8 @@ function VideoGenerationDefaultsPanel({
             ? "Connection-scoped defaults for Google AI Studio Veo video generation."
           : service === "openrouter"
             ? "Connection-scoped defaults for OpenRouter asynchronous video generation."
+          : service === "seedance"
+            ? "Connection-scoped defaults for Seedance 2.0 asynchronous video generation."
           : "Connection-scoped defaults for scene video generation. Duration is rendered into the Omni prompt."
       }
     >
@@ -3142,7 +3277,7 @@ function VideoGenerationDefaultsPanel({
               </button>
             </div>
 
-            {service === "xai" || service === "google_veo" || service === "openrouter" ? (
+            {service === "xai" || service === "google_veo" || service === "openrouter" || service === "seedance" ? (
               <>
                 <div className="grid gap-2 sm:grid-cols-3">
                   <NumberSetting
@@ -3152,14 +3287,18 @@ function VideoGenerationDefaultsPanel({
                         ? value.xai.durationSeconds
                         : service === "google_veo"
                           ? value.googleVeo.durationSeconds
+                        : service === "seedance"
+                          ? value.seedance.durationSeconds
                           : value.openrouter.durationSeconds
                     }
-                    min={service === "google_veo" ? 4 : 1}
-                    max={service === "xai" ? 15 : service === "google_veo" ? 8 : 60}
+                    min={service === "google_veo" || service === "seedance" ? 4 : 1}
+                    max={service === "xai" || service === "seedance" ? 15 : service === "google_veo" ? 8 : 60}
                     onCommit={(durationSeconds) => {
                       if (service === "xai") updateXai({ durationSeconds });
                       else if (service === "google_veo") {
                         updateGoogleVeo({ durationSeconds: durationSeconds <= 5 ? 4 : durationSeconds <= 7 ? 6 : 8 });
+                      } else if (service === "seedance") {
+                        updateSeedance({ durationSeconds });
                       } else updateOpenRouter({ durationSeconds });
                     }}
                   />
@@ -3171,12 +3310,15 @@ function VideoGenerationDefaultsPanel({
                           ? value.xai.aspectRatio
                           : service === "google_veo"
                             ? value.googleVeo.aspectRatio
+                          : service === "seedance"
+                            ? value.seedance.aspectRatio
                             : value.openrouter.aspectRatio
                       }
                       onChange={(event) => {
                         const aspectRatio = event.target.value === "9:16" ? "9:16" : "16:9";
                         if (service === "xai") updateXai({ aspectRatio });
                         else if (service === "google_veo") updateGoogleVeo({ aspectRatio });
+                        else if (service === "seedance") updateSeedance({ aspectRatio });
                         else updateOpenRouter({ aspectRatio });
                       }}
                       className="mt-1 w-full rounded-lg bg-[var(--card)] px-3 py-2 text-xs ring-1 ring-[var(--border)] focus:outline-none focus:ring-sky-400/50"
@@ -3193,12 +3335,15 @@ function VideoGenerationDefaultsPanel({
                           ? value.xai.resolution
                           : service === "google_veo"
                             ? value.googleVeo.resolution
+                          : service === "seedance"
+                            ? value.seedance.resolution
                             : value.openrouter.resolution
                       }
                       onChange={(event) => {
                         const resolution = event.target.value as VideoResolution;
                         if (service === "xai") updateXai({ resolution });
                         else if (service === "google_veo") updateGoogleVeo({ resolution });
+                        else if (service === "seedance") updateSeedance({ resolution });
                         else updateOpenRouter({ resolution });
                       }}
                       className="mt-1 w-full rounded-lg bg-[var(--card)] px-3 py-2 text-xs ring-1 ring-[var(--border)] focus:outline-none focus:ring-sky-400/50"
@@ -3216,6 +3361,8 @@ function VideoGenerationDefaultsPanel({
                     ? "These values are sent to the xAI Videos API. xAI accepts 1-15 seconds for generated videos."
                     : service === "google_veo"
                       ? "Veo accepts 4, 6, or 8 seconds. Character loop references use the avatar as the first and last frame and run at 8 seconds."
+                    : service === "seedance"
+                      ? "Seedance accepts 4-15 seconds. Reference-image jobs send matching first and last frames when the provider can fetch the reference URL."
                       : "These values are sent to OpenRouter's asynchronous Videos API. OpenRouter model support varies, so keep the model's own limits in mind."}
                 </p>
               </>

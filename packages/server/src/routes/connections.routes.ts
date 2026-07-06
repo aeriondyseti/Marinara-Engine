@@ -43,6 +43,8 @@ const DEFAULT_XAI_VIDEO_MODEL = "grok-imagine-video-1.5";
 const DEFAULT_XAI_VIDEO_BASE_URL = "https://api.x.ai/v1";
 const DEFAULT_OPENROUTER_VIDEO_MODEL = "google/veo-3.1";
 const DEFAULT_OPENROUTER_VIDEO_BASE_URL = "https://openrouter.ai/api/v1";
+const DEFAULT_SEEDANCE_VIDEO_MODEL = "seedance-2-0";
+const DEFAULT_SEEDANCE_VIDEO_BASE_URL = "https://api.seedance2.ai";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -919,10 +921,15 @@ export async function connectionsRoutes(app: FastifyInstance) {
     const explicitVideoSource = conn.videoGenerationSource || conn.videoService || "";
     const videoSource =
       explicitVideoSource || (inferredVideoSource !== "gemini_omni" ? inferredVideoSource : defaults.service);
-    const videoServiceHint = conn.videoService || videoSource;
+    const rawVideoServiceHint = conn.videoService || videoSource;
+    const videoServiceHint =
+      rawVideoServiceHint === "google_ai_studio"
+        ? inferVideoSource(conn.model || "", conn.baseUrl || "")
+        : rawVideoServiceHint;
     const isXaiVideo = videoSource === "xai" || videoServiceHint === "xai";
     const isGoogleVeoVideo = videoSource === "google_veo" || videoServiceHint === "google_veo";
     const isOpenRouterVideo = videoSource === "openrouter" || videoServiceHint === "openrouter";
+    const isSeedanceVideo = videoSource === "seedance" || videoServiceHint === "seedance";
     const baseUrl = (
       conn.baseUrl ||
       (isXaiVideo
@@ -931,6 +938,8 @@ export async function connectionsRoutes(app: FastifyInstance) {
           ? DEFAULT_GOOGLE_VEO_VIDEO_BASE_URL
         : isOpenRouterVideo
           ? DEFAULT_OPENROUTER_VIDEO_BASE_URL
+        : isSeedanceVideo
+          ? DEFAULT_SEEDANCE_VIDEO_BASE_URL
           : providerDef?.defaultBaseUrl || DEFAULT_GEMINI_OMNI_VIDEO_BASE_URL)
     ).replace(/\/+$/, "");
     const videoModel =
@@ -941,6 +950,8 @@ export async function connectionsRoutes(app: FastifyInstance) {
           ? DEFAULT_GOOGLE_VEO_VIDEO_MODEL
         : isOpenRouterVideo
           ? DEFAULT_OPENROUTER_VIDEO_MODEL
+        : isSeedanceVideo
+          ? DEFAULT_SEEDANCE_VIDEO_MODEL
           : DEFAULT_GEMINI_OMNI_VIDEO_MODEL);
     const activeDefaults = isXaiVideo
       ? defaults.xai
@@ -948,6 +959,8 @@ export async function connectionsRoutes(app: FastifyInstance) {
         ? defaults.googleVeo
         : isOpenRouterVideo
           ? defaults.openrouter
+        : isSeedanceVideo
+          ? defaults.seedance
           : defaults.geminiOmni;
 
     const prompt =
@@ -965,9 +978,11 @@ export async function connectionsRoutes(app: FastifyInstance) {
           ? defaults.xai.resolution
           : isGoogleVeoVideo
             ? defaults.googleVeo.resolution
-            : isOpenRouterVideo
-              ? defaults.openrouter.resolution
-              : undefined,
+          : isOpenRouterVideo
+            ? defaults.openrouter.resolution
+          : isSeedanceVideo
+            ? defaults.seedance.resolution
+            : undefined,
       });
       return {
         success: true,
