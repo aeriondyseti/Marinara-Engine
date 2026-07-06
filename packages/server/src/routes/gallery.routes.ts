@@ -25,7 +25,7 @@ import { createConnectionsStorage } from "../services/storage/connections.storag
 import { createGameSceneVideosStorage } from "../services/storage/game-scene-videos.storage.js";
 import { createPromptOverridesStorage } from "../services/storage/prompt-overrides.storage.js";
 import { createAppSettingsStorage } from "../services/storage/app-settings.storage.js";
-import { GAME_VIDEO, loadPrompt } from "../services/prompt-overrides/index.js";
+import { loadGameVideoPrompt } from "../services/video/game-video-prompt.js";
 import {
   generateVideo,
   removeSavedVideoFromDisk,
@@ -284,7 +284,7 @@ function buildRoleplayVideoSettingLine(chat: ChatRow, meta: Record<string, unkno
     chat.name,
   ].filter((part): part is string => Boolean(part));
   const setting = Array.from(new Set(parts.map((part) => compactVideoPromptText(part, maxPartLength)).filter(Boolean)));
-  return setting.length ? `Setting: ${setting.join("; ")}.` : "Setting: Current roleplay scene.";
+  return setting.length ? setting.join("; ") : "Current roleplay scene";
 }
 
 function parseDefaultParametersRoot(raw: unknown): Record<string, unknown> {
@@ -760,20 +760,24 @@ export async function galleryRoutes(app: FastifyInstance) {
 
     const messages = await chats.listMessages(input.chatId);
     const characterNames = await collectChatSceneCharacterNames(chat);
-    const promptDraft = await loadPrompt(promptOverridesStorage, GAME_VIDEO, {
-      sceneTitle: compactVideoPromptText(sceneTitleFromGalleryImage(galleryImage), promptLimits.title),
-      narrationSummary: latestNarrationSummary(messages, promptLimits.narrationSummary),
-      illustrationPrompt:
-        excerptIllustrationPromptForVideo(galleryImage.prompt, promptLimits.illustrationPrompt) ||
-        "Use the supplied first-frame gallery image as the visual source.",
-      charactersLine: characterNames.length
-        ? `Characters: ${characterNames.join(", ")}.`
-        : "Characters: preserve any visible characters from the supplied image.",
-      settingLine: buildRoleplayVideoSettingLine(chat, meta, promptLimits.artStyle),
-      artStyleLine: "Art style: match the supplied gallery image.",
-      durationSeconds,
-      aspectRatio,
-      sourceIllustrationLine: `Use the selected gallery image (${galleryImage.id}) as the first frame/reference image.`,
+    const promptDraft = await loadGameVideoPrompt({
+      promptOverridesStorage,
+      meta,
+      ctx: {
+        sceneTitle: compactVideoPromptText(sceneTitleFromGalleryImage(galleryImage), promptLimits.title),
+        narrationSummary: latestNarrationSummary(messages, promptLimits.narrationSummary),
+        illustrationPrompt:
+          excerptIllustrationPromptForVideo(galleryImage.prompt, promptLimits.illustrationPrompt) ||
+          "Use the supplied first-frame gallery image as the visual source.",
+        charactersLine: characterNames.length
+          ? characterNames.join(", ")
+          : "preserve any visible characters from the supplied image",
+        settingLine: buildRoleplayVideoSettingLine(chat, meta, promptLimits.artStyle),
+        artStyleLine: "match the supplied gallery image",
+        durationSeconds,
+        aspectRatio,
+        sourceIllustrationLine: `Use the selected gallery image (${galleryImage.id}) as the first frame/reference image.`,
+      },
     });
     const prompt = limitSceneVideoPromptForProvider(promptDraft, promptLimits.finalPrompt);
 
