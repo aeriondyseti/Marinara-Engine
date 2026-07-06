@@ -55,6 +55,7 @@ export const characterKeys = {
   galleryClips: (id: string) => [...characterKeys.all, "gallery", id, "clips"] as const,
   personaGallery: (id: string) => ["persona-gallery", id] as const,
   personaGalleryClips: (id: string) => ["persona-gallery", id, "clips"] as const,
+  personaCallVideos: (id: string) => ["conversation-calls", "persona-videos", id] as const,
   personas: ["personas"] as const,
   personaActive: () => [...characterKeys.personas, "active"] as const,
   personaDetail: (id: string) => [...characterKeys.personas, "detail", id] as const,
@@ -137,11 +138,13 @@ export function flattenCharacterPages(data: { pages?: Array<PaginatedList<Record
   return flattenPaginatedItems(data?.pages);
 }
 
-export function fetchAllCharacterPages(options: {
-  includeBuiltIn?: boolean;
-  search?: string;
-  sort?: string;
-} = {}) {
+export function fetchAllCharacterPages(
+  options: {
+    includeBuiltIn?: boolean;
+    search?: string;
+    sort?: string;
+  } = {},
+) {
   const includeBuiltIn = options.includeBuiltIn === true;
   const search = (options.search ?? "").trim();
   const sort = options.sort ?? "";
@@ -373,7 +376,7 @@ export interface CharacterGalleryImage {
 
 export interface CharacterGalleryClip {
   id: string;
-  source: "conversation-call" | "conversation-call-custom" | "game-scene" | "scene-video";
+  source: "conversation-call" | "conversation-call-custom" | "game-scene" | "scene-video" | "uploaded-video";
   label: string;
   prompt: string;
   status: "ready" | "generating" | "error" | "missing";
@@ -401,6 +404,18 @@ export type CharacterGalleryClipUploadInput = {
   file: File;
   label?: string | null;
   kind?: string | null;
+};
+
+export type CharacterCallVideoGenerationInput = {
+  clipKind?: string | null;
+  clipKinds?: string[] | null;
+  clipCount?: number | null;
+  connectionId?: string | null;
+  includeAvatarReference?: boolean;
+  customClip?: {
+    label: string;
+    prompt: string;
+  } | null;
 };
 
 export const spriteKeys = {
@@ -517,10 +532,14 @@ export function useCharacterGalleryClips(characterId: string | null) {
 export function useGenerateCharacterCallVideoClips(characterId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input?: { clipKind?: string | null }) =>
+    mutationFn: (input?: CharacterCallVideoGenerationInput) =>
       api.post(`/conversation-calls/character-videos/${characterId}/generate`, {
         debugMode: useUIStore.getState().debugMode,
         ...(input?.clipKind ? { clipKind: input.clipKind } : {}),
+        ...(input?.clipKinds?.length ? { clipKinds: input.clipKinds } : {}),
+        ...(input?.clipCount ? { clipCount: input.clipCount } : {}),
+        ...(input?.connectionId ? { connectionId: input.connectionId } : {}),
+        ...(input?.includeAvatarReference === false ? { includeAvatarReference: false } : {}),
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: characterKeys.galleryClips(characterId) });
@@ -529,10 +548,74 @@ export function useGenerateCharacterCallVideoClips(characterId: string) {
   });
 }
 
+export function useGenerateCharacterCustomCallVideoClip(characterId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CharacterCallVideoGenerationInput) => {
+      if (!input.customClip?.label.trim() || !input.customClip.prompt.trim()) {
+        throw new Error("Custom clips need a name and action.");
+      }
+      return api.post(`/conversation-calls/character-videos/${characterId}/custom/generate`, {
+        debugMode: useUIStore.getState().debugMode,
+        label: input.customClip.label.trim(),
+        prompt: input.customClip.prompt.trim(),
+        ...(input.connectionId ? { connectionId: input.connectionId } : {}),
+        ...(input.includeAvatarReference === false ? { includeAvatarReference: false } : {}),
+      });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: characterKeys.galleryClips(characterId) });
+      qc.invalidateQueries({ queryKey: ["conversation-calls", "character-videos", characterId] });
+    },
+  });
+}
+
+export function useGeneratePersonaCallVideoClips(personaId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input?: CharacterCallVideoGenerationInput) =>
+      api.post(`/conversation-calls/persona-videos/${personaId}/generate`, {
+        debugMode: useUIStore.getState().debugMode,
+        ...(input?.clipKind ? { clipKind: input.clipKind } : {}),
+        ...(input?.clipKinds?.length ? { clipKinds: input.clipKinds } : {}),
+        ...(input?.clipCount ? { clipCount: input.clipCount } : {}),
+        ...(input?.connectionId ? { connectionId: input.connectionId } : {}),
+        ...(input?.includeAvatarReference === false ? { includeAvatarReference: false } : {}),
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: characterKeys.personaGalleryClips(personaId) });
+      qc.invalidateQueries({ queryKey: characterKeys.personaCallVideos(personaId) });
+    },
+  });
+}
+
+export function useGeneratePersonaCustomCallVideoClip(personaId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CharacterCallVideoGenerationInput) => {
+      if (!input.customClip?.label.trim() || !input.customClip.prompt.trim()) {
+        throw new Error("Custom clips need a name and action.");
+      }
+      return api.post(`/conversation-calls/persona-videos/${personaId}/custom/generate`, {
+        debugMode: useUIStore.getState().debugMode,
+        label: input.customClip.label.trim(),
+        prompt: input.customClip.prompt.trim(),
+        ...(input.connectionId ? { connectionId: input.connectionId } : {}),
+        ...(input.includeAvatarReference === false ? { includeAvatarReference: false } : {}),
+      });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: characterKeys.personaGalleryClips(personaId) });
+      qc.invalidateQueries({ queryKey: characterKeys.personaCallVideos(personaId) });
+    },
+  });
+}
+
 export function useDeleteCharacterGalleryClip(characterId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (clipId: string) => api.delete(`/characters/${characterId}/gallery/clips/${encodeURIComponent(clipId)}`),
+    mutationFn: (clipId: string) =>
+      api.delete(`/characters/${characterId}/gallery/clips/${encodeURIComponent(clipId)}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: characterKeys.galleryClips(characterId) });
       qc.invalidateQueries({ queryKey: ["conversation-calls", "character-videos", characterId] });
@@ -576,6 +659,21 @@ export function useUploadCharacterGalleryClip(characterId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: characterKeys.galleryClips(characterId) });
       qc.invalidateQueries({ queryKey: ["conversation-calls", "character-videos", characterId] });
+    },
+  });
+}
+
+export function useUploadCharacterGalleryVideo(characterId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ file, label }: CharacterGalleryClipUploadInput) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      if (label?.trim()) formData.append("label", label.trim());
+      return api.upload<CharacterGalleryClip>(`/characters/${characterId}/gallery/videos/upload`, formData);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: characterKeys.galleryClips(characterId) });
     },
   });
 }
@@ -705,11 +803,31 @@ export function useUpdatePersonaGalleryClipTrim(personaId: string) {
 export function useUploadPersonaGalleryClip(personaId: string) {
   const qc = useQueryClient();
   return useMutation({
+    mutationFn: ({ file, label, kind }: CharacterGalleryClipUploadInput) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      if (label?.trim()) formData.append("label", label.trim());
+      if (kind?.trim()) formData.append("kind", kind.trim());
+      return api.upload<CharacterGalleryClipsResponse>(
+        `/characters/personas/${personaId}/gallery/clips/upload`,
+        formData,
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: characterKeys.personaGalleryClips(personaId) });
+      qc.invalidateQueries({ queryKey: characterKeys.personaCallVideos(personaId) });
+    },
+  });
+}
+
+export function useUploadPersonaGalleryVideo(personaId: string) {
+  const qc = useQueryClient();
+  return useMutation({
     mutationFn: ({ file, label }: CharacterGalleryClipUploadInput) => {
       const formData = new FormData();
       formData.append("file", file);
       if (label?.trim()) formData.append("label", label.trim());
-      return api.upload<CharacterGalleryClipsResponse>(`/characters/personas/${personaId}/gallery/clips/upload`, formData);
+      return api.upload<CharacterGalleryClip>(`/characters/personas/${personaId}/gallery/videos/upload`, formData);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: characterKeys.personaGalleryClips(personaId) });

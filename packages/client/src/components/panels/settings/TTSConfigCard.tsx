@@ -343,8 +343,8 @@ export function TTSConfigCard() {
   const [callAudioInputMode, setCallAudioInputMode] = useState<TTSConversationCallAudioInputMode>("local_whisper");
   const [callVideoInputEnabled, setCallVideoInputEnabled] = useState(false);
   const [callCharacterVideoEnabled, setCallCharacterVideoEnabled] = useState(false);
+  const [callAutomaticVideoClipsEnabled, setCallAutomaticVideoClipsEnabled] = useState(false);
   const [callCustomVideoClipsEnabled, setCallCustomVideoClipsEnabled] = useState(false);
-  const [callSoundboardEnabled, setCallSoundboardEnabled] = useState(true);
 
   const [expanded, setExpanded] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -395,8 +395,8 @@ export function TTSConfigCard() {
     setCallAudioInputMode(savedConfig.callAudioInputMode ?? "local_whisper");
     setCallVideoInputEnabled(savedConfig.callVideoInputEnabled ?? false);
     setCallCharacterVideoEnabled(savedConfig.callCharacterVideoEnabled ?? false);
+    setCallAutomaticVideoClipsEnabled(savedConfig.callAutomaticVideoClipsEnabled ?? false);
     setCallCustomVideoClipsEnabled(savedConfig.callCustomVideoClipsEnabled ?? false);
-    setCallSoundboardEnabled(savedConfig.callSoundboardEnabled ?? true);
     setSaveStatus("idle");
   }, [savedConfig]);
 
@@ -452,8 +452,10 @@ export function TTSConfigCard() {
     callAudioInputMode,
     callVideoInputEnabled,
     callCharacterVideoEnabled,
+    callAutomaticVideoClipsEnabled,
     callCustomVideoClipsEnabled,
-    callSoundboardEnabled,
+    // Soundboard is intentionally always-on for Conversation Calls. Saving this card also migrates old false values.
+    callSoundboardEnabled: true,
     ...overrides,
   });
 

@@ -1246,6 +1246,7 @@ async function buildStoryboardGalleryAnimatePrompt(args: {
   meta: Record<string, unknown>;
   artStyle: string;
   promptLimits: SceneVideoPromptLimits;
+  debugMode?: boolean;
 }): Promise<string> {
   const sourceDescription = `storyboard keyframe ${args.frameIndex + 1} (${args.galleryImage.id})`;
   const narrationSummary =
@@ -1259,6 +1260,7 @@ async function buildStoryboardGalleryAnimatePrompt(args: {
   const promptDraft = await loadGameVideoPrompt({
     promptOverridesStorage: args.promptOverridesStorage,
     meta: args.meta,
+    debugMode: args.debugMode,
     ctx: {
       sceneTitle: compactVideoPromptText(
         args.plannedFrame.title || sceneTitleFromGalleryImage(args.galleryImage),
@@ -9594,7 +9596,7 @@ export async function gameRoutes(app: FastifyInstance) {
       const sourceSections = normalizeStoryboardSections(input.sections, sourceNarration);
 
       const meta = parseMeta(chat.metadata);
-      const generateStoryboardVideos = input.generateVideos ?? (meta.gameStoryboardAutoGenerationEnabled === true);
+      const generateStoryboardVideos = input.generateVideos ?? meta.gameStoryboardAutoGenerationEnabled === true;
       const enableGen = !!meta.enableSpriteGeneration;
       const imgConnId = await resolveGameImageConnectionId(meta, agents);
       if (!enableGen || !imgConnId) {
@@ -9804,9 +9806,11 @@ export async function gameRoutes(app: FastifyInstance) {
             (videoDefaults.service !== "gemini_omni"
               ? videoDefaults.service
               : inferVideoSource(videoConn.model || "", videoConn.baseUrl || ""));
+          const rawServiceHint = videoConn.videoService || source;
           const serviceHint =
-            videoConn.videoService ||
-            (source === "google_ai_studio" ? inferVideoSource(videoConn.model || "", videoConn.baseUrl || "") : source);
+            rawServiceHint === "google_ai_studio"
+              ? inferVideoSource(videoConn.model || "", videoConn.baseUrl || "")
+              : rawServiceHint;
           const isXaiVideo = source === "xai" || serviceHint === "xai";
           const isGoogleVeoVideo = source === "google_veo" || serviceHint === "google_veo";
           const isOpenRouterVideo = source === "openrouter" || serviceHint === "openrouter";
@@ -9823,9 +9827,9 @@ export async function gameRoutes(app: FastifyInstance) {
                   ? DEFAULT_GOOGLE_VEO_BASE_URL
                   : isOpenRouterVideo
                     ? DEFAULT_OPENROUTER_VIDEO_BASE_URL
-                  : isSeedanceVideo
-                    ? DEFAULT_SEEDANCE_VIDEO_BASE_URL
-                    : DEFAULT_GEMINI_OMNI_BASE_URL),
+                    : isSeedanceVideo
+                      ? DEFAULT_SEEDANCE_VIDEO_BASE_URL
+                      : DEFAULT_GEMINI_OMNI_BASE_URL),
             apiKey: videoConn.apiKey || "",
             model:
               videoConn.model ||
@@ -9835,18 +9839,18 @@ export async function gameRoutes(app: FastifyInstance) {
                   ? DEFAULT_GOOGLE_VEO_MODEL
                   : isOpenRouterVideo
                     ? DEFAULT_OPENROUTER_VIDEO_MODEL
-                  : isSeedanceVideo
-                    ? DEFAULT_SEEDANCE_VIDEO_MODEL
-                    : DEFAULT_GEMINI_OMNI_MODEL),
+                    : isSeedanceVideo
+                      ? DEFAULT_SEEDANCE_VIDEO_MODEL
+                      : DEFAULT_GEMINI_OMNI_MODEL),
             resolution: isXaiVideo
               ? videoDefaults.xai.resolution
               : isGoogleVeoVideo
                 ? videoDefaults.googleVeo.resolution
                 : isOpenRouterVideo
-                ? videoDefaults.openrouter.resolution
-                : isSeedanceVideo
-                ? videoDefaults.seedance.resolution
-                : undefined,
+                  ? videoDefaults.openrouter.resolution
+                  : isSeedanceVideo
+                    ? videoDefaults.seedance.resolution
+                    : undefined,
             maxDurationSeconds: isXaiVideo || isSeedanceVideo ? 15 : isGoogleVeoVideo ? 8 : 60,
             promptLimits,
             publicReferenceUpload: resolveVideoReferencePublicUploadOptions(isSeedanceVideo, videoDefaults.seedance),
@@ -9962,6 +9966,7 @@ export async function gameRoutes(app: FastifyInstance) {
                 meta,
                 artStyle,
                 promptLimits: videoRuntime.promptLimits,
+                debugMode: requestDebug,
               });
               await storyboards.updateKeyframe(frame.id, { videoPrompt: prompt });
               if (debugLogsEnabled) {
@@ -10235,9 +10240,11 @@ export async function gameRoutes(app: FastifyInstance) {
       (videoDefaults.service !== "gemini_omni"
         ? videoDefaults.service
         : inferVideoSource(videoConn.model || "", videoConn.baseUrl || ""));
+    const rawServiceHint = videoConn.videoService || source;
     const serviceHint =
-      videoConn.videoService ||
-      (source === "google_ai_studio" ? inferVideoSource(videoConn.model || "", videoConn.baseUrl || "") : source);
+      rawServiceHint === "google_ai_studio"
+        ? inferVideoSource(videoConn.model || "", videoConn.baseUrl || "")
+        : rawServiceHint;
     const isXaiVideo = source === "xai" || serviceHint === "xai";
     const isGoogleVeoVideo = source === "google_veo" || serviceHint === "google_veo";
     const isOpenRouterVideo = source === "openrouter" || serviceHint === "openrouter";
@@ -10248,9 +10255,9 @@ export async function gameRoutes(app: FastifyInstance) {
         ? videoDefaults.googleVeo
         : isOpenRouterVideo
           ? videoDefaults.openrouter
-        : isSeedanceVideo
-          ? videoDefaults.seedance
-          : videoDefaults.geminiOmni;
+          : isSeedanceVideo
+            ? videoDefaults.seedance
+            : videoDefaults.geminiOmni;
     const videoSettings = normalizeVideoGenerationUserSettings(
       await createAppSettingsStorage(app.db).get(VIDEO_GENERATION_SETTINGS_KEY),
     );
@@ -10272,9 +10279,9 @@ export async function gameRoutes(app: FastifyInstance) {
           ? DEFAULT_GOOGLE_VEO_BASE_URL
           : isOpenRouterVideo
             ? DEFAULT_OPENROUTER_VIDEO_BASE_URL
-          : isSeedanceVideo
-            ? DEFAULT_SEEDANCE_VIDEO_BASE_URL
-            : DEFAULT_GEMINI_OMNI_BASE_URL);
+            : isSeedanceVideo
+              ? DEFAULT_SEEDANCE_VIDEO_BASE_URL
+              : DEFAULT_GEMINI_OMNI_BASE_URL);
     const model =
       videoConn.model ||
       (isXaiVideo
@@ -10283,18 +10290,18 @@ export async function gameRoutes(app: FastifyInstance) {
           ? DEFAULT_GOOGLE_VEO_MODEL
           : isOpenRouterVideo
             ? DEFAULT_OPENROUTER_VIDEO_MODEL
-          : isSeedanceVideo
-            ? DEFAULT_SEEDANCE_VIDEO_MODEL
-            : DEFAULT_GEMINI_OMNI_MODEL);
+            : isSeedanceVideo
+              ? DEFAULT_SEEDANCE_VIDEO_MODEL
+              : DEFAULT_GEMINI_OMNI_MODEL);
     const resolution = isXaiVideo
       ? videoDefaults.xai.resolution
       : isGoogleVeoVideo
         ? videoDefaults.googleVeo.resolution
         : isOpenRouterVideo
           ? videoDefaults.openrouter.resolution
-        : isSeedanceVideo
-          ? videoDefaults.seedance.resolution
-          : undefined;
+          : isSeedanceVideo
+            ? videoDefaults.seedance.resolution
+            : undefined;
     const promptLimits = getSceneVideoPromptLimits(isXaiVideo);
 
     const latestState = await createGameStateStorage(app.db)
@@ -10313,6 +10320,7 @@ export async function gameRoutes(app: FastifyInstance) {
     const promptDraft = await loadGameVideoPrompt({
       promptOverridesStorage,
       meta,
+      debugMode: requestDebug,
       ctx: {
         sceneTitle: compactVideoPromptText(sourceTitle, promptLimits.title),
         narrationSummary: latestNarrationSummary(messages, promptLimits.narrationSummary),

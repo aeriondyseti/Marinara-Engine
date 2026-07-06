@@ -33,6 +33,7 @@ import {
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import type {
+  ConversationCallCharacterVideoCustomClip,
   ConversationCallCharacterVideoClipKind,
   ConversationCallCharacterVideoManifest,
   ConversationCallMessage,
@@ -86,6 +87,7 @@ import { useAgentStore } from "../../stores/agent.store";
 import { ReactionAddButton } from "./ReactionAddButton";
 import { MessageReactions } from "./MessageReactions";
 import { toggleReaction, USER_REACTOR } from "../../lib/reactions";
+import { api } from "../../lib/api-client";
 
 interface ConversationCallSurfaceProps {
   chatId: string;
@@ -129,6 +131,7 @@ type CharacterVideoPlaybackState = {
   followKind?: ConversationCallCharacterVideoClipKind;
   voiceKey: string;
   nonce: number;
+  customClip?: ConversationCallCharacterVideoCustomClip | null;
 };
 type CallVideoReactionKind = Exclude<ConversationCallCharacterVideoClipKind, "idle" | "talking">;
 type CallTtsVideoChunk = {
@@ -160,9 +163,11 @@ const CALL_MIC_RMS_CONTINUE = 0.013;
 const CALL_MIC_CONFIRM_FRAMES = 2;
 const CALL_MIC_MIN_VOICED_MS = 180;
 const CALL_MIC_MIN_PEAK_RMS = 0.022;
-const CALL_TTS_INTERRUPT_VOICED_MS = 900;
+const CALL_TTS_INTERRUPT_VOICED_MS = 600;
 const CALL_TTS_INTERRUPT_TEXT_MAX_CHARS = 1200;
 const CALL_TTS_MAX_REQUEST_CHARS = 3_900;
+const CALL_VIDEO_LOOP_GUARD_SECONDS = 0.12;
+const CALL_OPTIMISTIC_MESSAGE_RECONCILE_MS = 5 * 60 * 1000;
 const CALL_MUTED_REMINDER_TIMEOUT_MS = 10_000;
 const DEFAULT_TEXT_TO_VOICE_PAUSE_MS = 1_800;
 const ONLINE_CHARACTER_JOIN_DELAY_MS = 1_600;
@@ -180,6 +185,8 @@ const CALL_COMMAND_ALIASES = new Map<string, string>([
   ["sound", "soundboard"],
   ["sound_board", "soundboard"],
   ["soundboard", "soundboard"],
+  ["play_clip", "play_clip"],
+  ["clip", "play_clip"],
 ]);
 
 const PARTICIPANT_TILE_CLASSES: Record<
@@ -352,7 +359,8 @@ function getSystemVoiceTypingHint() {
   const platform = `${navigator.platform ?? ""} ${navigator.userAgent ?? ""}`.toLowerCase();
   const isAppleMobile = /iphone|ipad|ipod/.test(platform) || (platform.includes("mac") && navigator.maxTouchPoints > 1);
   if (isAppleMobile) return "The call input is focused. Tap the keyboard microphone yourself, then send.";
-  if (platform.includes("android")) return "The call input is focused. Tap the keyboard microphone yourself, then send.";
+  if (platform.includes("android"))
+    return "The call input is focused. Tap the keyboard microphone yourself, then send.";
   if (platform.includes("mac")) {
     return "The call input is focused. Start macOS Dictation yourself, then send.";
   }
@@ -425,6 +433,29 @@ function getCommandStringParam(value: string | null | undefined, name: string) {
   return bare?.[1]?.trim() ?? "";
 }
 
+function getCommandRootStringValue(value: string | null | undefined) {
+  const trimmed = value?.trim() ?? "";
+  const quoted = /^\[[a-z0-9_-]+\s*=\s*"([^"]+)"/i.exec(trimmed);
+  if (quoted?.[1]) return quoted[1].trim();
+  const singleQuoted = /^\[[a-z0-9_-]+\s*=\s*'([^']+)'/i.exec(trimmed);
+  if (singleQuoted?.[1]) return singleQuoted[1].trim();
+  const bare = /^\[[a-z0-9_-]+\s*=\s*([^\]\s,]+)/i.exec(trimmed);
+  return bare?.[1]?.trim() ?? "";
+}
+
+function readPlayClipCommandName(value: string | null | undefined) {
+  return (
+    getCommandStringParam(value, "name") ||
+    getCommandStringParam(value, "clip") ||
+    getCommandStringParam(value, "label") ||
+    getCommandRootStringValue(value)
+  ).trim();
+}
+
+function normalizeClipLookupName(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 function getReadyCallVideoClip(
   manifest: ConversationCallCharacterVideoManifest | undefined,
   kind: ConversationCallCharacterVideoClipKind,
@@ -475,6 +506,20 @@ function handleCallVideoTrimTimeUpdate(
   } else {
     video.pause();
     options.onEnded?.();
+  }
+}
+
+function handleCallVideoLoopFrame(video: HTMLVideoElement, clip: TrimmedCallVideoClip | null | undefined) {
+  const start = readCallVideoTrimStart(clip);
+  const trimEnd = readCallVideoTrimEnd(clip);
+  const naturalEnd = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : null;
+  const end = trimEnd ?? naturalEnd;
+  if (end === null || start >= end) return;
+  const duration = end - start;
+  const guard = Math.min(CALL_VIDEO_LOOP_GUARD_SECONDS, Math.max(0.025, duration * 0.08));
+  if (video.currentTime >= end - guard && video.currentTime > start + guard) {
+    video.currentTime = start;
+    if (!video.paused) void video.play().catch(() => undefined);
   }
 }
 
@@ -544,6 +589,30 @@ function messageContent(message: ConversationCallMessage, participants: Particip
     default:
       return message.content;
   }
+}
+
+function callMessageTimestampMs(message: ConversationCallMessage) {
+  const timestamp = Date.parse(message.createdAt);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function isSamePersistedCallMessage(
+  optimisticMessage: ConversationCallMessage,
+  persistedMessage: ConversationCallMessage,
+) {
+  if (optimisticMessage.extra?.optimistic !== true) return false;
+  if (persistedMessage.extra?.optimistic === true) return false;
+  if (optimisticMessage.callId !== persistedMessage.callId) return false;
+  if (optimisticMessage.chatId !== persistedMessage.chatId) return false;
+  if (optimisticMessage.role !== persistedMessage.role) return false;
+  if (optimisticMessage.participantKind !== persistedMessage.participantKind) return false;
+  if ((optimisticMessage.characterId ?? null) !== (persistedMessage.characterId ?? null)) return false;
+  if (optimisticMessage.kind !== persistedMessage.kind) return false;
+  if (optimisticMessage.content.trim() !== persistedMessage.content.trim()) return false;
+  const optimisticAt = callMessageTimestampMs(optimisticMessage);
+  const persistedAt = callMessageTimestampMs(persistedMessage);
+  if (!optimisticAt || !persistedAt) return true;
+  return Math.abs(persistedAt - optimisticAt) <= CALL_OPTIMISTIC_MESSAGE_RECONCILE_MS;
 }
 
 function findParticipantForTurn(turn: ConversationCallTurn, participants: Participant[]) {
@@ -689,7 +758,10 @@ async function convertRecordedAudioToWavFile(blob: Blob): Promise<File> {
 }
 
 function CallCustomClipPreview({ clip }: { clip: ConversationCallCustomClipExtra }) {
-  const { data: manifest } = useConversationCallCharacterVideos(clip.characterId, Boolean(clip.characterId && clip.clipId));
+  const { data: manifest } = useConversationCallCharacterVideos(
+    clip.characterId,
+    Boolean(clip.characterId && clip.clipId),
+  );
   const customClip = clip.clipId ? manifest?.customClips.find((item) => item.id === clip.clipId) : null;
   const status = customClip?.status ?? "generating";
   const title = customClip?.label ?? clip.label;
@@ -783,16 +855,20 @@ function ParticipantTile({
   cameraStream,
   density,
   characterVideoEnabled,
+  automaticVideoClipGenerationEnabled,
   videoPlayback,
   onVideoEmotionEnded,
+  onVideoClipReadiness,
 }: {
   participant: Participant;
   active: boolean;
   cameraStream?: MediaStream | null;
   density: ParticipantTileDensity;
   characterVideoEnabled: boolean;
+  automaticVideoClipGenerationEnabled: boolean;
   videoPlayback?: CharacterVideoPlaybackState;
   onVideoEmotionEnded: (participantId: string, voiceKey: string) => void;
+  onVideoClipReadiness: (characterId: string, hasReadyBasicClip: boolean) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const requestedGenerationRef = useRef(false);
@@ -813,11 +889,22 @@ function ParticipantTile({
   useEffect(() => {
     if (!characterVideoEnabled || !characterId || !characterVideoManifest || requestedGenerationRef.current) return;
     if (characterVideoManifest.generating) return;
-    const hasMissingClips = characterVideoManifest.clips.some((clip) => clip.status === "missing");
-    if (!hasMissingClips) return;
+    const basicClipKinds: ConversationCallCharacterVideoClipKind[] = ["idle", "talking"];
+    const hasReadyBasicClip = characterVideoManifest.clips.some(
+      (clip) => basicClipKinds.includes(clip.kind) && clip.status === "ready" && clip.url,
+    );
+    onVideoClipReadiness(characterId, hasReadyBasicClip);
+    if (!automaticVideoClipGenerationEnabled) {
+      return;
+    }
+    const missingBasicClipKinds = basicClipKinds.filter((kind) => {
+      const clip = characterVideoManifest.clips.find((item) => item.kind === kind);
+      return !clip || (clip.status !== "ready" && clip.status !== "generating");
+    });
+    if (missingBasicClipKinds.length === 0) return;
     requestedGenerationRef.current = true;
     generateCharacterVideos.mutate(
-      { characterId },
+      { characterId, clipKinds: missingBasicClipKinds, clipCount: missingBasicClipKinds.length },
       {
         onError: (error) => {
           console.warn("[conversation-call] Failed to start character video generation", error);
@@ -825,39 +912,68 @@ function ParticipantTile({
         },
       },
     );
-  }, [characterId, characterVideoEnabled, characterVideoManifest, generateCharacterVideos]);
+  }, [
+    automaticVideoClipGenerationEnabled,
+    characterId,
+    characterVideoEnabled,
+    characterVideoManifest,
+    generateCharacterVideos,
+    onVideoClipReadiness,
+  ]);
 
-  const requestedVideoKind = videoPlayback?.kind ?? "idle";
+  const customVideoClip =
+    videoPlayback?.customClip?.status === "ready" && videoPlayback.customClip.url ? videoPlayback.customClip : null;
+  const requestedVideoKind = customVideoClip ? "idle" : (videoPlayback?.kind ?? "idle");
   const preferredVideoClip = getReadyCallVideoClip(characterVideoManifest, requestedVideoKind);
   const fallbackVideoClip =
     requestedVideoKind !== "talking" ? getReadyCallVideoClip(characterVideoManifest, "talking") : null;
   const idleVideoClip = requestedVideoKind !== "idle" ? getReadyCallVideoClip(characterVideoManifest, "idle") : null;
   const characterVideoClip = characterVideoEnabled
-    ? (preferredVideoClip ?? fallbackVideoClip ?? idleVideoClip)
+    ? (customVideoClip ?? preferredVideoClip ?? fallbackVideoClip ?? idleVideoClip)
     : null;
   const characterVideoUrl = characterVideoClip?.url ?? null;
   const activeVideoKind =
-    characterVideoClip === preferredVideoClip
-      ? requestedVideoKind
-      : characterVideoClip === fallbackVideoClip
-        ? "talking"
-        : characterVideoClip
-          ? "idle"
-          : null;
-  const videoLoops = activeVideoKind === "idle" || activeVideoKind === "talking";
+    characterVideoClip === customVideoClip
+      ? "custom"
+      : characterVideoClip === preferredVideoClip
+        ? requestedVideoKind
+        : characterVideoClip === fallbackVideoClip
+          ? "talking"
+          : characterVideoClip
+            ? "idle"
+            : null;
+  const videoLoops = !customVideoClip && (activeVideoKind === "idle" || activeVideoKind === "talking");
+  const videoResetKey = videoLoops ? "loop" : `${videoPlayback?.voiceKey ?? "one-shot"}:${videoPlayback?.nonce ?? 0}`;
   const videoKey = [
     participant.id,
     activeVideoKind ?? "avatar",
-    videoPlayback?.voiceKey ?? "idle",
-    videoPlayback?.nonce ?? 0,
+    videoResetKey,
+    customVideoClip?.id ?? "",
+    characterVideoUrl ?? "",
     characterVideoClip?.trimStartSeconds ?? 0,
     characterVideoClip?.trimEndSeconds ?? "end",
   ].join(":");
   const trimEndedRef = useRef(false);
+  const [readyVideoKey, setReadyVideoKey] = useState<string | null>(null);
+  const videoReady = readyVideoKey === videoKey;
 
   useEffect(() => {
     trimEndedRef.current = false;
+    setReadyVideoKey(null);
   }, [videoKey]);
+
+  useEffect(() => {
+    if (!characterVideoUrl || !videoLoops) return;
+    const video = videoRef.current;
+    if (!video) return;
+    let animationFrame = 0;
+    const tick = () => {
+      handleCallVideoLoopFrame(video, characterVideoClip);
+      animationFrame = window.requestAnimationFrame(tick);
+    };
+    animationFrame = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [characterVideoClip, characterVideoUrl, videoKey, videoLoops]);
 
   return (
     <div
@@ -872,43 +988,70 @@ function ParticipantTile({
       {cameraStream ? (
         <video ref={videoRef} autoPlay muted playsInline className="absolute inset-0 h-full w-full object-cover" />
       ) : characterVideoUrl ? (
-        <video
-          key={videoKey}
-          src={characterVideoUrl}
-          autoPlay
-          muted
-          playsInline
-          loop={videoLoops}
-          className="absolute inset-0 h-full w-full object-cover"
-          onLoadedMetadata={(event) => {
-            keepCallVideoSilent(event);
-            seekCallVideoToTrimStart(event.currentTarget, characterVideoClip);
-          }}
-          onPlay={(event) => {
-            keepCallVideoSilent(event);
-            seekCallVideoToTrimStart(event.currentTarget, characterVideoClip);
-          }}
-          onTimeUpdate={(event) => {
-            handleCallVideoTrimTimeUpdate(event.currentTarget, characterVideoClip, {
-              loop: videoLoops,
-              onEnded: () => {
-                if (trimEndedRef.current) return;
-                trimEndedRef.current = true;
-                if (videoPlayback?.followKind && videoPlayback.voiceKey) {
-                  onVideoEmotionEnded(participant.id, videoPlayback.voiceKey);
-                }
-              },
-            });
-          }}
-          onVolumeChange={keepCallVideoSilent}
-          onEnded={() => {
-            if (trimEndedRef.current) return;
-            trimEndedRef.current = true;
-            if (videoPlayback?.followKind && videoPlayback.voiceKey) {
-              onVideoEmotionEnded(participant.id, videoPlayback.voiceKey);
-            }
-          }}
-        />
+        <>
+          <CallAvatar
+            participant={participant}
+            className={cn("max-h-[55%] max-w-[55%]", densityClasses.avatar)}
+            fallbackClassName={densityClasses.fallback}
+          />
+          <video
+            key={videoKey}
+            src={characterVideoUrl}
+            autoPlay
+            muted
+            playsInline
+            loop={false}
+            preload="auto"
+            poster={participant.avatarUrl ?? undefined}
+            className={cn(
+              "absolute inset-0 h-full w-full object-cover transition-opacity duration-75",
+              videoReady ? "opacity-100" : "opacity-0",
+            )}
+            onLoadedMetadata={(event) => {
+              keepCallVideoSilent(event);
+              seekCallVideoToTrimStart(event.currentTarget, characterVideoClip);
+            }}
+            onLoadedData={(event) => {
+              keepCallVideoSilent(event);
+              seekCallVideoToTrimStart(event.currentTarget, characterVideoClip);
+              setReadyVideoKey(videoKey);
+            }}
+            onCanPlay={(event) => {
+              keepCallVideoSilent(event);
+              seekCallVideoToTrimStart(event.currentTarget, characterVideoClip);
+              setReadyVideoKey(videoKey);
+            }}
+            onPlay={(event) => {
+              keepCallVideoSilent(event);
+              seekCallVideoToTrimStart(event.currentTarget, characterVideoClip);
+            }}
+            onTimeUpdate={(event) => {
+              handleCallVideoTrimTimeUpdate(event.currentTarget, characterVideoClip, {
+                loop: false,
+                onEnded: () => {
+                  if (trimEndedRef.current) return;
+                  trimEndedRef.current = true;
+                  if (videoPlayback?.followKind && videoPlayback.voiceKey) {
+                    onVideoEmotionEnded(participant.id, videoPlayback.voiceKey);
+                  }
+                },
+              });
+            }}
+            onVolumeChange={keepCallVideoSilent}
+            onEnded={(event) => {
+              if (videoLoops) {
+                seekCallVideoToTrimStart(event.currentTarget, characterVideoClip);
+                void event.currentTarget.play().catch(() => undefined);
+                return;
+              }
+              if (trimEndedRef.current) return;
+              trimEndedRef.current = true;
+              if (videoPlayback?.followKind && videoPlayback.voiceKey) {
+                onVideoEmotionEnded(participant.id, videoPlayback.voiceKey);
+              }
+            }}
+          />
+        </>
       ) : (
         <CallAvatar
           participant={participant}
@@ -976,9 +1119,8 @@ export function ConversationCallSurface({
   const [recording, setRecording] = useState(false);
   const [browserSpeechSupported, setBrowserSpeechSupported] = useState(false);
   const [optimisticCallMessages, setOptimisticCallMessages] = useState<ConversationCallMessage[]>([]);
-  const [characterVideoPlayback, setCharacterVideoPlayback] = useState<Record<string, CharacterVideoPlaybackState>>(
-    {},
-  );
+  const [characterVideoPlayback, setCharacterVideoPlayback] = useState<Record<string, CharacterVideoPlaybackState>>({});
+  const [characterVideoReadyById, setCharacterVideoReadyById] = useState<Record<string, boolean>>({});
   const mobileCallLayout = useMobileCallLayout();
   const [clockNow, setClockNow] = useState(() => Date.now());
   const [joinedParticipantIds, setJoinedParticipantIds] = useState<Set<string>>(() => new Set(["user"]));
@@ -1003,19 +1145,38 @@ export function ConversationCallSurface({
   const interruptedVoiceKeyRef = useRef<string | null>(null);
   const userInterruptionVoicedMsRef = useRef(0);
   const voicePlaybackInterruptedRef = useRef(false);
+  const callCancelledRef = useRef(session.status !== "active");
+  const callPlaybackAbortRef = useRef<AbortController | null>(null);
   const participantIdsRef = useRef<Set<string>>(new Set());
   const playedStartSoundForRef = useRef<string | null>(null);
   const playedEndSoundForRef = useRef<string | null>(null);
   const playedInitialGreetingIdsRef = useRef<Set<string>>(new Set());
+  const missingVideoClipsToastShownRef = useRef(false);
   const previousSessionStatusRef = useRef(session.status);
   const [queuedCallInteractions, setQueuedCallInteractions] = useState(0);
   const messages = useMemo(() => {
     if (optimisticCallMessages.length === 0) return persistedMessages;
     const byId = new Map<string, ConversationCallMessage>();
     for (const message of persistedMessages) byId.set(message.id, message);
-    for (const message of optimisticCallMessages) byId.set(message.id, message);
+    for (const message of optimisticCallMessages) {
+      if (persistedMessages.some((persisted) => isSamePersistedCallMessage(message, persisted))) continue;
+      byId.set(message.id, message);
+    }
     return [...byId.values()].sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
   }, [optimisticCallMessages, persistedMessages]);
+
+  useEffect(() => {
+    if (optimisticCallMessages.length === 0 || persistedMessages.length === 0) return;
+    setOptimisticCallMessages((current) =>
+      current.filter(
+        (optimistic) => !persistedMessages.some((persisted) => isSamePersistedCallMessage(optimistic, persisted)),
+      ),
+    );
+  }, [optimisticCallMessages.length, persistedMessages]);
+  useEffect(() => {
+    setCharacterVideoReadyById({});
+    missingVideoClipsToastShownRef.current = false;
+  }, [session.id]);
   const callAudioEnabled = ttsConfig?.callAudioEnabled === true;
   const audioInputMode = ttsConfig?.callAudioInputMode ?? "local_whisper";
   const systemVoiceInputMode = audioInputMode === "system";
@@ -1024,16 +1185,30 @@ export function ConversationCallSurface({
   const browserSpeechInputMode = audioInputMode === "transcribe";
   const videoControlsEnabled = ttsConfig?.callVideoInputEnabled === true && nativeInputMode;
   const characterVideoEnabled = ttsConfig?.callCharacterVideoEnabled === true;
-  const soundboardEnabled = ttsConfig?.callSoundboardEnabled !== false;
+  const automaticVideoClipGenerationEnabled = ttsConfig?.callAutomaticVideoClipsEnabled === true;
+  const soundboardEnabled = true;
   const characterVoicesMuted = conversationCallVoiceMuted || conversationCallVoiceVolume <= 0;
   const characterVoicePlaybackVolume = characterVoicesMuted ? 0 : conversationCallVoiceVolume / 100;
   const characterVoiceVolumeLabel = characterVoicesMuted ? "Muted" : `${conversationCallVoiceVolume}%`;
-  const callControlGridColumns = soundboardEnabled ? "grid-cols-7" : "grid-cols-6";
+  const callControlGridColumns = "grid-cols-7";
   const callControlButtonClass =
     "mari-chrome-control shrink-0 p-0 max-sm:aspect-square max-sm:h-auto max-sm:min-h-0 max-sm:w-full max-sm:max-w-10 max-sm:justify-self-center sm:h-11 sm:w-11";
   const callControlIconClass = "h-4 w-4";
   const browserSpeechUnavailable = browserSpeechInputMode && !browserSpeechSupported;
   const recordingWillUseLocalWhisperFallback = browserSpeechUnavailable;
+  const showMissingVideoClipsToast = useCallback(() => {
+    if (missingVideoClipsToastShownRef.current) return;
+    missingVideoClipsToastShownRef.current = true;
+    toast("No video-call clips are ready yet.", {
+      description: "Open the character editor, then Sprites > Clips, to generate idle and talking clips first.",
+      duration: 10_000,
+    });
+  }, []);
+  const updateVideoClipReadiness = useCallback((characterId: string, hasReadyBasicClip: boolean) => {
+    setCharacterVideoReadyById((current) =>
+      current[characterId] === hasReadyBasicClip ? current : { ...current, [characterId]: hasReadyBasicClip },
+    );
+  }, []);
 
   const participants = useMemo<Participant[]>(() => {
     const user: Participant = {
@@ -1086,11 +1261,32 @@ export function ConversationCallSurface({
       ),
     [departedParticipantIds, joinedParticipantIds, participants],
   );
+  const visibleCharacterIds = useMemo(
+    () =>
+      visibleParticipants
+        .filter((participant) => participant.kind === "character" && participant.characterId)
+        .map((participant) => participant.characterId!),
+    [visibleParticipants],
+  );
+  useEffect(() => {
+    if (!characterVideoEnabled || automaticVideoClipGenerationEnabled || visibleCharacterIds.length === 0) return;
+    const allReadinessKnown = visibleCharacterIds.every((characterId) =>
+      Object.prototype.hasOwnProperty.call(characterVideoReadyById, characterId),
+    );
+    if (!allReadinessKnown) return;
+    if (visibleCharacterIds.some((characterId) => characterVideoReadyById[characterId])) return;
+    showMissingVideoClipsToast();
+  }, [
+    automaticVideoClipGenerationEnabled,
+    characterVideoEnabled,
+    characterVideoReadyById,
+    showMissingVideoClipsToast,
+    visibleCharacterIds,
+  ]);
   const visibleCallMessages = useMemo(
     () =>
       messages.filter(
-        (message) =>
-          message.kind !== "speech" && message.kind !== "command" && message.extra?.hiddenFromUser !== true,
+        (message) => message.kind !== "speech" && message.kind !== "command" && message.extra?.hiddenFromUser !== true,
       ),
     [messages],
   );
@@ -1129,7 +1325,14 @@ export function ConversationCallSurface({
       return "Responding";
     }
     return "Live";
-  }, [pendingParticipants, queuedCallInteractions, recording, sendMedia.isPending, sendMessage.isPending, userSpeaking]);
+  }, [
+    pendingParticipants,
+    queuedCallInteractions,
+    recording,
+    sendMedia.isPending,
+    sendMessage.isPending,
+    userSpeaking,
+  ]);
 
   const setUserSpeakingState = useCallback((speaking: boolean) => {
     if (userSpeakingRef.current === speaking) return;
@@ -1191,6 +1394,21 @@ export function ConversationCallSurface({
     stopStream(screenStream);
   }, [cameraStream, screenStream, stopLiveMicCapture, stopStream]);
 
+  useEffect(() => {
+    callCancelledRef.current = session.status !== "active";
+    callPlaybackAbortRef.current?.abort();
+    callPlaybackAbortRef.current = session.status === "active" ? new AbortController() : null;
+    if (session.status !== "active") {
+      ttsService.stop();
+    }
+    return () => {
+      callCancelledRef.current = true;
+      callPlaybackAbortRef.current?.abort();
+      ttsService.stop();
+      callPlaybackAbortRef.current = null;
+    };
+  }, [session.id, session.status]);
+
   const playEndSoundOnce = useCallback(() => {
     if (playedEndSoundForRef.current === session.id) return;
     playedEndSoundForRef.current = session.id;
@@ -1207,7 +1425,10 @@ export function ConversationCallSurface({
       setQueuedCallInteractions((count) => count + 1);
       const queued = callInteractionQueueRef.current
         .catch(() => undefined)
-        .then(task)
+        .then(async () => {
+          if (callCancelledRef.current) return;
+          await task();
+        })
         .catch((error) => {
           if (options.quiet) {
             console.warn("[conversation-call] Queued interaction failed", error);
@@ -1346,9 +1567,7 @@ export function ConversationCallSurface({
   useEffect(
     () =>
       ttsService.subscribe((state, activeId) => {
-        setSpeakingId(
-          state === "playing" && activeId && participantIdsRef.current.has(activeId) ? activeId : null,
-        );
+        setSpeakingId(state === "playing" && activeId && participantIdsRef.current.has(activeId) ? activeId : null);
       }),
     [],
   );
@@ -1386,6 +1605,22 @@ export function ConversationCallSurface({
     [],
   );
 
+  const setParticipantCustomVideoClip = useCallback(
+    (participantId: string, voiceKey: string, clip: ConversationCallCharacterVideoCustomClip) => {
+      setCharacterVideoPlayback((current) => ({
+        ...current,
+        [participantId]: {
+          kind: "idle",
+          followKind: "idle",
+          voiceKey,
+          nonce: Date.now(),
+          customClip: clip,
+        },
+      }));
+    },
+    [],
+  );
+
   const clearParticipantVideoTalking = useCallback((participantId: string | null | undefined, voiceKey: string) => {
     if (!participantId) return;
     setCharacterVideoPlayback((current) => {
@@ -1409,6 +1644,7 @@ export function ConversationCallSurface({
           ...existing,
           kind: existing.followKind,
           followKind: undefined,
+          customClip: null,
           nonce: Date.now(),
         },
       };
@@ -1441,6 +1677,43 @@ export function ConversationCallSurface({
       await playSoundById(sound.id);
     },
     [playSoundById, soundboardEnabled, sounds],
+  );
+
+  const playCustomClipByName = useCallback(
+    async (turn: ConversationCallTurn) => {
+      if (!characterVideoEnabled) return;
+      const requestedName = readPlayClipCommandName(turn.content);
+      if (!requestedName) return;
+      const participant = findParticipantForTurn(turn, participants);
+      const characterId = turn.characterId ?? participant?.characterId ?? null;
+      if (!participant || participant.kind !== "character" || !characterId) return;
+      const manifest = await queryClient.fetchQuery({
+        queryKey: conversationCallKeys.characterVideos(characterId),
+        queryFn: () =>
+          api.get<ConversationCallCharacterVideoManifest>(`/conversation-calls/character-videos/${characterId}`),
+        staleTime: 15_000,
+      });
+      const normalizedRequestedName = normalizeClipLookupName(requestedName);
+      const customClip =
+        manifest.customClips.find(
+          (clip) =>
+            clip.status === "ready" && clip.url && normalizeClipLookupName(clip.label) === normalizedRequestedName,
+        ) ?? null;
+      if (!customClip) {
+        toast(`No ready custom clip named ${requestedName} for ${participant.name}.`);
+        return;
+      }
+      setParticipantCustomVideoClip(
+        participant.id,
+        `${session.id}:${participant.id}:custom:${customClip.id}:${Date.now()}`,
+        customClip,
+      );
+      const trimStart = customClip.trimStartSeconds ?? 0;
+      const trimEnd = customClip.trimEndSeconds ?? 0;
+      const fallbackDurationMs = Math.max(1_500, Math.min(8_000, ((trimEnd || 5) - trimStart) * 1000 || 5_000));
+      await wait(fallbackDurationMs);
+    },
+    [characterVideoEnabled, participants, queryClient, session.id, setParticipantCustomVideoClip],
   );
 
   const handleCharacterLeftCall = useCallback(
@@ -1501,9 +1774,17 @@ export function ConversationCallSurface({
   const updateVoiceInterruptionDetector = useCallback(
     (speechConfirmed: boolean) => {
       const activeVoice = activeCallVoiceRef.current;
-      const ttsPlaying = ttsService.getState() === "playing";
-      if (!speechConfirmed || !activeVoice || !ttsPlaying) {
+      const ttsState = ttsService.getState();
+      const ttsInterruptible = ttsState === "playing" || ttsState === "loading";
+      if (!activeVoice || !ttsInterruptible) {
         userInterruptionVoicedMsRef.current = 0;
+        return;
+      }
+      if (!speechConfirmed) {
+        userInterruptionVoicedMsRef.current = Math.max(
+          0,
+          userInterruptionVoicedMsRef.current - CALL_MIC_VAD_INTERVAL_MS,
+        );
         return;
       }
       userInterruptionVoicedMsRef.current += CALL_MIC_VAD_INTERVAL_MS;
@@ -1516,17 +1797,22 @@ export function ConversationCallSurface({
 
   const playTurns = useCallback(
     async (turns: ConversationCallTurn[]) => {
+      if (callCancelledRef.current) return;
+      const playbackSignal = callPlaybackAbortRef.current?.signal;
       playingTurnsRef.current = true;
       voicePlaybackInterruptedRef.current = false;
       let shouldEndCallAfterPlayback = false;
       try {
         for (let index = 0; index < turns.length; index += 1) {
+          if (callCancelledRef.current || playbackSignal?.aborted) break;
           const turn = turns[index]!;
           let pauseSourceTurn = turn;
           if (turn.mode === "command") {
             const commandName = getBracketCommandName(turn.content);
             if (commandName === "soundboard") {
               await playSoundByName(getSoundboardCommandName(turn.content));
+            } else if (commandName === "play_clip") {
+              await playCustomClipByName(turn);
             } else if (commandName === "youtube") {
               const searchQuery = getCommandStringParam(turn.content, "query");
               if (searchQuery) {
@@ -1570,82 +1856,123 @@ export function ConversationCallSurface({
                   candidate.speakerName,
                   candidate.characterId ?? candidateParticipant?.characterId,
                 );
-                if (!candidateVoice || candidateVoice !== voice) break;
-                if ((candidateParticipant?.id ?? null) !== (participant?.id ?? null)) break;
+                if (!candidateVoice) break;
                 voiceBatch.push({ turn: candidate, participant: candidateParticipant, voice: candidateVoice });
                 batchEndIndex += 1;
               }
 
-              const tone = Array.from(
-                new Set(voiceBatch.map((item) => item.turn.tone?.trim()).filter((value): value is string => !!value)),
-              ).join(", ");
-              const spokenText = voiceBatch.map((item) => item.turn.content.trim()).join("\n");
-              const spokenChunks = buildCallTtsVideoChunks(
-                voiceBatch.map((item) => item.turn.content),
-                tone,
+              const sequenceItems = voiceBatch.flatMap((item) => {
+                const tone = item.turn.tone?.trim() ?? "";
+                const chunks = buildCallTtsVideoChunks([item.turn.content], tone);
+                const participantId = item.participant?.id ?? null;
+                const voiceKey = [
+                  session.id,
+                  participantId ?? item.turn.speakerName,
+                  item.turn.id ?? item.turn.content.slice(0, 24),
+                ].join(":");
+                return chunks
+                  .map((chunk) => ({
+                    item,
+                    chunk,
+                    text: chunk.text.trim(),
+                    participantId,
+                    voiceKey,
+                    tone,
+                    spokenText: item.turn.content.trim(),
+                  }))
+                  .filter((chunk) => chunk.text.length > 0);
+              });
+              if (sequenceItems.length === 0) {
+                pauseSourceTurn = turns[batchEndIndex] ?? turn;
+                index = batchEndIndex;
+                continue;
+              }
+              const speakerKeys = new Set(
+                sequenceItems.map((item) => item.participantId ?? item.item.turn.speakerName),
               );
-              const voiceKey = [
-                session.id,
-                participant?.id ?? turn.speakerName,
-                voiceBatch.map((item) => item.turn.id ?? item.turn.content.slice(0, 24)).join("|"),
-              ].join(":");
-              activeCallVoiceRef.current = {
-                key: voiceKey,
-                characterId: participant?.characterId ?? turn.characterId ?? null,
-                speakerName: turn.speakerName,
-                spokenText,
-              };
-              userInterruptionVoicedMsRef.current = 0;
-              const participantId = participant?.id ?? null;
+              let activeVideoParticipantId: string | null = null;
+              let activeVideoVoiceKey: string | null = null;
               try {
                 await ttsService.speakSequence(
-                  spokenChunks.map((chunk) => ({
-                    text: chunk.text,
-                    speaker: turn.speakerName,
+                  sequenceItems.map(({ item, text, tone, participantId }) => ({
+                    text,
+                    speaker: item.turn.speakerName,
                     tone: tone || undefined,
-                    voice,
+                    voice: item.voice,
+                    activeId: participantId,
                   })),
                   participant?.id ?? `${session.id}:${turn.id ?? turn.content.slice(0, 12)}`,
                   {
-                    progressive: ttsConfig.progressivePlayback,
+                    signal: playbackSignal,
+                    progressive: speakerKeys.size > 1 ? false : ttsConfig.progressivePlayback,
                     volume: characterVoicePlaybackVolume,
                     muted: characterVoicesMuted,
                     onChunkStart: (_request, chunkIndex) => {
-                      if (!characterVideoEnabled || !participantId) return;
-                      const chunk = spokenChunks[chunkIndex];
-                      if (!chunk) return;
+                      const meta = sequenceItems[chunkIndex];
+                      if (!meta) return;
+                      activeCallVoiceRef.current = {
+                        key: meta.voiceKey,
+                        characterId: meta.item.participant?.characterId ?? meta.item.turn.characterId ?? null,
+                        speakerName: meta.item.turn.speakerName,
+                        spokenText: meta.spokenText,
+                      };
+                      userInterruptionVoicedMsRef.current = 0;
+                      if (!characterVideoEnabled || !meta.participantId) return;
+                      if (
+                        activeVideoParticipantId &&
+                        activeVideoVoiceKey &&
+                        (activeVideoParticipantId !== meta.participantId || activeVideoVoiceKey !== meta.voiceKey)
+                      ) {
+                        clearParticipantVideoTalking(activeVideoParticipantId, activeVideoVoiceKey);
+                      }
+                      activeVideoParticipantId = meta.participantId;
+                      activeVideoVoiceKey = meta.voiceKey;
                       setParticipantVideoTalking(
-                        participantId,
-                        makeCallVideoCueKey(voiceKey, chunkIndex),
-                        chunk.videoKind,
-                        chunk.followKind,
+                        meta.participantId,
+                        makeCallVideoCueKey(meta.voiceKey, chunkIndex),
+                        meta.chunk.videoKind,
+                        meta.chunk.followKind,
                       );
+                    },
+                    onChunkEnd: (_request, chunkIndex) => {
+                      const meta = sequenceItems[chunkIndex];
+                      if (!meta) return;
+                      if (activeCallVoiceRef.current?.key === meta.voiceKey) {
+                        activeCallVoiceRef.current = null;
+                        userInterruptionVoicedMsRef.current = 0;
+                      }
                     },
                   },
                 );
               } finally {
-                clearParticipantVideoTalking(participantId, voiceKey);
-              }
-              if (activeCallVoiceRef.current?.key === voiceKey) {
                 activeCallVoiceRef.current = null;
                 userInterruptionVoicedMsRef.current = 0;
+                const clearedVideoKeys = new Set<string>();
+                for (const meta of sequenceItems) {
+                  if (!meta.participantId) continue;
+                  const key = `${meta.participantId}:${meta.voiceKey}`;
+                  if (clearedVideoKeys.has(key)) continue;
+                  clearedVideoKeys.add(key);
+                  clearParticipantVideoTalking(meta.participantId, meta.voiceKey);
+                }
               }
               pauseSourceTurn = turns[batchEndIndex] ?? turn;
               index = batchEndIndex;
               if (voicePlaybackInterruptedRef.current) break;
             }
           }
+          if (callCancelledRef.current || playbackSignal?.aborted) break;
           const nextTurn = turns[index + 1];
           const pauseMs =
             pauseSourceTurn.mode === "text" && nextTurn?.mode === "voice" ? DEFAULT_TEXT_TO_VOICE_PAUSE_MS : 0;
-          if (nextTurn && pauseMs > 0) await wait(pauseMs);
+          if (nextTurn && pauseMs > 0 && !callCancelledRef.current && !playbackSignal?.aborted) await wait(pauseMs);
         }
       } finally {
         activeCallVoiceRef.current = null;
         userInterruptionVoicedMsRef.current = 0;
         playingTurnsRef.current = false;
       }
-      if (shouldEndCallAfterPlayback) {
+      if (shouldEndCallAfterPlayback && !callCancelledRef.current && !playbackSignal?.aborted) {
         await handleCallEndedByCharacter();
       }
     },
@@ -1657,6 +1984,7 @@ export function ConversationCallSurface({
       handleCallEndedByCharacter,
       handleCharacterLeftCall,
       participants,
+      playCustomClipByName,
       playSoundByName,
       queryClient,
       session.id,
@@ -2232,6 +2560,8 @@ export function ConversationCallSurface({
   }, []);
 
   const handleEnd = useCallback(async () => {
+    callCancelledRef.current = true;
+    callPlaybackAbortRef.current?.abort();
     cleanupLiveCallMedia();
     playEndSoundOnce();
     try {
@@ -2255,10 +2585,7 @@ export function ConversationCallSurface({
   );
 
   const applyCallMessageReactions = useCallback(
-    async (
-      message: ConversationCallMessage,
-      buildNext: (current: MessageReaction[]) => MessageReaction[],
-    ) => {
+    async (message: ConversationCallMessage, buildNext: (current: MessageReaction[]) => MessageReaction[]) => {
       const key = conversationCallKeys.messages(session.id);
       const previous = queryClient.getQueryData<ConversationCallMessage[]>(key);
       const cachedMessage = previous?.find((item) => item.id === message.id) ?? message;
@@ -2544,8 +2871,10 @@ export function ConversationCallSurface({
                 cameraStream={participant.kind === "user" ? cameraStream : null}
                 density={participantGridLayout.density}
                 characterVideoEnabled={characterVideoEnabled}
+                automaticVideoClipGenerationEnabled={automaticVideoClipGenerationEnabled}
                 videoPlayback={characterVideoPlayback[participant.id]}
                 onVideoEmotionEnded={handleVideoEmotionEnded}
+                onVideoClipReadiness={updateVideoClipReadiness}
               />
             ))}
           </div>
@@ -2557,6 +2886,23 @@ export function ConversationCallSurface({
               </div>
             </div>
           )}
+
+          {mutedReminderVisible && !recording ? (
+            <div
+              className="absolute inset-x-3 bottom-24 z-30 mx-auto rounded-xl border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-panel-bg)] px-3 py-2.5 pr-8 text-left text-xs leading-relaxed text-[var(--marinara-chat-chrome-panel-title)] shadow-xl shadow-black/25 sm:hidden"
+              role="status"
+            >
+              <button
+                type="button"
+                onClick={() => setMutedReminderVisible(false)}
+                className="absolute right-1.5 top-1.5 rounded-md p-1 text-[var(--marinara-chat-chrome-panel-muted)] transition-colors hover:bg-[var(--marinara-chat-chrome-highlight-bg-hover)] hover:text-[var(--marinara-chat-chrome-button-text-hover)]"
+                aria-label="Dismiss muted reminder"
+              >
+                <X size="0.75rem" />
+              </button>
+              You are muted! Remember to unmute yourself first if you want to talk.
+            </div>
+          ) : null}
 
           <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center px-3">
             <div className="pointer-events-auto relative max-w-[calc(100vw-1.5rem)]">
@@ -2656,7 +3002,7 @@ export function ConversationCallSurface({
                 <div className="relative flex min-w-0 justify-center max-sm:w-full">
                   {mutedReminderVisible && !recording ? (
                     <div
-                      className="absolute bottom-full left-1/2 z-30 mb-3 w-64 max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-xl border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-panel-bg)] px-3 py-2.5 pr-8 text-left text-xs leading-relaxed text-[var(--marinara-chat-chrome-panel-title)] shadow-xl shadow-black/25"
+                      className="absolute bottom-full left-1/2 z-30 mb-3 hidden w-64 max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-xl border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-panel-bg)] px-3 py-2.5 pr-8 text-left text-xs leading-relaxed text-[var(--marinara-chat-chrome-panel-title)] shadow-xl shadow-black/25 sm:block"
                       role="status"
                     >
                       <button
