@@ -102,6 +102,7 @@ interface ConversationCallSurfaceProps {
 type Participant = {
   id: string;
   name: string;
+  phoneticName?: string;
   avatarUrl: string | null;
   avatarCrop?: AvatarCropValue | null;
   kind: "user" | "character";
@@ -136,6 +137,7 @@ type CharacterVideoPlaybackState = {
 type CallVideoReactionKind = Exclude<ConversationCallCharacterVideoClipKind, "idle" | "talking">;
 type CallTtsVideoChunk = {
   text: string;
+  audioText: string;
   videoKind: ConversationCallCharacterVideoClipKind;
   followKind?: "talking";
 };
@@ -282,16 +284,41 @@ function detectCallVideoCueKind(value: string | null | undefined): CallVideoReac
 }
 
 function splitCallTtsVideoChunkByLimit(chunk: CallTtsVideoChunk): CallTtsVideoChunk[] {
-  if (chunk.text.length <= CALL_TTS_MAX_REQUEST_CHARS) return [chunk];
+  if (chunk.audioText.length <= CALL_TTS_MAX_REQUEST_CHARS) return [chunk];
   const pieces: CallTtsVideoChunk[] = [];
-  for (let start = 0; start < chunk.text.length; start += CALL_TTS_MAX_REQUEST_CHARS) {
+  for (let start = 0; start < chunk.audioText.length; start += CALL_TTS_MAX_REQUEST_CHARS) {
+    const audioText = chunk.audioText.slice(start, start + CALL_TTS_MAX_REQUEST_CHARS);
     pieces.push({
       ...chunk,
-      text: chunk.text.slice(start, start + CALL_TTS_MAX_REQUEST_CHARS),
+      text: audioText,
+      audioText,
       followKind: undefined,
     });
   }
   return pieces;
+}
+
+function stripCallTtsCueText(text: string) {
+  return text
+    .replace(/\[[^\]\r\n]+\]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function applyCallTtsPhoneticNames(text: string, participants: Participant[]) {
+  let next = text;
+  for (const participant of participants) {
+    const name = participant.name.trim();
+    const phoneticName = participant.phoneticName?.trim();
+    if (!name || !phoneticName || name === phoneticName) continue;
+    const pattern = new RegExp(`(^|[^\\p{L}\\p{N}_])(${escapeRegExp(name)})(?=$|[^\\p{L}\\p{N}_])`, "giu");
+    next = next.replace(pattern, (_match, prefix: string) => `${prefix}${phoneticName}`);
+  }
+  return next;
 }
 
 function pushCallTtsVideoChunk(
@@ -299,10 +326,14 @@ function pushCallTtsVideoChunk(
   text: string,
   videoKind: ConversationCallCharacterVideoClipKind,
   followKind?: "talking",
+  participants?: Participant[],
 ) {
   const trimmed = text.trim();
-  if (!trimmed) return;
-  const chunk = { text: trimmed, videoKind, followKind };
+  const audioText = participants
+    ? applyCallTtsPhoneticNames(stripCallTtsCueText(trimmed), participants)
+    : stripCallTtsCueText(trimmed);
+  if (!trimmed || !audioText) return;
+  const chunk = { text: trimmed, audioText, videoKind, followKind };
   chunks.push(...splitCallTtsVideoChunkByLimit(chunk));
 }
 
@@ -310,7 +341,7 @@ function hasNonCueSpeech(text: string) {
   return text.replace(/\[[^\]\r\n]+\]/g, "").trim().length > 0;
 }
 
-function buildCallTtsVideoChunks(lines: string[], tone: string): CallTtsVideoChunk[] {
+function buildCallTtsVideoChunks(lines: string[], tone: string, participants?: Participant[]): CallTtsVideoChunk[] {
   const chunks: CallTtsVideoChunk[] = [];
   const cuePattern = /\[[^\]\r\n]+\]/g;
   let recognizedCueCount = 0;
@@ -319,6 +350,7 @@ function buildCallTtsVideoChunks(lines: string[], tone: string): CallTtsVideoChu
     const line = rawLine.trim();
     if (!line) continue;
     let cursor = 0;
+    let pendingCueKind: CallVideoReactionKind | null = null;
     for (const match of line.matchAll(cuePattern)) {
       const cue = match[0] ?? "";
       const cueStart = match.index ?? 0;
@@ -327,15 +359,36 @@ function buildCallTtsVideoChunks(lines: string[], tone: string): CallTtsVideoChu
 
       const beforeCue = line.slice(cursor, cueStart);
       if (hasNonCueSpeech(beforeCue)) {
-        pushCallTtsVideoChunk(chunks, beforeCue, "talking");
-        pushCallTtsVideoChunk(chunks, cue, reactionKind, "talking");
+        pushCallTtsVideoChunk(
+          chunks,
+          beforeCue,
+          pendingCueKind ?? "talking",
+          pendingCueKind ? "talking" : undefined,
+          participants,
+        );
       } else {
-        pushCallTtsVideoChunk(chunks, `${beforeCue.trim()} ${cue}`.trim(), reactionKind, "talking");
+        const beforeCueAudio = stripCallTtsCueText(beforeCue);
+        if (beforeCueAudio) {
+          pushCallTtsVideoChunk(
+            chunks,
+            beforeCue,
+            pendingCueKind ?? "talking",
+            pendingCueKind ? "talking" : undefined,
+            participants,
+          );
+        }
       }
+      pendingCueKind = reactionKind;
       recognizedCueCount += 1;
       cursor = cueStart + cue.length;
     }
-    pushCallTtsVideoChunk(chunks, line.slice(cursor), "talking");
+    pushCallTtsVideoChunk(
+      chunks,
+      line.slice(cursor),
+      pendingCueKind ?? "talking",
+      pendingCueKind ? "talking" : undefined,
+      participants,
+    );
   }
 
   if (chunks.length === 0) return [];
@@ -1214,6 +1267,7 @@ export function ConversationCallSurface({
     const user: Participant = {
       id: "user",
       name: personaInfo?.name || "You",
+      phoneticName: personaInfo?.phoneticName,
       avatarUrl: personaInfo?.avatarUrl ?? null,
       avatarCrop: personaInfo?.avatarCrop,
       kind: "user",
@@ -1228,6 +1282,7 @@ export function ConversationCallSurface({
         {
           id: `character:${id}`,
           name: character?.name ?? "Character",
+          phoneticName: character?.phoneticName,
           avatarUrl: character?.avatarUrl ?? null,
           avatarCrop: character?.avatarCrop,
           kind: "character" as const,
@@ -1863,7 +1918,7 @@ export function ConversationCallSurface({
 
               const sequenceItems = voiceBatch.flatMap((item) => {
                 const tone = item.turn.tone?.trim() ?? "";
-                const chunks = buildCallTtsVideoChunks([item.turn.content], tone);
+                const chunks = buildCallTtsVideoChunks([item.turn.content], tone, participants);
                 const participantId = item.participant?.id ?? null;
                 const voiceKey = [
                   session.id,
@@ -1874,7 +1929,7 @@ export function ConversationCallSurface({
                   .map((chunk) => ({
                     item,
                     chunk,
-                    text: chunk.text.trim(),
+                    text: chunk.audioText.trim(),
                     participantId,
                     voiceKey,
                     tone,
