@@ -864,6 +864,7 @@ export function createChatsStorage(db: DB) {
         content: input.content,
         activeSwipeIndex: 0,
         extra: JSON.stringify({
+          ...parseExtraRecord(input.extra),
           displayText: null,
           isGenerated: input.role !== "user",
           tokenCount: null,
@@ -877,7 +878,7 @@ export function createChatsStorage(db: DB) {
         messageId: id,
         index: 0,
         content: input.content,
-        extra: JSON.stringify({}),
+        extra: JSON.stringify(parseExtraRecord(input.extra)),
         createdAt: timestamp,
       });
       await db.update(chats).set({ lastMessageAt: timestamp, updatedAt: timestamp }).where(eq(chats.id, input.chatId));
