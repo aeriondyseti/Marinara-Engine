@@ -4765,6 +4765,7 @@ export function ChatSettingsDrawer({
                     value={groupScenarioDraft}
                     onChange={setGroupScenarioDraft}
                     placeholder="Replace individual character scenarios with a shared scenario for this group chat or leave empty to keep them…"
+                    surface="chat"
                   />
                 </div>
               )}

@@ -19,7 +19,6 @@ import { createPersonaGalleryStorage } from "../services/storage/persona-gallery
 import { createChatsStorage } from "../services/storage/chats.storage.js";
 import { createGameSceneVideosStorage } from "../services/storage/game-scene-videos.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
-import { createLorebooksStorage } from "../services/storage/lorebooks.storage.js";
 import { generateImage } from "../services/image/image-generation.js";
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
 import { loadImageGenerationUserSettings } from "../services/image/image-generation-settings.js";
@@ -47,6 +46,7 @@ import { assertInsideDir, extensionFromImageMime, isAllowedImageBuffer } from ".
 import { logger } from "../lib/logger.js";
 import { parseLibraryPageQuery } from "../utils/list-pagination.js";
 import { importSTLorebook } from "../services/import/st-lorebook.importer.js";
+import { embedLorebookIntoCharacter, getEmbeddedLorebookId } from "../services/lorebook/character-book-sync.js";
 import AdmZip from "adm-zip";
 import { extname } from "path";
 import { pipeline } from "stream/promises";
@@ -373,12 +373,6 @@ async function resolveAvatarGenerationConnection(app: FastifyInstance, body: Ava
 }
 
 type ExportFormat = "native" | "compatible";
-type LorebooksStore = ReturnType<typeof createLorebooksStorage>;
-type NativeLorebookBundle = {
-  lorebook: Record<string, unknown>;
-  entries: Array<Record<string, unknown>>;
-  folders: Array<Record<string, unknown>>;
-};
 
 // Read an image file and return it as a base64 data URL, or null if the file
 // is missing, outside the expected dir, or not a recognized image type. Used
@@ -463,50 +457,15 @@ async function readGalleryForCharacter(
   return result;
 }
 
-async function readAttachedLorebooksForCharacter(
-  characterId: string,
-  lorebooksStorage: LorebooksStore,
-): Promise<NativeLorebookBundle[]> {
-  const books = (await lorebooksStorage.listByCharacter(characterId)) as Array<Record<string, unknown>>;
-  return readLorebookBundles(books, lorebooksStorage);
-}
-
-async function readAttachedLorebooksForPersona(
-  personaId: string,
-  lorebooksStorage: LorebooksStore,
-): Promise<NativeLorebookBundle[]> {
-  const books = (await lorebooksStorage.listByPersona(personaId)) as Array<Record<string, unknown>>;
-  return readLorebookBundles(books, lorebooksStorage);
-}
-
-async function readLorebookBundles(
-  books: Array<Record<string, unknown>>,
-  lorebooksStorage: LorebooksStore,
-): Promise<NativeLorebookBundle[]> {
-  const bundles: NativeLorebookBundle[] = [];
-  for (const lorebook of books) {
-    const id = typeof lorebook.id === "string" ? lorebook.id : "";
-    if (!id) continue;
-    const [entries, folders] = await Promise.all([
-      lorebooksStorage.listEntries(id) as Promise<Array<Record<string, unknown>>>,
-      lorebooksStorage.listFolders(id) as Promise<Array<Record<string, unknown>>>,
-    ]);
-    bundles.push({ lorebook, entries, folders });
-  }
-  return bundles;
-}
-
 async function buildNativeCharacterEnvelope(
   char: { id: string; createdAt: string; updatedAt: string; comment?: string | null; avatarPath?: string | null },
   data: any,
   galleryStorage: { listByCharacterId: (id: string) => Promise<any[]> },
-  lorebooksStorage: LorebooksStore,
 ) {
-  const [avatar, sprites, gallery, lorebooks] = await Promise.all([
+  const [avatar, sprites, gallery] = await Promise.all([
     readAvatarDataUrl(char.avatarPath),
     readSpritesForId(char.id),
     readGalleryForCharacter(char.id, galleryStorage),
-    readAttachedLorebooksForCharacter(char.id, lorebooksStorage),
   ]);
   return {
     type: "marinara_character",
@@ -519,7 +478,6 @@ async function buildNativeCharacterEnvelope(
       ...(avatar ? { avatar } : {}),
       ...(sprites.length > 0 ? { sprites } : {}),
       ...(gallery.length > 0 ? { gallery } : {}),
-      ...(lorebooks.length > 0 ? { lorebooks } : {}),
       metadata: {
         createdAt: char.createdAt,
         updatedAt: char.updatedAt,
@@ -537,13 +495,12 @@ function buildCompatibleCharacterExport(data: any) {
   };
 }
 
-async function buildNativePersonaEnvelope(persona: Record<string, unknown>, lorebooksStorage: LorebooksStore) {
+async function buildNativePersonaEnvelope(persona: Record<string, unknown>) {
   const { id: _id, createdAt, updatedAt, avatarPath, isActive: _isActive, ...personaData } = persona;
   const personaId = typeof _id === "string" ? _id : "";
-  const [avatar, sprites, lorebooks] = await Promise.all([
+  const [avatar, sprites] = await Promise.all([
     readAvatarDataUrl(typeof avatarPath === "string" ? avatarPath : null),
     personaId ? readSpritesForId(personaId) : Promise.resolve([] as Array<{ filename: string; data: string }>),
-    personaId ? readAttachedLorebooksForPersona(personaId, lorebooksStorage) : Promise.resolve([]),
   ]);
   return {
     type: "marinara_persona",
@@ -553,7 +510,6 @@ async function buildNativePersonaEnvelope(persona: Record<string, unknown>, lore
       ...personaData,
       ...(avatar ? { avatar } : {}),
       ...(sprites.length > 0 ? { sprites } : {}),
-      ...(lorebooks.length > 0 ? { lorebooks } : {}),
       metadata: {
         createdAt,
         updatedAt,
@@ -586,7 +542,6 @@ export async function charactersRoutes(app: FastifyInstance) {
   const storage = createCharactersStorage(app.db);
   const characterGallery = createCharacterGalleryStorage(app.db);
   const personaGallery = createPersonaGalleryStorage(app.db);
-  const lorebooksStorage = createLorebooksStorage(app.db);
 
   // ── Characters ──
 
@@ -1280,7 +1235,7 @@ export async function charactersRoutes(app: FastifyInstance) {
     const compatible = req.query.format === "compatible";
     const payload = compatible
       ? buildCompatibleCharacterExport(charData)
-      : await buildNativeCharacterEnvelope(char, charData, characterGallery, lorebooksStorage);
+      : await buildNativeCharacterEnvelope(char, charData, characterGallery);
     return reply
       .header(
         "Content-Disposition",
@@ -1304,7 +1259,7 @@ export async function charactersRoutes(app: FastifyInstance) {
       const payload =
         format === "compatible"
           ? buildCompatibleCharacterExport(charData)
-          : await buildNativeCharacterEnvelope(char, charData, characterGallery, lorebooksStorage);
+          : await buildNativeCharacterEnvelope(char, charData, characterGallery);
       zip.addFile(
         `${toSafeExportName(String(charData.name ?? "character"), `character-${exportedCount + 1}`)}.${format === "compatible" ? "json" : "marinara.json"}`,
         Buffer.from(JSON.stringify(payload, null, 2), "utf-8"),
@@ -1388,6 +1343,80 @@ export async function charactersRoutes(app: FastifyInstance) {
       reimported: result.reimported ?? false,
     };
   });
+
+  // Embed a standalone/linked character lorebook INTO this character's card
+  // (data.character_book) so it exports with the card — the inverse of the
+  // import above. Writes the lorebook's current entries and the forward
+  // pointer; future /lorebooks edits then keep the embedded copy in sync.
+  app.post<{ Params: { id: string }; Body: { lorebookId?: string } }>(
+    "/:id/embedded-lorebook/embed",
+    async (req, reply) => {
+      const lorebookId = typeof req.body?.lorebookId === "string" ? req.body.lorebookId.trim() : "";
+      if (!lorebookId) return reply.status(400).send({ error: "lorebookId is required" });
+
+      const char = await storage.getById(req.params.id);
+      if (!char) return reply.status(404).send({ error: "Character not found" });
+
+      const lorebook = (await lorebooksStorage.getById(lorebookId)) as Record<string, unknown> | null;
+      if (!lorebook) return reply.status(404).send({ error: "Lorebook not found" });
+
+      // A character card only carries a character-scoped book. Persona
+      // lorebooks are identified by persona links and have no card slot.
+      const personaIds = Array.isArray(lorebook.personaIds) ? (lorebook.personaIds as unknown[]) : [];
+      if (
+        personaIds.length > 0 ||
+        typeof lorebook.personaId === "string" ||
+        (typeof lorebook.category === "string" && lorebook.category !== "character")
+      ) {
+        return reply.status(400).send({ error: "Only character lorebooks can be embedded into a character card." });
+      }
+
+      // A card has a single character_book slot. Allow only when the slot is
+      // empty or already belongs to this lorebook (refresh); never clobber a
+      // different embedded book or an unpointered baked snapshot.
+      const charData = JSON.parse(char.data) as Record<string, unknown>;
+      const currentEmbeddedId = getEmbeddedLorebookId(charData);
+      const hasBook = charData.character_book !== null && charData.character_book !== undefined;
+      const slotBelongsToThis = currentEmbeddedId === lorebookId;
+      const slotEmpty = !currentEmbeddedId && !hasBook;
+      if (!slotBelongsToThis && !slotEmpty) {
+        return reply
+          .status(409)
+          .send({ error: "This character already has an embedded lorebook. Remove it first, then embed this one." });
+      }
+
+      // Ensure the book is linked to this character so it auto-activates and
+      // stays live-syncable — additively (union), never replacing other links.
+      const linkedIds = Array.isArray(lorebook.characterIds) ? (lorebook.characterIds as string[]) : [];
+      const linkAdded = !linkedIds.includes(req.params.id);
+      if (linkAdded) {
+        await lorebooksStorage.update(lorebookId, {
+          characterIds: Array.from(new Set([...linkedIds, req.params.id])),
+        });
+      }
+
+      let result: Awaited<ReturnType<typeof embedLorebookIntoCharacter>>;
+      try {
+        result = await embedLorebookIntoCharacter(app.db, req.params.id, lorebookId);
+      } catch (err) {
+        if (linkAdded) {
+          try {
+            await lorebooksStorage.update(lorebookId, { characterIds: linkedIds });
+          } catch (rollbackErr) {
+            logger.error(rollbackErr, "Failed to roll back lorebook link after embedded lorebook write failed");
+          }
+        }
+        throw err;
+      }
+      return {
+        success: true,
+        lorebookId,
+        entriesEmbedded: result.entriesEmbedded,
+        refreshed: result.refreshed,
+        characterBook: result.characterBook,
+      };
+    },
+  );
 
   // ── Export as PNG ──
 
@@ -2119,7 +2148,7 @@ export async function charactersRoutes(app: FastifyInstance) {
       const compatible = req.query.format === "compatible";
       const payload = compatible
         ? buildCompatiblePersonaExport(persona as Record<string, unknown>)
-        : await buildNativePersonaEnvelope(persona as Record<string, unknown>, lorebooksStorage);
+        : await buildNativePersonaEnvelope(persona as Record<string, unknown>);
       return reply
         .header(
           "Content-Disposition",
@@ -2143,7 +2172,7 @@ export async function charactersRoutes(app: FastifyInstance) {
       const payload =
         format === "compatible"
           ? buildCompatiblePersonaExport(persona as Record<string, unknown>)
-          : await buildNativePersonaEnvelope(persona as Record<string, unknown>, lorebooksStorage);
+          : await buildNativePersonaEnvelope(persona as Record<string, unknown>);
       zip.addFile(
         `${toSafeExportName(String(persona.name ?? "persona"), `persona-${exportedCount + 1}`)}.${format === "compatible" ? "json" : "marinara.json"}`,
         Buffer.from(JSON.stringify(payload, null, 2), "utf-8"),

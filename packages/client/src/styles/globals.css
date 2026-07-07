@@ -2219,6 +2219,27 @@ input[type="range"].mari-local-music-volume-slider::-moz-range-thumb {
   background: var(--range-thumb-color);
 }
 
+input[type="range"].mari-tts-line-volume-slider {
+  --range-track-color: color-mix(in srgb, var(--marinara-chat-chrome-panel-muted) 28%, transparent);
+  --range-fill-color: var(--marinara-chat-chrome-accent);
+  --range-thumb-color: var(--marinara-chat-chrome-accent);
+  --range-thumb-size: 0.75rem;
+  --range-track-height: 0.25rem;
+  --range-thumb-shadow: 0 0 0 0.125rem var(--marinara-chat-chrome-panel-bg);
+
+  accent-color: var(--range-fill-color);
+}
+
+input[type="range"].mari-tts-line-volume-slider::-webkit-slider-thumb {
+  background: var(--range-thumb-color);
+  opacity: 1;
+}
+
+input[type="range"].mari-tts-line-volume-slider::-moz-range-thumb {
+  background: var(--range-thumb-color);
+  opacity: 1;
+}
+
 @font-face {
   font-family: "Straight Quotes";
   src:

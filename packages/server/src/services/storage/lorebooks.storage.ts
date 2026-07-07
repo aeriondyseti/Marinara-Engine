@@ -963,7 +963,8 @@ export function createLorebooksStorage(db: DB) {
         lorebookId,
         name: input.name,
         enabled: String(input.enabled ?? true),
-        // v1 ignores any non-null parentFolderId — caller is the route layer.
+        // Honors input.parentFolderId (null = root); the route layer validates
+        // the parent (exists, same lorebook, no cycle) before calling.
         parentFolderId: input.parentFolderId ?? null,
         order,
         createdAt: timestamp,

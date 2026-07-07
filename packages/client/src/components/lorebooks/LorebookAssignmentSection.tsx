@@ -10,7 +10,7 @@ import {
   type LorebookScopeMode,
 } from "@marinara-engine/shared";
 import { useChats } from "../../hooks/use-chats";
-import { useLorebooks, useUpdateLorebook } from "../../hooks/use-lorebooks";
+import { useEmbedLorebook, useLorebooks, useUpdateLorebook } from "../../hooks/use-lorebooks";
 import { DEFAULT_LOREBOOK_SCOPE, normalizeLorebookScope } from "../../lib/lorebook-scope";
 import { cn } from "../../lib/utils";
 import { useUIStore } from "../../stores/ui.store";
@@ -22,6 +22,14 @@ interface LorebookAssignmentSectionProps {
   ownerType: LorebookOwnerType;
   ownerId: string | null;
   ownerName: string;
+  /** The lorebook currently embedded in the character card (character owners only). */
+  embeddedLorebookId?: string | null;
+  /** True when the card's single character_book slot is already occupied (may be an unpointered baked book). */
+  slotOccupied?: boolean;
+  /** Called after a successful embed so the parent editor can patch its local state. */
+  onEmbedded?: (result: { lorebookId: string; characterBook: unknown }) => void;
+  /** Reports embed/refresh progress so the parent editor can block racing saves. */
+  onEmbeddingChange?: (embedding: boolean) => void;
 }
 
 interface AssignmentDraft {
@@ -69,12 +77,35 @@ function matchesOwnerChat(chat: Chat, ownerType: LorebookOwnerType, ownerId: str
   return chat.personaId === ownerId;
 }
 
-export function LorebookAssignmentSection({ ownerType, ownerId, ownerName }: LorebookAssignmentSectionProps) {
+export function LorebookAssignmentSection({
+  ownerType,
+  ownerId,
+  ownerName,
+  embeddedLorebookId,
+  slotOccupied,
+  onEmbedded,
+  onEmbeddingChange,
+}: LorebookAssignmentSectionProps) {
   const openModal = useUIStore((state) => state.openModal);
   const openLorebookDetail = useUIStore((state) => state.openLorebookDetail);
   const { data: lorebooks = [], isLoading } = useLorebooks("character");
   const { data: chats = [] } = useChats();
   const updateLorebook = useUpdateLorebook();
+  const embedLorebook = useEmbedLorebook();
+
+  const handleEmbed = async (lorebook: Lorebook) => {
+    if (!ownerId) return;
+    onEmbeddingChange?.(true);
+    try {
+      const res = await embedLorebook.mutateAsync({ characterId: ownerId, lorebookId: lorebook.id });
+      onEmbedded?.({ lorebookId: lorebook.id, characterBook: res.characterBook });
+      toast.success(res.refreshed ? `Refreshed embedded ${lorebook.name}.` : `Embedded ${lorebook.name} into the card.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to embed lorebook.");
+    } finally {
+      onEmbeddingChange?.(false);
+    }
+  };
   const [draft, setDraft] = useState<AssignmentDraft | null>(null);
 
   const eligibleChats = useMemo(
@@ -222,6 +253,42 @@ export function LorebookAssignmentSection({ ownerType, ownerId, ownerName }: Lor
                 >
                   Scope
                 </button>
+                {ownerType === "character" &&
+                  (lorebook.id === embeddedLorebookId ? (
+                    <>
+                      <span className="rounded-lg bg-emerald-500/15 px-2 py-1 text-[0.625rem] font-medium text-emerald-500">
+                        Embedded
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleEmbed(lorebook)}
+                        disabled={embedLorebook.isPending}
+                        className="rounded-lg px-2 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50"
+                        title="Rewrite the card's embedded copy from this lorebook's current entries"
+                      >
+                        Refresh
+                      </button>
+                    </>
+                  ) : embeddedLorebookId || slotOccupied ? (
+                    <button
+                      type="button"
+                      disabled
+                      className="cursor-not-allowed rounded-lg px-2 py-1 text-[0.625rem] font-medium text-[var(--muted-foreground)] opacity-50"
+                      title="Remove the current embedded lorebook first"
+                    >
+                      Embed into card
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => handleEmbed(lorebook)}
+                      disabled={embedLorebook.isPending}
+                      className="rounded-lg px-2 py-1 text-[0.625rem] font-medium text-[var(--primary)] transition-colors hover:bg-[var(--primary)]/15 disabled:opacity-50"
+                      title="Write this lorebook into the character card so it exports with the character"
+                    >
+                      Embed into card
+                    </button>
+                  ))}
                 <button
                   type="button"
                   onClick={() => unassignLorebook(lorebook)}

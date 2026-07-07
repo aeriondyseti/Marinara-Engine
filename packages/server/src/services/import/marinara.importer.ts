@@ -3,6 +3,7 @@
 // ──────────────────────────────────────────────
 import type { DB } from "../../db/connection.js";
 import {
+  canReparentFolder,
   getFolderImportEntries,
   getFolderManifestConfig,
   isJsonRecord,
@@ -204,11 +205,6 @@ const VALID_MATCHING_SOURCES = new Set<LorebookMatchingSource>([
   "persona_tags",
 ]);
 
-type BundledLorebookOwner = {
-  characterId?: string;
-  personaId?: string;
-};
-
 function readMatchingSources(value: unknown): LorebookMatchingSource[] {
   if (!Array.isArray(value)) return [];
   return value.filter((source): source is LorebookMatchingSource =>
@@ -285,7 +281,6 @@ async function importCharacter(data: unknown, db: DB) {
     avatar?: unknown;
     sprites?: unknown;
     gallery?: unknown;
-    lorebooks?: unknown;
   };
   const charData = d?.data ? { ...(d.data as Record<string, unknown>) } : undefined;
   const metadata = d?.metadata && typeof d.metadata === "object" ? (d.metadata as Record<string, unknown>) : null;
@@ -347,7 +342,6 @@ async function importCharacter(data: unknown, db: DB) {
     }
     await restoreSprites(d.sprites, result.id);
     await restoreCharacterGallery(d.gallery, result.id, galleryStorage);
-    await importBundledLorebooks(d.lorebooks, db, { characterId: result.id });
   }
   return {
     success: true,
@@ -418,7 +412,6 @@ async function importPersona(data: unknown, db: DB) {
       await storage.updatePersona(result.id, { avatarPath });
     }
     await restoreSprites(d.sprites, result.id);
-    await importBundledLorebooks(d.lorebooks, db, { personaId: result.id });
   }
   return {
     success: true,
@@ -434,14 +427,7 @@ async function importLorebook(data: unknown, db: DB) {
   return importLorebookPayload(data, db);
 }
 
-async function importBundledLorebooks(lorebooks: unknown, db: DB, owner: BundledLorebookOwner): Promise<void> {
-  if (!Array.isArray(lorebooks) || lorebooks.length === 0) return;
-  for (const lorebook of lorebooks) {
-    await importLorebookPayload(lorebook, db, owner);
-  }
-}
-
-async function importLorebookPayload(data: unknown, db: DB, owner?: BundledLorebookOwner) {
+async function importLorebookPayload(data: unknown, db: DB) {
   const storage = createLorebooksStorage(db);
   const d = data as {
     lorebook?: Record<string, unknown>;
@@ -452,8 +438,6 @@ async function importLorebookPayload(data: unknown, db: DB, owner?: BundledLoreb
     return { success: false, type: "marinara_lorebook" as const, error: "Invalid lorebook data" };
   }
   const lb = d.lorebook;
-  const ownerCharacterIds = owner?.characterId ? [owner.characterId] : null;
-  const ownerPersonaIds = owner?.personaId ? [owner.personaId] : null;
   const newLb = (await storage.create(
     {
       name: String(lb.name ?? "Imported Lorebook"),
@@ -468,24 +452,20 @@ async function importLorebookPayload(data: unknown, db: DB, owner?: BundledLoreb
       vectorQueryDepth: Number(lb.vectorQueryDepth ?? 10),
       vectorScoreThreshold: Number(lb.vectorScoreThreshold ?? 0.3),
       vectorMaxResults: Number(lb.vectorMaxResults ?? 10),
-      characterId: owner ? null : typeof lb.characterId === "string" ? lb.characterId : null,
-      characterIds: owner
-        ? (ownerCharacterIds ?? [])
-        : Array.isArray(lb.characterIds)
-          ? lb.characterIds.filter((value): value is string => typeof value === "string")
-          : typeof lb.characterId === "string"
-            ? [lb.characterId]
-            : [],
-      personaId: owner ? null : typeof lb.personaId === "string" ? lb.personaId : null,
-      personaIds: owner
-        ? (ownerPersonaIds ?? [])
-        : Array.isArray(lb.personaIds)
-          ? lb.personaIds.filter((value): value is string => typeof value === "string")
-          : typeof lb.personaId === "string"
-            ? [lb.personaId]
-            : [],
-      chatId: owner ? null : typeof lb.chatId === "string" ? lb.chatId : null,
-      isGlobal: owner ? false : lb.isGlobal === true || lb.isGlobal === "true",
+      characterId: typeof lb.characterId === "string" ? lb.characterId : null,
+      characterIds: Array.isArray(lb.characterIds)
+        ? lb.characterIds.filter((value): value is string => typeof value === "string")
+        : typeof lb.characterId === "string"
+          ? [lb.characterId]
+          : [],
+      personaId: typeof lb.personaId === "string" ? lb.personaId : null,
+      personaIds: Array.isArray(lb.personaIds)
+        ? lb.personaIds.filter((value): value is string => typeof value === "string")
+        : typeof lb.personaId === "string"
+          ? [lb.personaId]
+          : [],
+      chatId: typeof lb.chatId === "string" ? lb.chatId : null,
+      isGlobal: lb.isGlobal === true || lb.isGlobal === "true",
       enabled: lb.enabled !== false,
       scope: readLorebookScope(lb.scope),
       tags: Array.isArray(lb.tags) ? lb.tags.map(String) : [],
@@ -495,20 +475,49 @@ async function importLorebookPayload(data: unknown, db: DB, owner?: BundledLoreb
     readTimestampOverrides(lb),
   )) as Record<string, unknown> | null;
 
-  // Re-create folders first so we can remap old folder IDs → new folder IDs
-  // before mapping entries. Older exports without `folders` simply skip this
-  // step and every entry lands at root.
+  // Re-create folders in two passes so nesting survives the round-trip. A child
+  // folder can be listed before its parent, so pass 1 creates every folder at
+  // root and builds the old-ID → new-ID remap; pass 2 re-parents each folder
+  // through that remap. Every move is validated with canReparentFolder (the same
+  // guard the PATCH route uses), so a malformed/hand-edited export can never
+  // persist a cycle — an unresolvable or cyclic parent just leaves that folder at
+  // root. Older exports without `folders` skip both passes and entries land at root.
   const folderIdRemap = new Map<string, string>();
   if (newLb && Array.isArray(d.folders) && d.folders.length > 0) {
+    const lorebookId = newLb.id as string;
+    // Pass 1 — create at root, remembering each folder's exported parent (old ID).
+    const pendingReparents: Array<{ newId: string; oldParentId: string }> = [];
     for (const f of d.folders) {
       const oldId = typeof f.id === "string" ? f.id : null;
-      const created = (await storage.createFolder(newLb.id as string, {
+      const created = (await storage.createFolder(lorebookId, {
         name: String(f.name ?? "Folder"),
         enabled: f.enabled !== false,
-        parentFolderId: null, // v1 ignores nesting on import
+        parentFolderId: null,
         order: Number(f.order ?? 0),
       })) as Record<string, unknown> | null;
-      if (oldId && created?.id) folderIdRemap.set(oldId, created.id as string);
+      const newId = created?.id;
+      if (oldId && typeof newId === "string") {
+        folderIdRemap.set(oldId, newId);
+        const oldParentId = typeof f.parentFolderId === "string" ? f.parentFolderId : null;
+        if (oldParentId) pendingReparents.push({ newId, oldParentId });
+      }
+    }
+    // Pass 2 — re-parent through the remap. `folderRows` mirrors the DB state so
+    // canReparentFolder sees each applied move; an invalid move (dangling or
+    // cyclic parent) is skipped, leaving that folder at root like the editor does.
+    const folderRows = Array.from(folderIdRemap.values()).map((id) => ({
+      id,
+      lorebookId,
+      parentFolderId: null as string | null,
+    }));
+    const rowById = new Map(folderRows.map((row) => [row.id, row]));
+    for (const { newId, oldParentId } of pendingReparents) {
+      const newParentId = folderIdRemap.get(oldParentId);
+      if (!newParentId) continue; // parent wasn't part of the export → leave at root
+      if (!canReparentFolder(folderRows, newId, newParentId).ok) continue;
+      await storage.updateFolder(newId, { parentFolderId: newParentId }, lorebookId);
+      const row = rowById.get(newId);
+      if (row) row.parentFolderId = newParentId;
     }
   }
 

@@ -73,6 +73,8 @@ class TTSService {
   /** ID of the entity (e.g. message id) currently being spoken */
   private activeId: string | null = null;
   private listeners = new Set<StateListener>();
+  private livePlaybackVolume: number | null = null;
+  private livePlaybackMuted: boolean | null = null;
 
   // ── Listeners ─────────────────────────────────
 
@@ -121,13 +123,25 @@ class TTSService {
 
   // ── Playback ──────────────────────────────────
 
+  private beginPlaybackOptions(options: Pick<TTSSpeakOptions, "volume" | "muted">): void {
+    this.livePlaybackVolume = typeof options.volume === "number" ? clampPlaybackVolume(options.volume) : null;
+    this.livePlaybackMuted = typeof options.muted === "boolean" ? options.muted : null;
+  }
+
+  private clearPlaybackOptions(): void {
+    this.livePlaybackVolume = null;
+    this.livePlaybackMuted = null;
+  }
+
   private applyPlaybackOptions(audio: HTMLAudioElement, options: Pick<TTSSpeakOptions, "volume" | "muted">): void {
-    const volume = clampPlaybackVolume(options.volume);
+    const volume = this.livePlaybackVolume ?? clampPlaybackVolume(options.volume);
     audio.volume = volume;
-    audio.muted = options.muted === true || volume <= 0;
+    audio.muted = (this.livePlaybackMuted ?? options.muted) === true || volume <= 0;
   }
 
   setCurrentPlaybackVolume(volume: number, muted = false): void {
+    this.livePlaybackVolume = clampPlaybackVolume(volume);
+    this.livePlaybackMuted = muted;
     if (!this.audio) return;
     this.applyPlaybackOptions(this.audio, { volume, muted });
   }
@@ -165,6 +179,7 @@ class TTSService {
   /** Speak the given text. `id` is an optional caller-supplied key (e.g. message id) so callers can track which item is active. */
   async speak(text: string, id?: string, options: TTSSpeakOptions = {}): Promise<void> {
     this.stop();
+    this.beginPlaybackOptions(options);
     const sequence = ++this.sequence;
     this.lastError = null;
 
@@ -241,6 +256,7 @@ class TTSService {
     if (playableRequests.length === 0) return;
 
     this.stop();
+    this.beginPlaybackOptions(options);
     const sequence = ++this.sequence;
     this.lastError = null;
 
@@ -454,6 +470,7 @@ class TTSService {
     this.sequence += 1;
     this.abortController?.abort();
     this.abortController = null;
+    this.clearPlaybackOptions();
 
     if (this.audio) {
       this.audio.pause();

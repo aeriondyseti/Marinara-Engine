@@ -563,6 +563,8 @@ interface UIState {
   trimIncompleteModelOutput: boolean;
   /** When true, chat inputs show a microphone button for browser speech-to-text dictation. */
   speechToTextEnabled: boolean;
+  /** User-set TTS line playback volume (0-100). */
+  ttsLineVolume: number;
   /** When true, allow the rare Chibi Professor Mari scroll toast. */
   chibiProfessorMariEnabled: boolean;
   /** When true, achievements appear on Home and announce unlocks. Backend tracking stays silent either way. */
@@ -844,6 +846,7 @@ interface UIState {
   setConvertLatexSymbols: (v: boolean) => void;
   setTrimIncompleteModelOutput: (v: boolean) => void;
   setSpeechToTextEnabled: (v: boolean) => void;
+  setTTSLineVolume: (v: number) => void;
   setChibiProfessorMariEnabled: (v: boolean) => void;
   setAchievementsEnabled: (v: boolean) => void;
   setMusicPlayerEnabled: (v: boolean) => void;
@@ -1043,6 +1046,7 @@ export function pickSyncedSettings(state: UIState) {
     convertLatexSymbols: state.convertLatexSymbols,
     trimIncompleteModelOutput: state.trimIncompleteModelOutput,
     speechToTextEnabled: state.speechToTextEnabled,
+    ttsLineVolume: state.ttsLineVolume,
     chibiProfessorMariEnabled: state.chibiProfessorMariEnabled,
     achievementsEnabled: state.achievementsEnabled,
     musicPlayerEnabled: state.musicPlayerEnabled,
@@ -1218,6 +1222,7 @@ export const useUIStore = create<UIState>()(
       convertLatexSymbols: true,
       trimIncompleteModelOutput: false,
       speechToTextEnabled: false,
+      ttsLineVolume: 50,
       chibiProfessorMariEnabled: true,
       achievementsEnabled: true,
       musicPlayerEnabled: true,
@@ -1768,6 +1773,7 @@ export const useUIStore = create<UIState>()(
       setConvertLatexSymbols: (v) => set({ convertLatexSymbols: v }),
       setTrimIncompleteModelOutput: (v) => set({ trimIncompleteModelOutput: v }),
       setSpeechToTextEnabled: (v) => set({ speechToTextEnabled: v }),
+      setTTSLineVolume: (v) => set({ ttsLineVolume: Math.max(0, Math.min(100, Math.round(v))) }),
       setChibiProfessorMariEnabled: (v) => set({ chibiProfessorMariEnabled: v }),
       setAchievementsEnabled: (v) => set({ achievementsEnabled: v }),
       setMusicPlayerEnabled: (v) =>
@@ -1973,7 +1979,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: "marinara-engine-ui",
-      version: 68,
+      version: 69,
       // Debounce localStorage writes to avoid sync I/O on every state change
       storage: createJSONStorage(() => {
         let timer: ReturnType<typeof setTimeout> | null = null;
@@ -2349,6 +2355,11 @@ export const useUIStore = create<UIState>()(
         if (typeof persisted.conversationCallVoiceMuted !== "boolean") {
           persisted.conversationCallVoiceMuted = false;
         }
+        // v68 -> v69: persist message TTS line playback volume.
+        if (typeof persisted.ttsLineVolume !== "number") {
+          persisted.ttsLineVolume = 50;
+        }
+        persisted.ttsLineVolume = Math.max(0, Math.min(100, Math.round(persisted.ttsLineVolume)));
         // v42 -> v44: reconcile parallel v43 UI preference additions.
         if (version <= 43 && persisted.youtubePlayerEnabled === undefined) {
           persisted.youtubePlayerEnabled = true;
@@ -2580,6 +2591,7 @@ export const useUIStore = create<UIState>()(
         convertLatexSymbols: state.convertLatexSymbols,
         trimIncompleteModelOutput: state.trimIncompleteModelOutput,
         speechToTextEnabled: state.speechToTextEnabled,
+        ttsLineVolume: state.ttsLineVolume,
         chibiProfessorMariEnabled: state.chibiProfessorMariEnabled,
         achievementsEnabled: state.achievementsEnabled,
         musicPlayerEnabled: state.musicPlayerEnabled,

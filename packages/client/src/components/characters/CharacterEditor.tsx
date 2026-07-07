@@ -264,9 +264,15 @@ export function CharacterEditor() {
   const dirtyRef = useRef(false);
   const editRevisionRef = useRef(0);
   const setEditorDirty = useUIStore((s) => s.setEditorDirty);
+  const lorebookEmbedInFlightRef = useRef(false);
+  const [lorebookEmbedding, setLorebookEmbedding] = useState(false);
   const setDirtyState = useCallback((nextDirty: boolean) => {
     dirtyRef.current = nextDirty;
     setDirty(nextDirty);
+  }, []);
+  const setLorebookEmbedInFlight = useCallback((inFlight: boolean) => {
+    lorebookEmbedInFlightRef.current = inFlight;
+    setLorebookEmbedding(inFlight);
   }, []);
   const markDirty = useCallback(() => {
     editRevisionRef.current += 1;
@@ -339,6 +345,28 @@ export function CharacterEditor() {
     });
   }, []);
 
+  // Embedding a lorebook into the card mutates the character server-side
+  // (data.character_book + the embeddedLorebook pointer). When the editor is
+  // clean, the detail-query refetch re-syncs formData for us; when it is dirty
+  // the parse effect skips that re-sync, so patch formData directly — otherwise
+  // a later Save would send the stale pre-embed data and silently revert it.
+  const handleLorebookEmbedded = useCallback((lorebookId: string, characterBook: unknown) => {
+    if (!dirtyRef.current) return;
+    setFormData((prev) => {
+      if (!prev) return prev;
+      const extensions = { ...(prev.extensions ?? {}) } as Record<string, unknown>;
+      const importMetadata = { ...((extensions.importMetadata as Record<string, unknown>) ?? {}) };
+      const embeddedLorebook = { ...((importMetadata.embeddedLorebook as Record<string, unknown>) ?? {}) };
+      importMetadata.embeddedLorebook = { ...embeddedLorebook, hasEmbeddedLorebook: true, lorebookId };
+      extensions.importMetadata = importMetadata;
+      return {
+        ...prev,
+        character_book: characterBook as CharacterData["character_book"],
+        extensions: extensions as CharacterData["extensions"],
+      };
+    });
+  }, []);
+
   const updateExtension = useCallback(
     (key: string, value: unknown) => {
       setExtensionValue(key, formatCharacterExtensionValue(key, value, formatQuotes));
@@ -375,6 +403,10 @@ export function CharacterEditor() {
     if (!characterId || !formData) return false;
     if (avatarUploadInFlightRef.current) {
       toast.error("Wait for the current avatar upload to finish before saving.");
+      return false;
+    }
+    if (lorebookEmbedInFlightRef.current) {
+      toast.error("Wait for the embedded lorebook update to finish before saving.");
       return false;
     }
     setSaving(true);
@@ -670,22 +702,30 @@ export function CharacterEditor() {
       toast.error("Wait for the current avatar upload to finish.");
       return;
     }
+    if (lorebookEmbedding) {
+      toast.error("Wait for the embedded lorebook update to finish.");
+      return;
+    }
     if (dirty) {
       setShowUnsavedWarning(true);
       return;
     }
     closeDetail();
-  }, [avatarUploading, dirty, closeDetail]);
+  }, [avatarUploading, dirty, closeDetail, lorebookEmbedding]);
 
   const forceClose = useCallback(() => {
     if (avatarUploading) {
       toast.error("Wait for the current avatar upload to finish.");
       return;
     }
+    if (lorebookEmbedding) {
+      toast.error("Wait for the embedded lorebook update to finish.");
+      return;
+    }
     setShowUnsavedWarning(false);
     setDirtyState(false);
     closeDetail();
-  }, [avatarUploading, closeDetail, setDirtyState]);
+  }, [avatarUploading, closeDetail, lorebookEmbedding, setDirtyState]);
 
   const addTag = () => {
     if (!formData) return;
@@ -720,8 +760,8 @@ export function CharacterEditor() {
   }
 
   const headerActionButtonClass = "mari-editor-action inline-flex";
-  const saveDisabled = !dirty || saving || avatarUploading;
-  const saveLabel = avatarUploading ? "Uploading…" : saving ? "Saving…" : "Save";
+  const saveDisabled = !dirty || saving || avatarUploading || lorebookEmbedding;
+  const saveLabel = avatarUploading ? "Uploading…" : lorebookEmbedding ? "Embedding…" : saving ? "Saving…" : "Save";
   const saveButtonClass = cn(
     "mari-editor-action mari-editor-action--primary mari-editor-action--save inline-flex",
     saveDisabled && "cursor-not-allowed opacity-50",
@@ -991,7 +1031,14 @@ export function CharacterEditor() {
               <ColorsTab formData={formData} updateExtension={updateExtension} avatarUrl={avatarPreview} />
             )}
             {activeTab === "stats" && <StatsTab formData={formData} updateExtension={updateExtension} />}
-            {activeTab === "lorebook" && <LorebookTab characterId={characterId} formData={formData} />}
+            {activeTab === "lorebook" && (
+              <LorebookTab
+                characterId={characterId}
+                formData={formData}
+                onEmbedded={handleLorebookEmbedded}
+                onEmbeddingChange={setLorebookEmbedInFlight}
+              />
+            )}
           </div>
         </div>
       </div>
@@ -4017,7 +4064,17 @@ function ColorsTab({
   );
 }
 
-function LorebookTab({ characterId, formData }: { characterId: string | null; formData: CharacterData }) {
+function LorebookTab({
+  characterId,
+  formData,
+  onEmbedded,
+  onEmbeddingChange,
+}: {
+  characterId: string | null;
+  formData: CharacterData;
+  onEmbedded?: (lorebookId: string, characterBook: unknown) => void;
+  onEmbeddingChange?: (embedding: boolean) => void;
+}) {
   const book = formData.character_book;
   const entries = book?.entries ?? [];
   const qc = useQueryClient();
@@ -4079,7 +4136,15 @@ function LorebookTab({ characterId, formData }: { characterId: string | null; fo
         helpText={CHARACTER_LOREBOOK_HELP}
       />
 
-      <LorebookAssignmentSection ownerType="character" ownerId={characterId} ownerName={formData.name} />
+      <LorebookAssignmentSection
+        ownerType="character"
+        ownerId={characterId}
+        ownerName={formData.name}
+        embeddedLorebookId={linkedLorebookId}
+        slotOccupied={hasEmbeddedLorebook}
+        onEmbedded={(result) => onEmbedded?.(result.lorebookId, result.characterBook)}
+        onEmbeddingChange={onEmbeddingChange}
+      />
 
       {hasEmbeddedLorebook && (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--secondary)] px-3 py-2.5">

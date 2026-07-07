@@ -516,6 +516,7 @@ export function ChatArea() {
   const intuitiveSwipeNavigation = useUIStore((s) => s.intuitiveSwipeNavigation);
   const intuitiveSwipeRerollLatest = useUIStore((s) => s.intuitiveSwipeRerollLatest);
   const editLastMessageOnArrowUp = useUIStore((s) => s.editLastMessageOnArrowUp);
+  const ttsLineVolume = useUIStore((s) => s.ttsLineVolume);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevScrollHeightRef = useRef(0);
@@ -2278,8 +2279,9 @@ export function ChatArea() {
 
     void ttsService.speakSequence(withTTSVoiceRequestCacheKeys(ttsRequests, cfg, lastMsg.id), lastMsg.id, {
       progressive: cfg.progressivePlayback,
+      volume: ttsLineVolume / 100,
     });
-  }, [characterMap, isStreaming, resolveTTSCharacterId]);
+  }, [characterMap, isStreaming, resolveTTSCharacterId, ttsLineVolume]);
 
   const newestMsgId = msgData?.pages[0]?.[msgData.pages[0].length - 1]?.id;
   const newestMsgSwipeIndex = msgData?.pages[0]?.[msgData.pages[0].length - 1]?.activeSwipeIndex;

@@ -153,6 +153,22 @@ export function useCreateLorebook() {
   });
 }
 
+export function useEmbedLorebook() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ characterId, lorebookId }: { characterId: string; lorebookId: string }) =>
+      api.post<{ success: boolean; lorebookId: string; entriesEmbedded: number; refreshed: boolean; characterBook: unknown }>(
+        `/characters/${characterId}/embedded-lorebook/embed`,
+        { lorebookId },
+      ),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: lorebookKeys.all });
+      qc.invalidateQueries({ queryKey: lorebookKeys.active() });
+      qc.invalidateQueries({ queryKey: characterKeys.detail(variables.characterId) });
+    },
+  });
+}
+
 export function useUpdateLorebook() {
   const qc = useQueryClient();
   return useMutation({

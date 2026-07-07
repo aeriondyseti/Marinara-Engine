@@ -84,10 +84,11 @@ function addLorebookScopeConflictIssues(value: LorebookScopeConflictInput, ctx: 
 }
 
 // ──────────────────────────────────────────────
-// Folders — collapsible containers for entries
-// `parentFolderId` is reserved for a future nested-folder PR; v1 enforces
-// `null` at the route layer so the schema accepts the field but the server
-// rejects non-null values.
+// Folders — collapsible containers for entries.
+// Folders may nest via `parentFolderId` (`null` = a root-level folder). The
+// POST route verifies the parent exists in the same lorebook; PATCH validates
+// the full move (no self-parent, same lorebook, no descendant cycle) via
+// `canReparentFolder` before persisting.
 // ──────────────────────────────────────────────
 export const createLorebookFolderSchema = z.object({
   name: z.string().min(1).max(200),
