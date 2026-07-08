@@ -88,11 +88,7 @@ import {
   type AssemblerInput,
 } from "../services/prompt/index.js";
 import { wrapContent } from "../services/prompt/format-engine.js";
-import {
-  yieldToEventLoop,
-  type ChatMessage,
-  type LLMUsage,
-} from "../services/llm/base-provider.js";
+import { yieldToEventLoop, type ChatMessage, type LLMUsage } from "../services/llm/base-provider.js";
 import { executeToolCalls } from "../services/tools/tool-executor.js";
 import { createAgentPipeline, type ResolvedAgent, type AgentInjection } from "../services/agents/agent-pipeline.js";
 import { DATA_DIR } from "../utils/data-dir.js";
@@ -202,9 +198,7 @@ import {
   findResultAgent,
   isAbortLikeError,
 } from "./generate/agent-result-capabilities.js";
-import {
-  appendConversationCustomAssetAdvertisements,
-} from "./generate/conversation-custom-assets.js";
+import { appendConversationCustomAssetAdvertisements } from "./generate/conversation-custom-assets.js";
 import { injectConnectedConversationPromptBlocks } from "./generate/connected-conversation-injections.js";
 import { resolveConversationConnectedChatContext } from "./generate/conversation-connected-context.js";
 import { buildConversationCurrentContextBlock } from "./generate/conversation-context-block.js";
@@ -392,7 +386,10 @@ import {
   resolveModelAccessPolicy,
   resolveStoredModelContextLimit,
 } from "../services/generation/model-access-policy.js";
-import { promptPreviewForAgents, resolveCustomWritableLorebookIds } from "../services/generation/agent-prompt-runtime.js";
+import {
+  promptPreviewForAgents,
+  resolveCustomWritableLorebookIds,
+} from "../services/generation/agent-prompt-runtime.js";
 import { resolveAgentPipelineAgents } from "../services/generation/agent-resolution.js";
 import { resolveGenerationTools } from "../services/generation/tool-resolution-runtime.js";
 import {
@@ -426,6 +423,59 @@ import {
 } from "./generate/agent-write-approval.js";
 
 const PROFESSOR_MARI_INTERNAL_CHAT_MARKER = "professor-mari";
+type ConversationContextMacroKey = "context" | "commands" | "reactRules" | "memories" | "lorebook";
+type ConversationContextMacroSlots = Record<ConversationContextMacroKey, boolean>;
+
+const EMPTY_CONVERSATION_CONTEXT_MACRO_SLOTS: ConversationContextMacroSlots = {
+  context: false,
+  commands: false,
+  reactRules: false,
+  memories: false,
+  lorebook: false,
+};
+
+const CONVERSATION_CONTEXT_MACRO_ALIASES: Record<ConversationContextMacroKey, string[]> = {
+  context: ["context", "status"],
+  commands: ["commands", "commandList"],
+  reactRules: ["reactRules", "emojiReact"],
+  memories: ["memories", "memoryRecall"],
+  lorebook: ["lorebook", "lore"],
+};
+
+function conversationContextMacroPattern(key: ConversationContextMacroKey): RegExp {
+  const aliases = CONVERSATION_CONTEXT_MACRO_ALIASES[key].map((alias) => alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return new RegExp(`\\{\\{\\s*(?:${aliases.join("|")})\\s*\\}\\}`, "gi");
+}
+
+function resolveConversationContextMacroSlots(template: string): ConversationContextMacroSlots {
+  const slots: ConversationContextMacroSlots = { ...EMPTY_CONVERSATION_CONTEXT_MACRO_SLOTS };
+  for (const key of Object.keys(CONVERSATION_CONTEXT_MACRO_ALIASES) as ConversationContextMacroKey[]) {
+    slots[key] = conversationContextMacroPattern(key).test(template);
+  }
+  return slots;
+}
+
+function replaceConversationContextMacro(
+  messages: GenerationPromptMessage[],
+  key: ConversationContextMacroKey,
+  content: string | null | undefined,
+): boolean {
+  const pattern = conversationContextMacroPattern(key);
+  let replaced = false;
+  const replacement = content?.trim() ?? "";
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index]!;
+    pattern.lastIndex = 0;
+    if (!pattern.test(message.content)) continue;
+    pattern.lastIndex = 0;
+    messages[index] = {
+      ...message,
+      content: message.content.replace(pattern, replacement).trim(),
+    };
+    replaced = true;
+  }
+  return replaced;
+}
 
 export async function generateRoutes(app: FastifyInstance) {
   const isDebug = logger.isLevelEnabled("debug");
@@ -1133,6 +1183,12 @@ export async function generateRoutes(app: FastifyInstance) {
         let mariFetchSucceededThisIteration = false;
         let finalMessages: GenerationPromptMessage[] = [...runningMessagesForFollowUp];
         let conversationCommandsReminder: string | null = null;
+        let conversationContextMacroSlots: ConversationContextMacroSlots = {
+          ...EMPTY_CONVERSATION_CONTEXT_MACRO_SLOTS,
+        };
+        let conversationReactRules: string | null = null;
+        let conversationImportantMemoryBlock: string | null = null;
+        const identityFallbackPromptTemplateSources: string[] = [];
         const conversationCommandsEnabled = chatMode === "conversation" && chatMeta.characterCommands !== false;
         let temperature: number | undefined = 1;
         let maxTokens = 4096;
@@ -1690,6 +1746,8 @@ export async function generateRoutes(app: FastifyInstance) {
               : ((chatMeta.groupChatMode as string) ?? "merged");
           const conversationPromptTemplate =
             customPrompt ?? (selectedConversationPrompt || DEFAULT_CONVERSATION_PROMPT);
+          identityFallbackPromptTemplateSources.push(conversationPromptTemplate);
+          conversationContextMacroSlots = resolveConversationContextMacroSlots(conversationPromptTemplate);
           const renderedConversationPrompt = resolveMacros(
             conversationPromptTemplate
               .replace(/\{\{charName\}\}/g, charNameList)
@@ -1736,6 +1794,7 @@ export async function generateRoutes(app: FastifyInstance) {
             chars,
             agentsStore,
             db: app.db,
+            wrapFormat,
             resolvePromptMacros,
           });
 
@@ -1751,14 +1810,17 @@ export async function generateRoutes(app: FastifyInstance) {
           // are enabled. Advertising the syntax while that pipeline is off leaves
           // the raw tag in the visible message with no badge (#2877).
           if (conversationCommandsEnabled && isConversationCommandEnabled(chatMeta, "react")) {
-            conversationSystemPrompt +=
-              '\n\nYou can react to the user\'s most recent message with a single emoji by writing [react: emoji="😂"] on its own line — any standard emoji, or a custom one you have access to as [react: emoji=":name:"]. It posts as a small badge on their message, the way you\'d react in a chat app. You can also react to another character instead by adding their name: [react: emoji="🙄" to "Character Name"] puts the badge on that character\'s most recent message. Only the [react: …] tag posts a badge — an emoji typed in your message body is just text. Use it only when it genuinely fits how your character feels in the moment; it is optional, may stand alone or sit alongside your reply, and choosing a flat reaction or none at all is itself a valid choice.';
+            conversationReactRules =
+              'You can react to the user\'s most recent message with a single emoji by writing [react: emoji="😂"] on its own line — any standard emoji, or a custom one you have access to as [react: emoji=":name:"]. It posts as a small badge on their message, the way you\'d react in a chat app. You can also react to another character instead by adding their name: [react: emoji="🙄" to "Character Name"] puts the badge on that character\'s most recent message. Only the [react: …] tag posts a badge — an emoji typed in your message body is just text. Use it only when it genuinely fits how your character feels in the moment; it is optional, may stand alone or sit alongside your reply, and choosing a flat reaction or none at all is itself a valid choice.';
             // Merged group replies only: individual-order group chats forbid
             // name-prefixed sections entirely (matching the other name-prefix
             // instructions gated on earlyGroupMode !== "individual").
             if (characterIds.length > 1 && earlyGroupMode !== "individual") {
-              conversationSystemPrompt +=
+              conversationReactRules +=
                 " In this group chat, each character reacts for themselves: write the tag inside that character's own section of the reply, directly under their name line, so the reaction is credited to them — never above the first name line. One reaction per reply is not a limit — every character who would plausibly react may include their own tag in their own section, the way several people tap a reaction on the same message in a real chat.";
+            }
+            if (!conversationContextMacroSlots.reactRules) {
+              conversationSystemPrompt += "\n\n" + conversationReactRules;
             }
           }
           // ── Home Professor Mari: inject assistant knowledge & commands ──
@@ -1819,7 +1881,8 @@ export async function generateRoutes(app: FastifyInstance) {
             conversationSystemPrompt += "\n\n" + connectedChatSystemPrompt;
           }
 
-          if (preparedHistory.importantMemoryBlock) {
+          conversationImportantMemoryBlock = preparedHistory.importantMemoryBlock;
+          if (conversationImportantMemoryBlock && !conversationContextMacroSlots.memories) {
             conversationSystemPrompt += "\n\n" + preparedHistory.importantMemoryBlock;
           }
 
@@ -1829,8 +1892,21 @@ export async function generateRoutes(app: FastifyInstance) {
             { role: "system" as const, content: conversationSystemPrompt },
             ...finalMessages,
             ...(connectedChatBlock ? [{ role: "user" as const, content: connectedChatBlock }] : []),
-            { role: "user" as const, content: contextBlock },
+            ...(conversationContextMacroSlots.context ? [] : [{ role: "user" as const, content: contextBlock }]),
           ];
+          if (conversationContextMacroSlots.context) {
+            replaceConversationContextMacro(finalMessages, "context", contextBlock);
+          }
+          if (conversationContextMacroSlots.reactRules) {
+            replaceConversationContextMacro(finalMessages, "reactRules", conversationReactRules);
+          }
+          if (conversationContextMacroSlots.commands) {
+            replaceConversationContextMacro(
+              finalMessages,
+              "commands",
+              !input.impersonate ? conversationCommandsReminder : null,
+            );
+          }
 
           // ── Lorebook injection for conversation mode ──
           {
@@ -1876,10 +1952,16 @@ export async function generateRoutes(app: FastifyInstance) {
               .join("\n");
             if (loreContent) {
               const loreBlock = wrapContent(loreContent, "Lore", wrapFormat);
-              // Inject before the awareness block (or before first user/assistant message)
-              const firstUserIdx = finalMessages.findIndex((m) => m.role === "user" || m.role === "assistant");
-              const insertAt = firstUserIdx >= 0 ? firstUserIdx : finalMessages.length;
-              finalMessages.splice(insertAt, 0, { role: "system" as const, content: loreBlock });
+              if (conversationContextMacroSlots.lorebook) {
+                replaceConversationContextMacro(finalMessages, "lorebook", loreBlock);
+              } else {
+                // Inject before the awareness block (or before first user/assistant message)
+                const firstUserIdx = finalMessages.findIndex((m) => m.role === "user" || m.role === "assistant");
+                const insertAt = firstUserIdx >= 0 ? firstUserIdx : finalMessages.length;
+                finalMessages.splice(insertAt, 0, { role: "system" as const, content: loreBlock });
+              }
+            } else if (conversationContextMacroSlots.lorebook) {
+              replaceConversationContextMacro(finalMessages, "lorebook", "");
             }
             // Inject depth-based lorebook entries into the message array
             if (lorebookResult.depthEntries.length > 0) {
@@ -2185,6 +2267,7 @@ export async function generateRoutes(app: FastifyInstance) {
             personaDescription,
             personaFields,
             persona,
+            promptTemplateSources: identityFallbackPromptTemplateSources,
             resolvePromptMacros,
           });
         }
@@ -2374,7 +2457,31 @@ export async function generateRoutes(app: FastifyInstance) {
         const memoryRecallDefault = chatMode === "conversation" || isSceneChat;
         const enableMemoryRecall =
           chatMeta.enableMemoryRecall !== undefined ? chatMeta.enableMemoryRecall === true : memoryRecallDefault;
-        if (enableMemoryRecall && memoryRecallVectorizerAvailable) {
+        if (chatMode === "conversation" && conversationContextMacroSlots.memories) {
+          const memoryRecallMessages: GenerationPromptMessage[] = [];
+          if (enableMemoryRecall && memoryRecallVectorizerAvailable) {
+            await injectMemoryRecallContext({
+              db: app.db,
+              messages: memoryRecallMessages,
+              currentInputMessages: currentInputMessages(),
+              chatId: input.chatId,
+              embeddingSource: memoryRecallEmbeddingSource,
+              contextLimit: suppressModelParameters ? undefined : (effectiveMaxContext ?? connectionMaxContext),
+              sendProgress,
+              signal: abortController.signal,
+              resolveMacros: (value) => resolveMacros(value, promptMacroContext, { trimResult: false }),
+            });
+          }
+          const memoryRecallBlock = memoryRecallMessages
+            .map((message) => message.content)
+            .filter(Boolean)
+            .join("\n\n");
+          replaceConversationContextMacro(
+            finalMessages,
+            "memories",
+            [conversationImportantMemoryBlock, memoryRecallBlock].filter(Boolean).join("\n\n"),
+          );
+        } else if (enableMemoryRecall && memoryRecallVectorizerAvailable) {
           await injectMemoryRecallContext({
             db: app.db,
             messages: finalMessages,
@@ -2388,7 +2495,12 @@ export async function generateRoutes(app: FastifyInstance) {
           });
         }
 
-        if (chatMode === "conversation" && conversationCommandsReminder && !input.impersonate) {
+        if (
+          chatMode === "conversation" &&
+          conversationCommandsReminder &&
+          !input.impersonate &&
+          !conversationContextMacroSlots.commands
+        ) {
           finalMessages.push({ role: "user" as const, content: conversationCommandsReminder });
           logger.debug(
             "[generate/conversation] Injected commands reminder (%d chars) as last user message",
@@ -3127,6 +3239,13 @@ export async function generateRoutes(app: FastifyInstance) {
           }
 
           const agentName = resultAgent?.name ?? result.agentType;
+          const existingEntries =
+            isBuiltInLorebookAgent && Array.isArray(agentContext.memory._existingLorebookEntries)
+              ? (agentContext.memory._existingLorebookEntries as Array<{
+                  name?: string | null;
+                  content?: string | null;
+                }>)
+              : undefined;
           return {
             ...result,
             data: {
@@ -3139,6 +3258,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 updates,
                 preferredTargetLorebookId,
                 writableLorebookIds,
+                existingEntries,
               }),
             },
           };
@@ -3157,6 +3277,27 @@ export async function generateRoutes(app: FastifyInstance) {
           const nextResult = markLorebookResultForApproval(result);
           if (!customAgentCanEmitResult(nextResult, resolvedAgents, builtInAgentTypes)) return;
           sendRawAgentResultEvent(nextResult);
+        };
+        const deferredParallelAgentEvents: Array<{ result: AgentResult; options?: { finalized?: boolean } }> = [];
+        let deferParallelAgentEvents = false;
+        let parallelAgentStartPending = false;
+        const sendAgentEventAfterMainStream = (result: AgentResult, options?: { finalized?: boolean }) => {
+          if (deferParallelAgentEvents) {
+            deferredParallelAgentEvents.push({ result, options });
+            return;
+          }
+          sendAgentEvent(result, options);
+        };
+        const flushDeferredParallelAgentEvents = () => {
+          if (parallelAgentStartPending) {
+            trySendSseEvent(reply, { type: "agent_start", data: { phase: "parallel" } });
+            parallelAgentStartPending = false;
+          }
+          if (deferredParallelAgentEvents.length === 0) return;
+          const events = deferredParallelAgentEvents.splice(0);
+          for (const event of events) {
+            sendAgentEvent(event.result, event.options);
+          }
         };
 
         for (const warning of agentConnectionWarnings) {
@@ -3233,7 +3374,7 @@ export async function generateRoutes(app: FastifyInstance) {
         // Pre-generation prompt-patch agents read the assembled prompt here; this is overwritten
         // with the fitted provider prompt before each main model call.
         agentContext.memory._mainPromptPreview = promptPreviewForAgents(finalMessages);
-        const pipeline = createAgentPipeline(pipelineAgents, agentContext, sendAgentEvent);
+        const pipeline = createAgentPipeline(pipelineAgents, agentContext, sendAgentEventAfterMainStream);
         let directorSecretPlotResults: AgentResult[] = [];
         let directorSecretPlotArcForPrompt: unknown = directorSecretPlotMemory.overarchingArc;
 
@@ -5229,7 +5370,8 @@ export async function generateRoutes(app: FastifyInstance) {
         const hasParallelAgents = pipelineAgents.some((a) => a.phase === "parallel");
         let parallelPromise: Promise<AgentResult[]> | null = null;
         if (hasParallelAgents && !abortController.signal.aborted) {
-          trySendSseEvent(reply, { type: "agent_start", data: { phase: "parallel" } });
+          deferParallelAgentEvents = true;
+          parallelAgentStartPending = true;
           parallelPromise = pipeline.runParallel();
         }
 
@@ -5410,6 +5552,8 @@ export async function generateRoutes(app: FastifyInstance) {
         // ────────────────────────────────────────
         // Collect parallel results + Phase 3: Post-processing agents
         // ────────────────────────────────────────
+        deferParallelAgentEvents = false;
+        flushDeferredParallelAgentEvents();
         // Await parallel agents that were started alongside the generation
         let parallelResults: AgentResult[] = [];
         if (parallelPromise) {
