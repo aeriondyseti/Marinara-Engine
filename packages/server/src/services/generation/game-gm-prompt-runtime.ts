@@ -298,6 +298,7 @@ export async function injectGameGmPromptRuntime(args: {
     canGenerateBackgrounds:
       !!args.chatMetadata.enableSpriteGeneration &&
       args.chatMetadata.gameImageAutoGenerationEnabled !== false &&
+      args.chatMetadata.gameStoryboardViewerDisplayMode !== "background" &&
       !!args.chatMetadata.gameImageConnectionId,
     artStylePrompt: (setupConfig?.artStylePrompt as string) || undefined,
     gameTime,

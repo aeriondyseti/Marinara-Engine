@@ -2801,12 +2801,15 @@ export async function generateRoutes(app: FastifyInstance) {
         // If the background agent is enabled, load available backgrounds + tags into context
         const backgroundAgent = resolvedAgents.find((a) => a.type === "background");
         if (backgroundAgent) {
+          const backgroundGenerationEnabled =
+            backgroundAgent.settings?.autoGenerateBackgrounds === true &&
+            chatMeta.gameStoryboardViewerDisplayMode !== "background";
           agentContext.memory._availableBackgrounds = [];
           agentContext.memory._currentBackground = chatMeta.background ?? null;
-          if (backgroundAgent.settings?.autoGenerateBackgrounds === true) {
+          if (backgroundGenerationEnabled) {
             agentContext.memory._backgroundGenerationEnabled = true;
           }
-          if (backgroundAgent.settings?.autoGenerateBackgrounds === true) {
+          if (backgroundGenerationEnabled) {
             const setupConfigForBackground =
               chatMeta.gameSetupConfig &&
               typeof chatMeta.gameSetupConfig === "object" &&
@@ -5961,7 +5964,9 @@ export async function generateRoutes(app: FastifyInstance) {
               const currentBackgroundAgent = resolvedAgents.find(
                 (a) => a.id === result.agentId || a.type === "background",
               );
-              const canGenerateBackground = currentBackgroundAgent?.settings?.autoGenerateBackgrounds === true;
+              const canGenerateBackground =
+                currentBackgroundAgent?.settings?.autoGenerateBackgrounds === true &&
+                chatMeta.gameStoryboardViewerDisplayMode !== "background";
               if (!bgData.chosen && canGenerateBackground && generationRequest) {
                 const promptText =
                   typeof generationRequest.prompt === "string" && generationRequest.prompt.trim()

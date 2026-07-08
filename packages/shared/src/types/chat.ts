@@ -191,6 +191,8 @@ export interface ChatMemoryChunk {
  */
 export const SUMMARY_TAIL_MESSAGES = { MIN: 0, MAX: 50, DEFAULT: 10 } as const;
 
+export type GameStoryboardViewerDisplayMode = "floating" | "background";
+
 /** Extra metadata stored on a chat. */
 export interface ChatMetadata {
   /** Compiled enabled rolling summary text for context injection. Derived from summaryEntries when present. */
@@ -481,6 +483,8 @@ export interface ChatMetadata {
   gameStoryboardAutoIllustrationsEnabled?: boolean;
   /** When true, completed Game Mode GM turns automatically create storyboard keyframe videos. */
   gameStoryboardAutoGenerationEnabled?: boolean;
+  /** How the Game Mode storyboard viewer is displayed in the game surface. */
+  gameStoryboardViewerDisplayMode?: GameStoryboardViewerDisplayMode;
   /** Selected Game Mode storyboard prompt template for image-only auto storyboards. */
   gameStoryboardIllustrationPromptTemplateId?: string | null;
   /** Selected Game Mode storyboard prompt template for animation-ready auto storyboards. */
