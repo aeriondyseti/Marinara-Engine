@@ -1,4 +1,4 @@
-import { DEFAULT_CHAT_SUMMARY_PROMPT } from "@marinara-engine/shared";
+import { CHAT_SUMMARY_OUTPUT_TOKENS, DEFAULT_CHAT_SUMMARY_PROMPT } from "@marinara-engine/shared";
 
 const RETIRED_CHAT_SUMMARY_AGENT_ID = "chat-summary";
 const DEFAULT_AUTOMATIC_SUMMARY_INTERVAL = 5;
@@ -19,6 +19,15 @@ export function clampRoleplaySummaryContextSize(value: unknown): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return 50;
   return Math.max(MIN_SUMMARY_CONTEXT_SIZE, Math.min(MAX_SUMMARY_CONTEXT_SIZE, Math.trunc(parsed)));
+}
+
+export function clampRoleplaySummaryMaxTokens(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return CHAT_SUMMARY_OUTPUT_TOKENS.DEFAULT;
+  return Math.max(
+    CHAT_SUMMARY_OUTPUT_TOKENS.MIN,
+    Math.min(CHAT_SUMMARY_OUTPUT_TOKENS.MAX, Math.trunc(parsed)),
+  );
 }
 
 export function appendContinuationMessageContent(existingContent: unknown, continuation: string): string {

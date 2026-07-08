@@ -66,6 +66,7 @@ import {
   type CharacterGroup,
   type ConversationCommandKey,
   type Lorebook,
+  type Message,
 } from "@marinara-engine/shared";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -1998,8 +1999,9 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
   const seedInitialGreetingsIfEmpty = useCallback(async () => {
     if (chatCharIds.length === 0) return;
     try {
-      const { count } = await api.get<{ count: number }>(`/chats/${chat.id}/message-count`);
-      if (count > 0) return;
+      const messages = await api.get<Array<Pick<Message, "role">>>(`/chats/${chat.id}/messages`);
+      const hasNonSystemMessage = messages.some((message) => message.role !== "system");
+      if (hasNonSystemMessage) return;
     } catch {
       return;
     }

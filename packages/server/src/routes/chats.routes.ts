@@ -90,6 +90,7 @@ import { sanitizeGameNpcAvatarUrls } from "../services/game/npc-avatar-utils.js"
 import { buildCommittedTrackerContextBlock } from "../services/generation/committed-tracker-context.js";
 import { parseLorebookWriteApprovalText } from "./generate/agent-write-approval.js";
 import { persistLorebookKeeperUpdates } from "./generate/lorebook-keeper-utils.js";
+import { clampRoleplaySummaryMaxTokens } from "../services/generation/roleplay-summary-runtime.js";
 
 type TrackerWrapFormat = "xml" | "markdown" | "none";
 type EntryStateOverrides = Record<string, { ephemeral?: number | null; enabled?: boolean }>;
@@ -785,6 +786,9 @@ export async function chatsRoutes(app: FastifyInstance) {
       await clearConversationScheduleState(chat);
       incoming.characterSchedules = undefined;
       incoming.scheduleWeekStart = undefined;
+    }
+    if (Object.prototype.hasOwnProperty.call(incoming, "summaryMaxTokens")) {
+      incoming.summaryMaxTokens = clampRoleplaySummaryMaxTokens(incoming.summaryMaxTokens);
     }
     if (
       Object.prototype.hasOwnProperty.call(incoming, "hideSummarisedMessages") &&
@@ -3295,6 +3299,7 @@ export async function chatsRoutes(app: FastifyInstance) {
     const hasRangeByMessageId = !!requestedRangeStartMessageId && !!requestedRangeEndMessageId;
     const hasRangeByIndex = requestedRangeStartIndex !== null && requestedRangeEndIndex !== null;
     const hasRange = hasRangeByMessageId || hasRangeByIndex;
+    const summaryMaxTokens = clampRoleplaySummaryMaxTokens(chatMeta.summaryMaxTokens);
 
     const connections = createConnectionsStorage(app.db);
 
@@ -3406,7 +3411,7 @@ export async function chatsRoutes(app: FastifyInstance) {
     const result = await provider.chatComplete(messages, {
       model,
       temperature: 0.5,
-      maxTokens: 2048,
+      maxTokens: summaryMaxTokens,
     });
 
     if (!result.content) {

@@ -51,6 +51,7 @@ import {
 } from "./roleplay-popover-styles";
 import {
   type APIConnection,
+  CHAT_SUMMARY_OUTPUT_TOKENS,
   DEFAULT_CHAT_SUMMARY_PROMPT,
   SUMMARY_TAIL_MESSAGES,
   estimateChatSummaryTokens,
@@ -68,6 +69,7 @@ interface SummaryPopoverProps {
   promptTemplates?: ChatSummaryPromptTemplate[];
   activePromptTemplateId?: string | null;
   summaryConnectionId?: string | null;
+  summaryMaxTokens?: number;
   automaticSummaryEnabled?: boolean;
   activeAgentIds?: string[];
   summaryRunInterval?: number;
@@ -106,6 +108,15 @@ const SUMMARY_TOKEN_WARNING_THRESHOLD = 1800;
 const SUMMARY_HEADING_PATTERN = /^(?:#{1,6}\s*)?(?:\*\*)?([^:\n]{3,80})(?:\*\*)?:\s*$/;
 const SUMMARY_BULLET_PATTERN = /^[-*•]\s+/;
 const MOBILE_SUMMARY_PADDING = 8;
+
+function clampSummaryMaxTokens(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return CHAT_SUMMARY_OUTPUT_TOKENS.DEFAULT;
+  return Math.max(
+    CHAT_SUMMARY_OUTPUT_TOKENS.MIN,
+    Math.min(CHAT_SUMMARY_OUTPUT_TOKENS.MAX, Math.trunc(parsed)),
+  );
+}
 
 function getMobileSummaryFrame(anchor: SummaryPopoverAnchor | null | undefined) {
   if (typeof window === "undefined") return null;
@@ -263,6 +274,7 @@ export function SummaryPopover({
   promptTemplates = [],
   activePromptTemplateId = null,
   summaryConnectionId = null,
+  summaryMaxTokens,
   automaticSummaryEnabled = false,
   activeAgentIds = [],
   summaryRunInterval,
@@ -288,7 +300,9 @@ export function SummaryPopover({
   const persistedContextSize = summaryPopoverSettings.contextSize ?? contextSize;
   const [localSize, setLocalSize] = useState(String(persistedContextSize || ""));
   const normalizedAutomaticSummaryInterval = clampAutomaticSummaryInterval(summaryRunInterval);
+  const normalizedSummaryMaxTokens = clampSummaryMaxTokens(summaryMaxTokens);
   const [automaticIntervalDraft, setAutomaticIntervalDraft] = useState(String(normalizedAutomaticSummaryInterval));
+  const [summaryMaxTokensDraft, setSummaryMaxTokensDraft] = useState(String(normalizedSummaryMaxTokens));
   const sourceMode = summaryPopoverSettings.sourceMode;
   const [rangeStart, setRangeStart] = useState(() =>
     String(summaryPopoverSettings.rangeStart ?? Math.max(1, totalMessageCount - persistedContextSize + 1)),
@@ -299,6 +313,8 @@ export function SummaryPopover({
   const sizeInputFocused = useRef(false);
   const rangeInputFocused = useRef(false);
   const automaticIntervalFocused = useRef(false);
+  const summaryMaxTokensFocused = useRef(false);
+  const summaryMaxTokensSaveRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
   const generateSummary = useGenerateSummary();
   const updateMeta = useUpdateChatMetadata();
   const { data: connectionsData } = useConnections();
@@ -469,6 +485,12 @@ export function SummaryPopover({
     }
   }, [normalizedAutomaticSummaryInterval]);
 
+  useEffect(() => {
+    if (!summaryMaxTokensFocused.current) {
+      setSummaryMaxTokensDraft(String(normalizedSummaryMaxTokens));
+    }
+  }, [normalizedSummaryMaxTokens]);
+
   const persistAutomaticSummaryInterval = useCallback(
     (value: number) => {
       const clamped = clampAutomaticSummaryInterval(value);
@@ -500,6 +522,38 @@ export function SummaryPopover({
     [chatId, updateMeta],
   );
 
+  const persistSummaryMaxTokens = useCallback(
+    async (value: string) => {
+      const clamped = clampSummaryMaxTokens(value || CHAT_SUMMARY_OUTPUT_TOKENS.DEFAULT);
+      setSummaryMaxTokensDraft(String(clamped));
+      if (normalizedSummaryMaxTokens !== clamped) {
+        const key = String(clamped);
+        if (summaryMaxTokensSaveRef.current?.key === key) {
+          await summaryMaxTokensSaveRef.current.promise;
+          return;
+        }
+        const promise = updateMeta
+          .mutateAsync({
+            id: chatId,
+            summaryMaxTokens: clamped,
+          })
+          .then(() => undefined)
+          .catch((error) => {
+            toast.error("Could not save summary output size.");
+            throw error;
+          })
+          .finally(() => {
+            if (summaryMaxTokensSaveRef.current?.promise === promise) {
+              summaryMaxTokensSaveRef.current = null;
+            }
+          });
+        summaryMaxTokensSaveRef.current = { key, promise };
+        await promise;
+      }
+    },
+    [chatId, normalizedSummaryMaxTokens, updateMeta],
+  );
+
   const handleSourceModeChange = useCallback(
     (mode: SummarySourceMode) => {
       if (mode === "range") {
@@ -513,8 +567,13 @@ export function SummaryPopover({
     [rangeHigh, rangeLow, setSummaryPopoverSettings],
   );
 
-  const handleGenerate = useCallback(() => {
+  const handleGenerate = useCallback(async () => {
     if (!canGenerate) return;
+    try {
+      await persistSummaryMaxTokens(summaryMaxTokensDraft);
+    } catch {
+      return;
+    }
     // The server hides the tail-excluded subset itself (when the chat opts in)
     // and the generate-summary mutation refreshes the message list, so there is
     // no separate client-side hide to keep in sync.
@@ -561,6 +620,32 @@ export function SummaryPopover({
     persistSummaryContextSize,
     sourceMode,
     activePromptTemplateId,
+    persistSummaryMaxTokens,
+    summaryMaxTokensDraft,
+  ]);
+
+  const handleBackfill = useCallback(async () => {
+    try {
+      await persistSummaryMaxTokens(summaryMaxTokensDraft);
+    } catch {
+      return;
+    }
+    startBackfill({
+      chatId,
+      summaryEntries: displayEntries,
+      batchSize: normalizedAutomaticSummaryInterval,
+      maxMessagesPerBatch: persistedContextSize,
+      promptTemplateId: activePromptTemplateId,
+    });
+  }, [
+    activePromptTemplateId,
+    chatId,
+    displayEntries,
+    normalizedAutomaticSummaryInterval,
+    persistedContextSize,
+    persistSummaryMaxTokens,
+    startBackfill,
+    summaryMaxTokensDraft,
   ]);
 
   const handleToggleExpanded = useCallback((entryId: string) => {
@@ -1013,15 +1098,7 @@ export function SummaryPopover({
                     ) : (
                       <button
                         type="button"
-                        onClick={() => {
-                          startBackfill({
-                            chatId,
-                            summaryEntries: displayEntries,
-                            batchSize: normalizedAutomaticSummaryInterval,
-                            maxMessagesPerBatch: persistedContextSize,
-                            promptTemplateId: activePromptTemplateId,
-                          });
-                        }}
+                        onClick={() => void handleBackfill()}
                         disabled={
                           totalMessageCount === 0
                         }
@@ -1219,6 +1296,36 @@ export function SummaryPopover({
                   </option>
                 ))}
               </select>
+              <label className="space-y-1">
+                <span className="text-[0.625rem] font-semibold text-[var(--muted-foreground)]">
+                  Maximum output size
+                </span>
+                <input
+                  type="number"
+                  min={CHAT_SUMMARY_OUTPUT_TOKENS.MIN}
+                  max={CHAT_SUMMARY_OUTPUT_TOKENS.MAX}
+                  step={1}
+                  value={summaryMaxTokensDraft}
+                  onFocus={() => {
+                    summaryMaxTokensFocused.current = true;
+                  }}
+                  onChange={(event) => {
+                    setSummaryMaxTokensDraft(event.target.value);
+                  }}
+                  onBlur={() => {
+                    summaryMaxTokensFocused.current = false;
+                    void persistSummaryMaxTokens(summaryMaxTokensDraft).catch(() => undefined);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.currentTarget.blur();
+                    }
+                  }}
+                  disabled={updateMeta.isPending}
+                  className="w-full rounded-md bg-[var(--card)] px-2 py-1.5 text-xs font-semibold text-[var(--foreground)] ring-1 ring-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label="Summary maximum output size"
+                />
+              </label>
             </div>
           </div>
 

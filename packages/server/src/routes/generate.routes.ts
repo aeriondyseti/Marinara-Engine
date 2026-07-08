@@ -307,6 +307,7 @@ import {
   appendContinuationMessageContent,
   clampRoleplaySummaryContextSize,
   clampRoleplaySummaryInterval,
+  clampRoleplaySummaryMaxTokens,
   isAutomaticRoleplaySummaryEnabled,
   parseChatSummaryText,
   resolveChatSummaryPromptFromMetadata,
@@ -5809,6 +5810,7 @@ export async function generateRoutes(app: FastifyInstance) {
           if (messagesSinceLastSummary < interval) return;
 
           const contextSize = clampRoleplaySummaryContextSize(chatMeta.summaryContextSize);
+          const summaryMaxTokens = clampRoleplaySummaryMaxTokens(chatMeta.summaryMaxTokens);
           const selectedMessages = selectRollingSummaryMessages({
             messages: freshMessages,
             contextSize,
@@ -5860,7 +5862,7 @@ export async function generateRoutes(app: FastifyInstance) {
             {
               model: summaryModel,
               temperature: 0.5,
-              maxTokens: 2048,
+              maxTokens: summaryMaxTokens,
               signal: abortController.signal,
             },
           );

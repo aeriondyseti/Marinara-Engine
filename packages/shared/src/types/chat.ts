@@ -190,6 +190,7 @@ export interface ChatMemoryChunk {
  * value is unset; an explicit `MIN` (0) means "hide the whole batch".
  */
 export const SUMMARY_TAIL_MESSAGES = { MIN: 0, MAX: 50, DEFAULT: 10 } as const;
+export const CHAT_SUMMARY_OUTPUT_TOKENS = { MIN: 1, MAX: 32768, DEFAULT: 4096 } as const;
 
 export type GameStoryboardViewerDisplayMode = "floating" | "background";
 
@@ -213,6 +214,8 @@ export interface ChatMetadata {
   activeSummaryPromptTemplateId?: string | null;
   /** Optional text connection used for manual and automatic Roleplay chat summaries. Null uses the agent default. */
   summaryConnectionId?: string | null;
+  /** Maximum output tokens requested from the model for manual and automatic Roleplay chat summaries. */
+  summaryMaxTokens?: number;
   /**
    * When true, the automatic roleplay/visual-novel rolling summary hides the
    * messages it summarized (hiddenFromAI=true) except the most-recent

@@ -713,6 +713,7 @@ function SummaryButton({
   summaryPromptTemplates,
   activeSummaryPromptTemplateId,
   summaryConnectionId,
+  summaryMaxTokens,
   automaticSummaryEnabled,
   activeAgentIds,
   summaryRunInterval,
@@ -729,6 +730,7 @@ function SummaryButton({
   summaryPromptTemplates?: ComponentProps<typeof SummaryPopover>["promptTemplates"];
   activeSummaryPromptTemplateId?: string | null;
   summaryConnectionId?: string | null;
+  summaryMaxTokens?: number;
   automaticSummaryEnabled: boolean;
   activeAgentIds: string[];
   summaryRunInterval?: number;
@@ -815,6 +817,7 @@ function SummaryButton({
             promptTemplates={summaryPromptTemplates}
             activePromptTemplateId={activeSummaryPromptTemplateId}
             summaryConnectionId={summaryConnectionId}
+            summaryMaxTokens={summaryMaxTokens}
             automaticSummaryEnabled={automaticSummaryEnabled}
             activeAgentIds={activeAgentIds}
             summaryRunInterval={summaryRunInterval}
@@ -1464,6 +1467,10 @@ export function ChatRoleplaySurface({
     typeof chatMeta.summaryRunInterval === "number" && Number.isFinite(chatMeta.summaryRunInterval)
       ? chatMeta.summaryRunInterval
       : undefined;
+  const summaryMaxTokens =
+    typeof chatMeta.summaryMaxTokens === "number" && Number.isFinite(chatMeta.summaryMaxTokens)
+      ? chatMeta.summaryMaxTokens
+      : undefined;
   const hideSummarisedMessages =
     typeof chatMeta.hideSummarisedMessages === "boolean" ? chatMeta.hideSummarisedMessages : undefined;
   const summaryTailMessages =
@@ -1565,6 +1572,7 @@ export function ChatRoleplaySurface({
                       summaryConnectionId={
                         typeof chatMeta.summaryConnectionId === "string" ? chatMeta.summaryConnectionId : null
                       }
+                      summaryMaxTokens={summaryMaxTokens}
                       automaticSummaryEnabled={automaticSummaryEnabled}
                       activeAgentIds={summaryActiveAgentIds}
                       summaryRunInterval={summaryRunInterval}
@@ -1670,6 +1678,7 @@ export function ChatRoleplaySurface({
                           summaryConnectionId={
                             typeof chatMeta.summaryConnectionId === "string" ? chatMeta.summaryConnectionId : null
                           }
+                          summaryMaxTokens={summaryMaxTokens}
                           automaticSummaryEnabled={automaticSummaryEnabled}
                           activeAgentIds={summaryActiveAgentIds}
                           summaryRunInterval={summaryRunInterval}
@@ -1740,6 +1749,7 @@ export function ChatRoleplaySurface({
                         summaryConnectionId={
                           typeof chatMeta.summaryConnectionId === "string" ? chatMeta.summaryConnectionId : null
                         }
+                        summaryMaxTokens={summaryMaxTokens}
                         automaticSummaryEnabled={automaticSummaryEnabled}
                         activeAgentIds={summaryActiveAgentIds}
                         summaryRunInterval={summaryRunInterval}

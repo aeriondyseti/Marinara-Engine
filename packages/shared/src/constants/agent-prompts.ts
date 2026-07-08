@@ -157,7 +157,7 @@ Return valid JSON only:
   "aspectRatio": "landscape|portrait|square",
   "characters": ["visible character name"]
 }
-Prompt rules: describe composition, lighting, mood, environment, and every visible character/persona directly. Put all visible names in characters. Include no UI, watermark, logo, signature, captions, speech bubbles, subtitles, manga SFX, or meta-instructions.`,
+Prompt rules: describe composition, lighting, mood, environment, and every visible character/persona directly. For each visible character/persona, include available body build (chubby, slim, muscular, etc.), clothing/outfit, hair, face, distinguishing features, and other appearance details from context. Do not invent missing traits. Put all visible names in characters. Include no UI, watermark, logo, signature, captions, speech bubbles, subtitles, manga SFX, or meta-instructions.`,
 
   /* ────────────────────────────────────────── */
   "lorebook-keeper": `You are Lorebook Keeper for chat/roleplay continuity. Record only durable facts from the latest assistant response that will help future generations remember the world, characters, factions, locations, items, events, powers, relationships, or reusable history.

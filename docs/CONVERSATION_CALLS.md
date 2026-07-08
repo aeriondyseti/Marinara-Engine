@@ -163,6 +163,8 @@ The detailed call transcript remains stored separately for call handling and deb
 
 Check **Chat Settings -> Commands -> Conversation Calls** and make sure **Call Audio Pipeline** is enabled. Then confirm your browser has microphone permission for the Marinara page.
 
+If Edge or Chrome logs `Permissions policy violation: microphone is not allowed in this document`, update Marinara. Older builds sent a browser policy that blocked microphone and camera access before the normal permission prompt could appear.
+
 If you are on Firefox or browser speech recognition is unavailable, download Local Whisper from **Connections -> Local Model -> Local Speech Model** and use **Mic recording + Local Whisper**.
 
 ### Local Whisper says it is unavailable
