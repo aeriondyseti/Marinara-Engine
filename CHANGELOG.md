@@ -44,6 +44,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Fixed Conversation-created scene chats so their Prompt Preset selector remains visible while still defaulting to None.
 - Made the Connections panel's unfiled/root drop area more forgiving so desktop users, including Windows users, can reliably drag connections out of folders without hitting a tiny target.
 - Fixed native lorebook import so nested folders keep their parent/child hierarchy instead of being flattened to the top level (#3347).
+- Fixed the character Lorebook tab so an embedded lorebook can be removed from the card: added a **Remove from card** action (including for cards with no linked copy), clarified that the row delete only unlinks the standalone while the embedded copy stays, and renamed **Edit Linked Lorebook** to **Edit Embedded Lorebook** (#3359).
 
 ## [2.1.0]
 

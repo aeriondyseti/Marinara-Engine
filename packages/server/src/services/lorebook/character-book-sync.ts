@@ -288,7 +288,7 @@ export async function syncCharacterBookFromLorebook(db: DB, lorebookId: string):
  * `extensions.importMetadata.embeddedLorebook` pointer. Called when the
  * standalone lorebook is being deleted, so the V2 `character_book` cannot
  * resurrect on the next character open and the dangling
- * `lorebookId` pointer cannot leave a broken "Edit Linked Lorebook"
+ * `lorebookId` pointer cannot leave a broken "Edit Embedded Lorebook"
  * button behind.
  *
  * The character storage layer's `update` does a shallow merge of
@@ -330,4 +330,42 @@ export async function clearCharacterEmbeddedLorebook(db: DB, characterId: string
   } catch (err) {
     logger.error(err, "Failed to clear embedded lorebook for character %s", characterId);
   }
+}
+
+/**
+ * Unconditionally clear a character's embedded-lorebook footprint — drop
+ * `data.character_book` and the `extensions.importMetadata.embeddedLorebook`
+ * pointer — regardless of whether a standalone still exists or the pointer still
+ * matches. Backs the user-initiated "Remove from card" action; the linked
+ * standalone lorebook, if any, is left untouched. Returns false when the
+ * character does not exist. Unlike `clearCharacterEmbeddedLorebook` (a
+ * fire-and-forget side effect of deleting a standalone), this is user-driven, so
+ * DB errors propagate to the route instead of being swallowed.
+ */
+export async function clearEmbeddedLorebookFromCharacter(db: DB, characterId: string): Promise<boolean> {
+  const charactersStorage = createCharactersStorage(db);
+  const character = await charactersStorage.getById(characterId);
+  if (!character) return false;
+
+  const currentData = parseCharacterData(character.data);
+  const extensions =
+    currentData.extensions && typeof currentData.extensions === "object"
+      ? ({ ...(currentData.extensions as Record<string, unknown>) } as Record<string, unknown>)
+      : {};
+  const importMetadata =
+    extensions.importMetadata && typeof extensions.importMetadata === "object"
+      ? ({ ...(extensions.importMetadata as Record<string, unknown>) } as Record<string, unknown>)
+      : null;
+  if (importMetadata && "embeddedLorebook" in importMetadata) {
+    delete importMetadata.embeddedLorebook;
+    extensions.importMetadata = importMetadata;
+  }
+
+  await charactersStorage.update(
+    characterId,
+    { character_book: null, extensions: extensions as never },
+    undefined,
+    { skipVersionSnapshot: true },
+  );
+  return true;
 }

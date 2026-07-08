@@ -47,7 +47,11 @@ import { assertInsideDir, extensionFromImageMime, isAllowedImageBuffer } from ".
 import { logger } from "../lib/logger.js";
 import { parseLibraryPageQuery } from "../utils/list-pagination.js";
 import { importSTLorebook } from "../services/import/st-lorebook.importer.js";
-import { embedLorebookIntoCharacter, getEmbeddedLorebookId } from "../services/lorebook/character-book-sync.js";
+import {
+  clearEmbeddedLorebookFromCharacter,
+  embedLorebookIntoCharacter,
+  getEmbeddedLorebookId,
+} from "../services/lorebook/character-book-sync.js";
 import AdmZip from "adm-zip";
 import { extname } from "path";
 import { pipeline } from "stream/promises";
@@ -1344,6 +1348,15 @@ export async function charactersRoutes(app: FastifyInstance) {
       entriesImported: result.entriesImported,
       reimported: result.reimported ?? false,
     };
+  });
+
+  // Remove the embedded lorebook from this character's card: drop
+  // data.character_book and the embeddedLorebook pointer. The user-initiated
+  // inverse of embed/import; the linked standalone lorebook (if any) is kept.
+  app.delete<{ Params: { id: string } }>("/:id/embedded-lorebook", async (req, reply) => {
+    const cleared = await clearEmbeddedLorebookFromCharacter(app.db, req.params.id);
+    if (!cleared) return reply.status(404).send({ error: "Character not found" });
+    return { success: true };
   });
 
   // Embed a standalone/linked character lorebook INTO this character's card

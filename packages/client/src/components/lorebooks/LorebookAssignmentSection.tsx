@@ -177,12 +177,17 @@ export function LorebookAssignmentSection({
   const unassignLorebook = async (lorebook: Lorebook) => {
     if (!ownerId) return;
     const nextOwnerIds = getOwnerIds(lorebook, ownerType).filter((id) => id !== ownerId);
+    const isEmbedded = ownerType === "character" && lorebook.id === embeddedLorebookId;
     try {
       await updateLorebook.mutateAsync({
         id: lorebook.id,
         ...(ownerType === "character" ? { characterIds: nextOwnerIds } : { personaIds: nextOwnerIds }),
       });
-      toast.success(`Removed ${lorebook.name}.`);
+      toast.success(
+        isEmbedded
+          ? `Unlinked ${lorebook.name}. It's still embedded in the card — use "Remove from card" to unbake the embedded copy.`
+          : `Removed ${lorebook.name}.`,
+      );
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to remove lorebook.");
     }
@@ -294,7 +299,11 @@ export function LorebookAssignmentSection({
                   onClick={() => unassignLorebook(lorebook)}
                   disabled={updateLorebook.isPending}
                   className="rounded-lg p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)] disabled:opacity-50"
-                  title="Remove lorebook"
+                  title={
+                    ownerType === "character" && lorebook.id === embeddedLorebookId
+                      ? "Unlink lorebook (the card's embedded copy stays — use Remove from card)"
+                      : "Remove lorebook"
+                  }
                 >
                   <Trash2 size="0.75rem" />
                 </button>
