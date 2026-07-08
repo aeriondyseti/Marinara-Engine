@@ -8,6 +8,25 @@
 // ──────────────────────────────────────────────
 import { normalizeTextForMatch } from "./text-matching.js";
 
+const ENCODED_SPEAKER_TAG_RE = /&(?:lt|#0*60|#x0*3c);([^<>]*?\bspeaker\b[^<>]*?)&(?:gt|#0*62|#x0*3e);/gi;
+
+function decodeSpeakerTagAttributeEntities(value: string): string {
+  return value
+    .replace(/&quot;|&#0*34;|&#x0*22;/gi, '"')
+    .replace(/&apos;|&#0*39;|&#x0*27;/gi, "'");
+}
+
+export function decodeEncodedSpeakerTags(value: string): string {
+  return value.replace(ENCODED_SPEAKER_TAG_RE, (match, tagBody: string) => {
+    const decoded = decodeSpeakerTagAttributeEntities(tagBody).trim();
+    if (/^\/\s*speaker\s*$/i.test(decoded)) return "</speaker>";
+
+    const open = decoded.match(/^speaker\s*=\s*(["'])([^"']*)\1\s*$/i);
+    if (!open?.[2]) return match;
+    return `<speaker="${open[2].trim()}">`;
+  });
+}
+
 /**
  * Strip leaked line-leading `[HH:MM]` / `[DD.MM.YYYY]` timestamp tokens — the
  * display shape the conversation client renders and segments. The server strips
@@ -58,17 +77,18 @@ export interface GroupedSegment {
  * `knownNames` holds normalizeTextForMatch()-normalized character names.
  */
 export function parseSpeakerTags(content: string, knownNames: Set<string>): SpeakerSegment[] | null {
+  const decodedContent = decodeEncodedSpeakerTags(content);
   const regex = /<speaker="([^"]*)">([\s\S]*?)<\/speaker>/g;
   let match: RegExpExecArray | null;
   const segments: SpeakerSegment[] = [];
   let lastIndex = 0;
   let foundTag = false;
-  while ((match = regex.exec(content)) !== null) {
+  while ((match = regex.exec(decodedContent)) !== null) {
     foundTag = true;
     const speakerName = match[1]!.trim();
     const knownSpeaker = knownNames.has(normalizeTextForMatch(speakerName));
     if (match.index > lastIndex) {
-      const before = content.slice(lastIndex, match.index).trim();
+      const before = decodedContent.slice(lastIndex, match.index).trim();
       if (before) segments.push({ speaker: null, text: before, start: lastIndex, end: match.index });
     }
     segments.push({
@@ -79,9 +99,9 @@ export function parseSpeakerTags(content: string, knownNames: Set<string>): Spea
     });
     lastIndex = regex.lastIndex;
   }
-  if (lastIndex < content.length) {
-    const after = content.slice(lastIndex).trim();
-    if (after) segments.push({ speaker: null, text: after, start: lastIndex, end: content.length });
+  if (lastIndex < decodedContent.length) {
+    const after = decodedContent.slice(lastIndex).trim();
+    if (after) segments.push({ speaker: null, text: after, start: lastIndex, end: decodedContent.length });
   }
   return foundTag ? segments : null;
 }

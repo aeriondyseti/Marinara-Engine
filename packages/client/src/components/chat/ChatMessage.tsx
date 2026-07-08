@@ -41,7 +41,7 @@ import {
   EyeOff,
   Shield,
 } from "lucide-react";
-import { formatTextQuotes, type Message, type QuoteFormat } from "@marinara-engine/shared";
+import { decodeEncodedSpeakerTags, formatTextQuotes, type Message, type QuoteFormat } from "@marinara-engine/shared";
 import { memo, useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useQueryClient, type InfiniteData } from "@tanstack/react-query";
@@ -756,7 +756,7 @@ function renderContent(
   htmlScopeClass = "mari-html-message-content",
   quoteFormat: QuoteFormat = "straight",
 ): ReactNode {
-  const normalized = decodeEncodedChatHtmlTags(formatTextQuotes(text, quoteFormat));
+  const normalized = decodeEncodedSpeakerTags(decodeEncodedChatHtmlTags(formatTextQuotes(text, quoteFormat)));
 
   // Strip speaker tags before HTML detection (they aren't real HTML)
   const withoutSpeakerTags = normalized.replace(/<\/?speaker(?:="[^"]*")?>/g, "");

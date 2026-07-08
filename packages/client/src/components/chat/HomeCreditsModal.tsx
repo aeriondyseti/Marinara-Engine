@@ -2,7 +2,7 @@ import { ExternalLink } from "lucide-react";
 import { Modal } from "../ui/Modal";
 
 const CONTRIBUTORS = [
-  { login: "SpicyMarinara", url: "https://github.com/SpicyMarinara", contributions: 1079 },
+  { login: "SpicyMarinara", url: "https://github.com/SpicyMarinara", contributions: 1080 },
   { login: "cha1latte", url: "https://github.com/cha1latte", contributions: 319 },
   { login: "Romuromylus", url: "https://github.com/Romuromylus", contributions: 175 },
   { login: "kolacheee", url: "https://github.com/kolacheee", contributions: 143 },
@@ -39,6 +39,7 @@ const CONTRIBUTORS = [
   { login: "BahamutRU", url: "https://github.com/BahamutRU", contributions: 2 },
   { login: "smurfboyyessir", url: "https://github.com/smurfboyyessir", contributions: 1 },
   { login: "taiman724", url: "https://github.com/taiman724", contributions: 1 },
+  { login: "abhi-0203", url: "https://github.com/abhi-0203", contributions: 1 },
   { login: "Yasyasyasvil", url: "https://github.com/Yasyasyasvil", contributions: 1 },
   { login: "vanta-jack", url: "https://github.com/vanta-jack", contributions: 1 },
   { login: "pwildani", url: "https://github.com/pwildani", contributions: 1 },

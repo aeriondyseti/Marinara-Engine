@@ -65,10 +65,35 @@ const BUILT_IN_TRACKER_AGENT_TYPE_SET = new Set(
   BUILT_IN_AGENTS.filter((agent) => agent.category === "tracker" && !agent.libraryHidden).map((agent) => agent.id),
 );
 
-function showAgentWarning(raw: unknown) {
-  const data = raw && typeof raw === "object" ? (raw as { code?: unknown; message?: unknown }) : null;
+type AgentWarningToastData = {
+  code?: unknown;
+  message?: unknown;
+  connectionId?: unknown;
+  connectionName?: unknown;
+  model?: unknown;
+};
+
+function readAgentWarningString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+}
+
+function getAgentWarningToastKey(data: AgentWarningToastData | null, chatId: string, message: string): string {
+  const code = readAgentWarningString(data?.code) ?? "agent_warning";
+
+  if (code === "default_agent_connection_active") {
+    const connectionSignature =
+      readAgentWarningString(data?.connectionId) ?? readAgentWarningString(data?.connectionName) ?? "unknown";
+    const modelSignature = readAgentWarningString(data?.model) ?? "unknown";
+    return `${chatId}:${code}:${connectionSignature}:${modelSignature}`;
+  }
+
+  return `${code}:${message}`;
+}
+
+function showAgentWarning(raw: unknown, chatId: string) {
+  const data = raw && typeof raw === "object" ? (raw as AgentWarningToastData) : null;
   const message = typeof data?.message === "string" ? data.message : "Agent warning";
-  const warningKey = `${typeof data?.code === "string" ? data.code : "agent_warning"}:${message}`;
+  const warningKey = getAgentWarningToastKey(data, chatId, message);
   console.warn("[Agent warning]", raw);
   if (shownAgentWarnings.has(warningKey)) return;
   shownAgentWarnings.add(warningKey);
@@ -1428,7 +1453,7 @@ export function useGenerate() {
             }
 
             case "agent_warning": {
-              showAgentWarning(event.data);
+              showAgentWarning(event.data, params.chatId);
               break;
             }
 
@@ -2745,7 +2770,7 @@ export function useGenerate() {
         )) {
           switch (event.type) {
             case "agent_warning": {
-              showAgentWarning(event.data);
+              showAgentWarning(event.data, chatId);
               break;
             }
 

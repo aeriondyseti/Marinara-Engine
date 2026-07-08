@@ -515,6 +515,7 @@ function compileGameImagePrompt(
     styleProfileId: req.styleProfileId,
     imageDefaults: req.imgDefaults,
     generatedStyle: req.artStyle,
+    applyPromptModeToSourcePrompt: kind === "background" || kind === "illustration",
   });
   const protectedPrompt = [canonicalPrefix, compiled.prompt].filter(Boolean).join(", ");
   return {

@@ -1,4 +1,4 @@
-import type { TTSConfig } from "@marinara-engine/shared";
+import { decodeEncodedSpeakerTags, type TTSConfig } from "@marinara-engine/shared";
 import { DIALOGUE_QUOTE_CAPTURE_GROUP_PATTERN_SOURCE, stripSurroundingDialogueQuotes } from "./dialogue-quotes";
 
 export interface TTSUtterance {
@@ -351,8 +351,9 @@ export function splitTTSChunks(value: string): string[] {
 }
 
 export function buildTTSMessageText(text: string, config: TTSConfig, fallbackSpeaker?: string | null): string {
-  if (!config.dialogueOnly) return cleanTTSInputText(text);
-  return extractDialogueUtterances(text, config, fallbackSpeaker)
+  const normalized = decodeEncodedSpeakerTags(text);
+  if (!config.dialogueOnly) return cleanTTSInputText(normalized);
+  return extractDialogueUtterances(normalized, config, fallbackSpeaker)
     .map((utterance) => utterance.text)
     .join("\n");
 }
@@ -364,14 +365,15 @@ export function buildTTSVoiceRequests(
   fallbackCharacterId?: string | null,
   resolveCharacterIdForSpeaker?: (speaker?: string | null) => string | null | undefined,
 ): TTSVoiceRequest[] {
-  const hasSpeakerTags = /<speaker="[^"]*">/i.test(text);
+  const normalized = decodeEncodedSpeakerTags(text);
+  const hasSpeakerTags = /<speaker="[^"]*">/i.test(normalized);
   const shouldExtractUtterances = config.dialogueOnly || hasSpeakerTags;
   const utterances =
     hasSpeakerTags && !config.dialogueOnly
-      ? extractSpeakerTaggedUtterances(text, config, fallbackSpeaker, true)
+      ? extractSpeakerTaggedUtterances(normalized, config, fallbackSpeaker, true)
       : shouldExtractUtterances
-        ? extractDialogueUtterances(text, config, fallbackSpeaker)
-        : [{ text: cleanTTSInputText(text), speaker: fallbackSpeaker || undefined } satisfies TTSUtterance];
+        ? extractDialogueUtterances(normalized, config, fallbackSpeaker)
+        : [{ text: cleanTTSInputText(normalized), speaker: fallbackSpeaker || undefined } satisfies TTSUtterance];
 
   const fallbackSpeakerKey = normalizeTTSCharacterName(fallbackSpeaker);
   return utterances.flatMap((utterance) => {

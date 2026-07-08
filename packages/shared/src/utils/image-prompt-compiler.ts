@@ -24,6 +24,8 @@ export interface CompileImagePromptInput {
   userPositive?: string | null;
   userNegative?: string | null;
   hardNegative?: string | null;
+  /** Apply the selected grammar to generated prose that is normally preserved for review/readability. */
+  applyPromptModeToSourcePrompt?: boolean;
 }
 
 export function compileImagePrompt(input: CompileImagePromptInput): CompiledImagePrompt {
@@ -40,9 +42,11 @@ export function compileImagePrompt(input: CompileImagePromptInput): CompiledImag
   const promptPrefix = imagePromptPrefixFromDefaults(input.imageDefaults);
   const negativePromptPrefix = imageNegativePromptPrefixFromDefaults(input.imageDefaults);
   const taggedPromptMode = promptMode === "tagged" || promptMode === "danbooru";
+  const applyPromptModeToSourcePrompt = input.applyPromptModeToSourcePrompt === true;
   const preserveGeneratedPrompt =
-    input.kind === "illustration" || input.kind === "background" || input.kind === "selfie";
-  const compactTags = !preserveGeneratedPrompt && taggedPromptMode;
+    !applyPromptModeToSourcePrompt &&
+    (input.kind === "illustration" || input.kind === "background" || input.kind === "selfie");
+  const compactTags = !applyPromptModeToSourcePrompt && !preserveGeneratedPrompt && taggedPromptMode;
   const compactVisualPrompt =
     profile.baseStyle !== "z_image_turbo" && ["avatar", "portrait", "sprite"].includes(input.kind);
   const compactPrompt = compactTags || compactVisualPrompt;
@@ -328,6 +332,7 @@ function splitPromptFragments(
     .replace(/\r\n?/g, "\n")
     .replace(/[.!?]\s+(?=(?:avoid|no|without|exclude|do not include|don't include)\b)/gi, "\n")
     .replace(/\b(?:avoid|negative prompt|undesired content)\s*:/gi, "\navoid ")
+    .replace(/\b(?:SD|Stable Diffusion)\/Illustrious\s+tags?\s*:/gi, "\n")
     .replace(/\b(?:positive prompt|tags?)\s*:/gi, "\n");
 
   if (promptMode === "natural") {
