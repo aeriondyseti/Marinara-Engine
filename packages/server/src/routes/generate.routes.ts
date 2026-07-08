@@ -368,7 +368,13 @@ import {
   withActiveGameMapMeta,
 } from "../services/game/map-position.service.js";
 import { applyAllSegmentEdits } from "../services/game/segment-edits.js";
-import type { GameMap, GameNpc, Lorebook, LorebookEntry } from "@marinara-engine/shared";
+import type { CharacterData, GameMap, GameNpc, Lorebook, LorebookEntry } from "@marinara-engine/shared";
+import {
+  buildConversationProfileBlocks,
+  parsePersonaConvoBehavior,
+  readCharacterConvoFields,
+  type ConversationProfileParticipant,
+} from "../services/conversation/conversation-profiles.js";
 import {
   isStandaloneCharacterProfileBlock,
   scopeIndividualGroupMessagesForTarget,
@@ -1726,6 +1732,61 @@ export async function generateRoutes(app: FastifyInstance) {
           });
           finalMessages = preparedHistory.finalMessages;
 
+          // ── Conversation-mode profiles (Convo ONLY): display name, about-me, behavior ──
+          // Built entirely inside this branch, so none of these fields can reach
+          // RP/VN/Game prompts. `convoFields` is set on the shared macro context here
+          // (never elsewhere), so {{char_about}}/{{convo_behavior}}/etc. resolve to ""
+          // in every other mode even if placed in a shared card/lorebook surface.
+          const aboutMeOverrides = (chatMeta.conversationAboutMeOverrides ?? {}) as Record<string, string>;
+          const autoInjectAbout = chatMeta.conversationAboutMeInject !== false;
+          const effectiveAbout = (id: string, fallback: string): string => {
+            const override = aboutMeOverrides[id];
+            return typeof override === "string" && override.trim() ? override : fallback;
+          };
+          const profileParticipants: ConversationProfileParticipant[] = [];
+          for (const info of convoCharInfo) {
+            const charRow = await chars.getById(info.charId);
+            let cdata: CharacterData | null = null;
+            if (charRow) {
+              try {
+                cdata = (typeof charRow.data === "string" ? JSON.parse(charRow.data) : charRow.data) as CharacterData;
+              } catch {
+                cdata = null;
+              }
+            }
+            const cf = readCharacterConvoFields(cdata);
+            profileParticipants.push({
+              id: info.charId,
+              name: info.name,
+              displayName: cf.convoDisplayName || info.name,
+              aboutMe: effectiveAbout(info.charId, cf.aboutMe),
+              isPersona: false,
+              behavior: cf.convoBehavior,
+              postHistoryInstructions: cf.postHistoryInstructions,
+            });
+          }
+          if (persona) {
+            const personaAboutDefault = typeof persona.aboutMe === "string" ? persona.aboutMe : "";
+            const personaConvoDisplay = typeof persona.convoDisplayName === "string" ? persona.convoDisplayName : "";
+            profileParticipants.push({
+              id: persona.id as string,
+              name: persona.name,
+              displayName: personaConvoDisplay || persona.name,
+              aboutMe: effectiveAbout(persona.id as string, personaAboutDefault),
+              isPersona: true,
+              behavior: parsePersonaConvoBehavior(persona.convoBehavior),
+              postHistoryInstructions: "",
+            });
+          }
+          const convoProfileBlocks = buildConversationProfileBlocks({
+            participants: profileParticipants,
+            primaryCharacterId: input.forCharacterId ?? convoCharInfo[0]?.charId ?? null,
+            autoInjectAbout,
+            isGroup,
+            resolveMacros: resolvePromptMacros,
+          });
+          promptMacroContext.convoFields = convoProfileBlocks.convoFields;
+
           // Build the system prompt
           // Use custom system prompt if set, otherwise the built-in default
           const customPrompt =
@@ -1888,10 +1949,26 @@ export async function generateRoutes(app: FastifyInstance) {
 
           conversationSystemPrompt = resolvePromptMacros(conversationSystemPrompt);
 
+          // Convo behavior + about-me are already macro-resolved in the helper, so
+          // append them after the system prompt's own macro pass to avoid double resolution.
+          if (convoProfileBlocks.behaviorConstantBefore) {
+            conversationSystemPrompt = convoProfileBlocks.behaviorConstantBefore + "\n\n" + conversationSystemPrompt;
+          }
+          if (convoProfileBlocks.behaviorConstantAfter) {
+            conversationSystemPrompt += "\n\n" + convoProfileBlocks.behaviorConstantAfter;
+          }
+          if (convoProfileBlocks.aboutMeBlock) {
+            conversationSystemPrompt += "\n\n" + convoProfileBlocks.aboutMeBlock;
+          }
+
           finalMessages = [
             { role: "system" as const, content: conversationSystemPrompt },
             ...finalMessages,
             ...(connectedChatBlock ? [{ role: "user" as const, content: connectedChatBlock }] : []),
+            // Post-history-strategy behavior stays near the generation tail; context remains last unless relocated.
+            ...(convoProfileBlocks.behaviorPostHistoryBlock
+              ? [{ role: "user" as const, content: convoProfileBlocks.behaviorPostHistoryBlock }]
+              : []),
             ...(conversationContextMacroSlots.context ? [] : [{ role: "user" as const, content: contextBlock }]),
           ];
           if (conversationContextMacroSlots.context) {
@@ -2910,6 +2987,33 @@ export async function generateRoutes(app: FastifyInstance) {
           }
         }
 
+        // About Me Keeper (Convo only): give the agent each participant's current
+        // public (card) + chat-specific about-me so it can decide what to update.
+        if (resolvedAgents.some((a) => a.type === "about-me-keeper")) {
+          const aboutMeOverridesForAgent = (chatMeta.conversationAboutMeOverrides ?? {}) as Record<string, string>;
+          const aboutMeState: Array<{
+            characterId: string;
+            name: string;
+            publicAboutMe: string;
+            chatAboutMe: string;
+          }> = [];
+          for (const char of agentContext.characters) {
+            let publicAboutMe = "";
+            try {
+              const row = await chars.getById(char.id);
+              const data = row ? (typeof row.data === "string" ? JSON.parse(row.data) : row.data) : null;
+              const ext = (data?.extensions ?? {}) as Record<string, unknown>;
+              if (typeof ext.aboutMe === "string") publicAboutMe = ext.aboutMe;
+            } catch {
+              /* non-critical */
+            }
+            const chatAboutMe =
+              typeof aboutMeOverridesForAgent[char.id] === "string" ? aboutMeOverridesForAgent[char.id]! : "";
+            aboutMeState.push({ characterId: char.id, name: char.name, publicAboutMe, chatAboutMe });
+          }
+          agentContext.memory._aboutMeState = aboutMeState;
+        }
+
         // If the background agent is enabled, load available backgrounds + tags into context
         const backgroundAgent = resolvedAgents.find((a) => a.type === "background");
         if (backgroundAgent) {
@@ -3174,6 +3278,23 @@ export async function generateRoutes(app: FastifyInstance) {
             })
           ) {
             resolvedAgents.splice(resolvedAgents.indexOf(ceaAgent), 1);
+          }
+        }
+
+        // About Me Keeper runs on its own cadence (default every 8 assistant messages).
+        if (resolvedAgents.some((a) => a.type === "about-me-keeper")) {
+          const amkAgent = resolvedAgents.find((a) => a.type === "about-me-keeper")!;
+          if (
+            await shouldSkipAgentByAssistantInterval({
+              agentsStore,
+              chatId: input.chatId,
+              agentType: "about-me-keeper",
+              settings: amkAgent.settings,
+              fallbackInterval: (getDefaultBuiltInAgentSettings("about-me-keeper").runInterval as number) ?? 8,
+              messages: allChatMessages,
+            })
+          ) {
+            resolvedAgents.splice(resolvedAgents.indexOf(amkAgent), 1);
           }
         }
 
@@ -4619,6 +4740,12 @@ export async function generateRoutes(app: FastifyInstance) {
 
               const executedToolResults = await executeToolCalls(permittedToolCalls, {
                 ...baseToolExecutionContext,
+                // The character whose turn this is — update_about_me writes their about-me.
+                // Only attribute when this generation voices exactly one character and the
+                // user isn't impersonating; otherwise the caller is ambiguous (merged group)
+                // and the tool refuses rather than write the wrong character's about-me.
+                callingCharacterId:
+                  speaksOnlyTargetCharacter && !input.impersonate ? (targetCharId ?? input.forCharacterId ?? null) : null,
               });
               const toolResultsById = new Map(
                 [...executedToolResults, ...deniedToolResults].map((result) => [result.toolCallId, result]),
@@ -4661,6 +4788,52 @@ export async function generateRoutes(app: FastifyInstance) {
                     }
                   } catch {
                     // Non-critical
+                  }
+                }
+
+                // update_about_me public scope: route the proposed edit through the
+                // character-card approval modal (the chat scope already persisted itself).
+                if (tr.name === "update_about_me" && tr.success) {
+                  try {
+                    const parsed = JSON.parse(tr.result);
+                    const proposal = parsed?.proposedCardUpdate;
+                    if (parsed?.scope === "public" && proposal && typeof proposal.characterId === "string") {
+                      const newText = typeof proposal.newText === "string" ? proposal.newText : "";
+                      let oldText = "";
+                      try {
+                        const row = await chars.getById(proposal.characterId);
+                        const data = row ? (typeof row.data === "string" ? JSON.parse(row.data) : row.data) : null;
+                        const ext = (data?.extensions ?? {}) as Record<string, unknown>;
+                        if (typeof ext.aboutMe === "string") oldText = ext.aboutMe;
+                      } catch {
+                        /* non-critical */
+                      }
+                      if (oldText !== newText) {
+                        sendAgentResultEvent({
+                          agentId: "about-me-keeper",
+                          agentType: "about-me-keeper",
+                          type: "character_card_update",
+                          data: {
+                            updates: [
+                              {
+                                action: "update",
+                                characterId: proposal.characterId,
+                                field: "aboutMe",
+                                oldText,
+                                newText,
+                                reason: "Character updated its public about me",
+                              },
+                            ],
+                          },
+                          tokensUsed: 0,
+                          durationMs: 0,
+                          success: true,
+                          error: null,
+                        });
+                      }
+                    }
+                  } catch {
+                    /* non-critical */
                   }
                 }
               }
@@ -7006,6 +7179,71 @@ export async function generateRoutes(app: FastifyInstance) {
                 }
               } catch {
                 // Non-critical
+              }
+            }
+
+            // ── About Me Keeper: apply chat-specific overrides, re-emit public edits for approval ──
+            if (result.success && result.type === "about_me_update" && result.data && typeof result.data === "object") {
+              try {
+                const rawUpdates = (result.data as Record<string, unknown>).updates;
+                const updates = Array.isArray(rawUpdates) ? (rawUpdates as Array<Record<string, unknown>>) : [];
+                const validCharIds = new Set(agentContext.characters.map((c) => c.id));
+                const isUsable = (u: Record<string, unknown>) =>
+                  typeof u.characterId === "string" &&
+                  validCharIds.has(u.characterId) &&
+                  typeof u.newText === "string";
+                const chatUpdates = updates.filter((u) => u.target === "chat" && isUsable(u));
+                const publicUpdates = updates.filter((u) => u.target === "public" && isUsable(u));
+
+                // Chat-specific overrides auto-apply to chat metadata (low stakes, this chat only).
+                // Use the queued patchMetadata (atomic read-modify-write) so a concurrent
+                // metadata write can't clobber the override map — same path the tool uses.
+                if (chatUpdates.length > 0) {
+                  await chats.patchMetadata(input.chatId, (currentMeta) => {
+                    const overrides = {
+                      ...((currentMeta.conversationAboutMeOverrides as Record<string, string> | undefined) ?? {}),
+                    };
+                    for (const u of chatUpdates) {
+                      const id = u.characterId as string;
+                      const text = u.newText as string;
+                      if (text.trim()) overrides[id] = text;
+                      else delete overrides[id];
+                    }
+                    return { conversationAboutMeOverrides: overrides };
+                  });
+                }
+
+                // Public edits change the shared card → route through the existing
+                // character-card approval modal. oldText is computed server-side from
+                // the known current public about-me so the modal's replace is exact.
+                if (publicUpdates.length > 0) {
+                  const state = (agentContext.memory._aboutMeState ?? []) as Array<{
+                    characterId: string;
+                    publicAboutMe: string;
+                  }>;
+                  const currentById = new Map(state.map((s) => [s.characterId, s.publicAboutMe]));
+                  const cardUpdates = publicUpdates
+                    .map((u) => {
+                      const id = u.characterId as string;
+                      const oldText = currentById.get(id) ?? "";
+                      const newText = u.newText as string;
+                      if (oldText === newText) return null;
+                      return {
+                        action: "update" as const,
+                        characterId: id,
+                        field: "aboutMe" as const,
+                        oldText,
+                        newText,
+                        reason: typeof u.reason === "string" ? u.reason : "About Me Keeper suggested update",
+                      };
+                    })
+                    .filter((u): u is NonNullable<typeof u> => u !== null);
+                  if (cardUpdates.length > 0) {
+                    sendAgentResultEvent({ ...result, type: "character_card_update", data: { updates: cardUpdates } });
+                  }
+                }
+              } catch (err) {
+                logger.warn(err, "[about-me-keeper] failed to apply results");
               }
             }
 
