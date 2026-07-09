@@ -24,6 +24,7 @@ import { useChatStore } from "../../stores/chat.store";
 import { useUIStore } from "../../stores/ui.store";
 import { useUnoGameStore } from "../../stores/uno-game.store";
 import { useChessGameStore } from "../../stores/chess-game.store";
+import { usePokerGameStore } from "../../stores/poker-game.store";
 import { useGenerate } from "../../hooks/use-generate";
 import { useApplyRegex } from "../../hooks/use-apply-regex";
 import { useCreateMessage, useDeleteMessage, useUpdateMessageExtra, useChat, chatKeys } from "../../hooks/use-chats";
@@ -925,8 +926,9 @@ export function ConversationInput({
       return;
     }
 
-    // Natural-language launchers: "let's play uno" / "let's play chess" open the game
-    // setup. The message still sends normally, so the characters can react too.
+    // Natural-language launchers: "let's play uno" / "let's play chess" / "let's
+    // play poker" open the game setup. The message still sends normally, so the
+    // characters can react too.
     {
       const activeUno = useUnoGameStore.getState().current;
       const unoActive = !!activeUno && activeUno.chatId === activeChatId && activeUno.status !== "finished";
@@ -937,6 +939,11 @@ export function ConversationInput({
       const chessActive = !!activeChess && activeChess.chatId === activeChatId && activeChess.status !== "finished";
       if (!chessActive && /\b(?:play|start)\b[^.!?\n]{0,16}\bchess\b/i.test(raw)) {
         useChessGameStore.getState().openSetup(activeChatId);
+      }
+      const activePoker = usePokerGameStore.getState().current;
+      const pokerActive = !!activePoker && activePoker.chatId === activeChatId && activePoker.status !== "finished";
+      if (!pokerActive && /\b(?:play|start|deal)\b[^.!?\n]{0,24}\bpoker\b/i.test(raw)) {
+        usePokerGameStore.getState().openSetup(activeChatId);
       }
     }
 

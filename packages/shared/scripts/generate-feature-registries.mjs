@@ -116,7 +116,7 @@ async function writeRegistry({
   await writeFile(outputPath, `${lines.join("\n")}\n`, "utf8");
 }
 
-const TURN_GAME_ORDER = ["uno", "chess"];
+const TURN_GAME_ORDER = ["uno", "chess", "poker"];
 
 await writeRegistry({
   baseDir: join(srcDir, "features", "agents"),

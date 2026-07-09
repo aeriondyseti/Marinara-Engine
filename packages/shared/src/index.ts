@@ -84,6 +84,9 @@ export { unoEngine, cardLabel } from "./features/turn-games/uno/engine.js";
 export * from "./features/turn-games/chess/types.js";
 export * from "./features/turn-games/chess/tools.js";
 export { chessEngine } from "./features/turn-games/chess/engine.js";
+export * from "./features/turn-games/poker/types.js";
+export * from "./features/turn-games/poker/tools.js";
+export { pokerEngine, buildPots } from "./features/turn-games/poker/engine.js";
 
 // Utils
 export * from "./utils/macro-engine.js";

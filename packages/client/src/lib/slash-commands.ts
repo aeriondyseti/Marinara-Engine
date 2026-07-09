@@ -6,6 +6,7 @@ import { useChatStore } from "../stores/chat.store";
 import { useUIStore } from "../stores/ui.store";
 import { useUnoGameStore } from "../stores/uno-game.store";
 import { useChessGameStore } from "../stores/chess-game.store";
+import { usePokerGameStore } from "../stores/poker-game.store";
 import { useGalleryStore } from "../stores/gallery.store";
 import { toast } from "sonner";
 import { startSceneWithPromptPreferences } from "./scene-generation";
@@ -574,6 +575,19 @@ const COMMANDS: SlashCommand[] = [
         return { handled: true, feedback: "Chess can only be played in conversation chats." };
       }
       useChessGameStore.getState().openSetup(ctx.chatId);
+      return { handled: true };
+    },
+  },
+  {
+    name: "poker",
+    description: "Start a game of Texas Hold'em poker with the characters in this chat",
+    usage: "/poker",
+    local: true,
+    async execute(_args, ctx) {
+      if (ctx.mode === "roleplay") {
+        return { handled: true, feedback: "Poker can only be played in conversation chats." };
+      }
+      usePokerGameStore.getState().openSetup(ctx.chatId);
       return { handled: true };
     },
   },

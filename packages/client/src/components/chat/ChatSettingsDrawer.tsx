@@ -615,6 +615,11 @@ const CONVERSATION_COMMAND_TOGGLE_OPTIONS: Array<{
     label: "Chess",
     description: "Let characters accept a one-on-one chess challenge at the table.",
   },
+  {
+    id: "poker",
+    label: "Poker",
+    description: "Let characters sit down for a game of Texas Hold'em poker at the table.",
+  },
 ];
 
 function normalizeSpotifySourceType(value: unknown): SpotifySourceType {

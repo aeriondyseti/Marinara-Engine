@@ -66,6 +66,8 @@ function getConversationCommandKey(command: CharacterCommand): ConversationComma
       return "uno";
     case "chess":
       return "chess";
+    case "poker":
+      return "poker";
     case "spotify":
     case "youtube":
       return "music";
@@ -251,7 +253,7 @@ export async function buildConversationCommandsReminder(args: {
       `   - You invite {{user}} somewhere and they accept → trigger a scene for that activity.`,
       `   - A plan is made (date, trip, hangout, confrontation) and the moment arrives → trigger a scene.`,
       `   Do NOT wait for {{user}} to explicitly ask for a scene. If the conversation implies you and {{user}} are about to DO something together, initiate the scene yourself.`,
-      `   EXCEPTION: Do NOT start a scene for playing UNO, chess, cards, or other board/table games — those have their own commands. Use [uno] for UNO and [chess] for chess, not [scene].`,
+      `   EXCEPTION: Do NOT start a scene for playing UNO, chess, poker, cards, or other board/table games — those have their own commands. Use [uno] for UNO, [chess] for chess, and [poker] for poker, not [scene].`,
     );
   }
 
@@ -266,7 +268,10 @@ export async function buildConversationCommandsReminder(args: {
     chatMode === "conversation" && isConversationCommandEnabled(chatMeta, "uno") && characterIds.length >= 1;
   const chessAdvertisable =
     chatMode === "conversation" && isConversationCommandEnabled(chatMeta, "chess") && characterIds.length >= 1;
-  const noActiveTurnGame = (unoAdvertisable || chessAdvertisable) && !(await getActiveTurnGame(args.db, args.chatId));
+  const pokerAdvertisable =
+    chatMode === "conversation" && isConversationCommandEnabled(chatMeta, "poker") && characterIds.length >= 1;
+  const noActiveTurnGame =
+    (unoAdvertisable || chessAdvertisable || pokerAdvertisable) && !(await getActiveTurnGame(args.db, args.chatId));
   if (unoAdvertisable && noActiveTurnGame) {
     addCommandLines(
       `- [uno] - start a game of UNO at the table. Include this ONLY when ${personaName} proposes playing UNO (or cards) and you are willing to play right now. The system deals the cards and runs the game — you do NOT narrate dealing or describe the hands.`,
@@ -279,6 +284,13 @@ export async function buildConversationCommandsReminder(args: {
       `- [chess] - start a one-on-one chess game against ${personaName}. Include this ONLY when ${personaName} proposes playing chess and YOU are willing to play right now. Chess seats exactly two players: ${personaName} and you — whichever character includes [chess] takes the opponent's seat. The system sets up the board and runs the game — you do NOT describe the board or narrate setup.`,
       `   If you'd rather not play, say so in character and do NOT include [chess]. Agreeing to play IS including [chess].`,
       `   Example: ${personaName} says "up for a game of chess?" and you're in → "Prepare to lose your queen. [chess]"`,
+    );
+  }
+  if (pokerAdvertisable && noActiveTurnGame) {
+    addCommandLines(
+      `- [poker] - start a game of Texas Hold'em poker at the table. Include this ONLY when ${personaName} proposes playing poker and you are willing to play right now. The system seats ${personaName} plus every willing character at the table and runs the game — you do NOT narrate dealing, blinds, or describe anyone's cards.`,
+      `   If you are busy, tired, or simply don't feel like it, just say so in character and do NOT include [poker]. Agreeing to play IS including [poker].`,
+      `   Example: ${personaName} says "who's up for some poker?" and you're in → "Deal me in. [poker]"`,
     );
   }
 

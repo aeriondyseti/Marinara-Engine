@@ -30,6 +30,8 @@ import { UnoBoard } from "./UnoBoard";
 import { UnoSetup } from "./UnoSetup";
 import { ChessBoard } from "./ChessBoard";
 import { ChessSetup } from "./ChessSetup";
+import { PokerBoard } from "./PokerBoard";
+import { PokerSetup } from "./PokerSetup";
 import { SceneBanner, EndSceneBar } from "./SceneBanner";
 import { ChatBranchSelector } from "./ChatBranchSelector";
 import { ActiveLorebookEntriesButton } from "./ActiveLorebookEntriesButton";
@@ -42,6 +44,7 @@ import { ConversationCallSurface } from "./ConversationCallSurface";
 import { useChatStore } from "../../stores/chat.store";
 import { useUnoGameStore } from "../../stores/uno-game.store";
 import { useChessGameStore } from "../../stores/chess-game.store";
+import { usePokerGameStore } from "../../stores/poker-game.store";
 import { useUIStore } from "../../stores/ui.store";
 import { playConfiguredNotificationPing } from "../../lib/notification-sound";
 import { playConversationCallRingingSoundOnce } from "../../lib/conversation-call-sounds";
@@ -321,6 +324,9 @@ export function ConversationView({
   const chessGameActive = useChessGameStore((s) => s.current?.chatId === chatId && s.current?.status !== "finished");
   const chessSetupOpen = useChessGameStore((s) => s.setupChatId === chatId);
   const closeChessSetup = useChessGameStore((s) => s.closeSetup);
+  const pokerGameActive = usePokerGameStore((s) => s.current?.chatId === chatId && s.current?.status !== "finished");
+  const pokerSetupOpen = usePokerGameStore((s) => s.setupChatId === chatId);
+  const closePokerSetup = usePokerGameStore((s) => s.closeSetup);
   const isStreamCommitted = useChatStore((s) => s.committedStreamChatIds.has(chatId));
   const hasLiveStream = isStreaming && !isStreamCommitted;
   const streamBuffer = useThrottledStreamBuffer();
@@ -1464,7 +1470,7 @@ export function ConversationView({
         )}
 
         {/* Scene banner — inline at bottom of messages (origin variant only); hidden during a turn-game */}
-        {sceneInfo?.variant === "origin" && !unoGameActive && !chessGameActive && (
+        {sceneInfo?.variant === "origin" && !unoGameActive && !chessGameActive && !pokerGameActive && (
           <SceneBanner variant="origin" sceneChatId={sceneInfo.sceneChatId} sceneChatName={sceneInfo.sceneChatName} />
         )}
 
@@ -1495,9 +1501,10 @@ export function ConversationView({
         />
       )}
 
-      {/* ── Turn-game boards (UNO, chess) — each self-hides when no game is active ── */}
+      {/* ── Turn-game boards (UNO, chess, poker) — each self-hides when no game is active ── */}
       <UnoBoard chatId={chatId} />
       <ChessBoard chatId={chatId} />
+      <PokerBoard chatId={chatId} />
       {renderIncomingCallBanner()}
       {/* Setup modals mounted once here (stable position) so they never double-render.
           Keyed by chatId so their internal selection state resets on a chat switch
@@ -1508,6 +1515,7 @@ export function ConversationView({
           duplicate/orphan the setup modals (stuck un-closable "Start UNO"). */}
       <UnoSetup key={`uno-${chatId}`} chatId={chatId} open={unoSetupOpen} onClose={closeUnoSetup} />
       <ChessSetup key={`chess-${chatId}`} chatId={chatId} open={chessSetupOpen} onClose={closeChessSetup} />
+      <PokerSetup key={`poker-${chatId}`} chatId={chatId} open={pokerSetupOpen} onClose={closePokerSetup} />
 
       {/* ── Input area ── */}
       <ConversationInput
