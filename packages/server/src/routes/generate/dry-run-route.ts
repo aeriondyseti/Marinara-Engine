@@ -2,8 +2,7 @@ import type { FastifyInstance } from "fastify";
 import {
   LOCAL_SIDECAR_CONNECTION_ID,
   isClaudeAdaptiveOnlyNoSamplingModel,
-  isXaiAutoReasoningModel,
-  supportsXhighReasoningEffort,
+  resolveProviderReasoningEffort,
   resolveMacros,
   stripMacroComments,
   DEFAULT_CONVERSATION_PROMPT,
@@ -1313,9 +1312,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
           .join(", ") || "Character";
       const conversationPromptTemplate = customPrompt ?? (selectedConversationPrompt || DEFAULT_CONVERSATION_PROMPT);
       const renderedConversationPrompt = resolvePromptMacros(
-        conversationPromptTemplate
-          .replace(/\{\{charName\}\}/g, charNameList)
-          .replace(/\{\{userName\}\}/g, personaName),
+        conversationPromptTemplate.replace(/\{\{charName\}\}/g, charNameList).replace(/\{\{userName\}\}/g, personaName),
       );
       finalMessages = [
         { role: "system", content: formatConversationInstructionsForWrap(renderedConversationPrompt, wrapFormat) },
@@ -1475,28 +1472,11 @@ export async function registerDryRunRoute(app: FastifyInstance) {
     const modelLower = (conn.model ?? "").toLowerCase();
     const providerLower = (conn.provider ?? "").toLowerCase();
 
-    // Resolve "xhigh" and "maximum" reasoning effort to provider-facing levels.
-    // Native Anthropic/Claude subscription adaptive-only models use "max";
-    // OpenAI-compatible Claude routes keep "xhigh". All other models get "high".
-    let resolvedEffort: "low" | "medium" | "high" | "xhigh" | "max" | null =
-      reasoningEffort !== "maximum" ? reasoningEffort : null;
-    const supportsXhigh = supportsXhighReasoningEffort(modelLower);
-    if (reasoningEffort === "xhigh" && !supportsXhigh) {
-      resolvedEffort = "high";
-    }
-    if (reasoningEffort === "maximum") {
-      const isNativeAnthropicAdaptiveOnly =
-        (providerLower === "anthropic" || providerLower === "claude_subscription") &&
-        isClaudeAdaptiveOnlyNoSamplingModel(modelLower);
-      resolvedEffort = isNativeAnthropicAdaptiveOnly ? "max" : supportsXhigh ? "xhigh" : "high";
-    }
-
-    const xaiUsesAutoReasoning =
-      (providerLower === "xai" && isXaiAutoReasoningModel(modelLower)) ||
-      (providerLower === "openrouter" && modelLower.startsWith("x-ai/grok-"));
-    if (xaiUsesAutoReasoning) {
-      resolvedEffort = null;
-    }
+    const resolvedEffort = resolveProviderReasoningEffort({
+      provider: providerLower,
+      model: modelLower,
+      reasoningEffort,
+    });
 
     // When reasoning effort is set, force showThoughts on (matches /generate's display behavior).
     if (resolvedEffort && !showThoughts) {
@@ -1674,6 +1654,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
           minP: minP || undefined,
           enableThinking,
           reasoningEffort: resolvedEffort ?? undefined,
+          excludePastReasoning,
           verbosity: verbosity ?? undefined,
           serviceTier,
           customParameters,
@@ -1738,6 +1719,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
         minP: minP || undefined,
         enableThinking,
         reasoningEffort: resolvedEffort ?? undefined,
+        excludePastReasoning,
         verbosity: verbosity ?? undefined,
         serviceTier,
         customParameters,

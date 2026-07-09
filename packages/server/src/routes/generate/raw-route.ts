@@ -4,8 +4,7 @@ import { z } from "zod";
 import {
   LOCAL_SIDECAR_CONNECTION_ID,
   isClaudeAdaptiveOnlyNoSamplingModel,
-  isXaiAutoReasoningModel,
-  supportsXhighReasoningEffort,
+  resolveProviderReasoningEffort,
   type ChatMLMessage,
   type GenerationParameterSendMap,
 } from "@marinara-engine/shared";
@@ -105,26 +104,7 @@ function normalizeReasoningEffort(args: {
   model: string;
   reasoningEffort: "low" | "medium" | "high" | "xhigh" | "maximum" | null;
 }): "low" | "medium" | "high" | "xhigh" | "max" | null {
-  const modelLower = args.model.toLowerCase();
-  const providerLower = args.provider.toLowerCase();
-  let resolvedEffort: "low" | "medium" | "high" | "xhigh" | "max" | null =
-    args.reasoningEffort !== "maximum" ? args.reasoningEffort : null;
-
-  const supportsXhigh = supportsXhighReasoningEffort(modelLower);
-  if (args.reasoningEffort === "xhigh" && !supportsXhigh) {
-    resolvedEffort = "high";
-  }
-  if (args.reasoningEffort === "maximum") {
-    const isNativeAnthropicAdaptiveOnly =
-      (providerLower === "anthropic" || providerLower === "claude_subscription") &&
-      isClaudeAdaptiveOnlyNoSamplingModel(modelLower);
-    resolvedEffort = isNativeAnthropicAdaptiveOnly ? "max" : supportsXhigh ? "xhigh" : "high";
-  }
-
-  const xaiUsesAutoReasoning =
-    (providerLower === "xai" && isXaiAutoReasoningModel(modelLower)) ||
-    (providerLower === "openrouter" && modelLower.startsWith("x-ai/grok-"));
-  return xaiUsesAutoReasoning ? null : resolvedEffort;
+  return resolveProviderReasoningEffort(args);
 }
 
 export async function registerRawRoute(app: FastifyInstance) {

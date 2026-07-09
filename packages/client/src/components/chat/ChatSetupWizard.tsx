@@ -250,6 +250,7 @@ const WIZARD_PRIMARY_BUTTON_CLASS =
   "flex items-center justify-center gap-1.5 rounded-lg bg-[var(--primary)] px-4 py-1.5 text-xs font-medium text-[var(--primary-foreground)] shadow-sm transition-all hover:opacity-90 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50";
 const WIZARD_SECONDARY_BUTTON_CLASS =
   "flex items-center justify-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--secondary)] px-3 py-1.5 text-xs font-medium text-[var(--foreground)] transition-all hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50";
+const CHARACTER_PICKER_PAGE_SIZE = 50;
 
 function readChatMetadata(chat: Chat): Record<string, unknown> {
   const raw = (chat as unknown as { metadata?: string | Record<string, unknown> }).metadata;
@@ -804,6 +805,11 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
 
   const [search, setSearch] = useState("");
   const [selectedFolderId, setSelectedFolderId] = useState("");
+  const [characterPickerLimit, setCharacterPickerLimit] = useState(CHARACTER_PICKER_PAGE_SIZE);
+
+  useEffect(() => {
+    setCharacterPickerLimit(CHARACTER_PICKER_PAGE_SIZE);
+  }, [search]);
 
   const charInfoMap = useMemo(() => {
     const map = new Map<string, ReturnType<typeof parseCharacterDisplayData>>();
@@ -970,13 +976,19 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
     [chat.id, updateChat],
   );
 
-  const available = characters.filter((c) => {
-    if (chatCharIds.includes(c.id)) return false;
-    const info = getCharacterInfo(c);
-    const query = search.toLowerCase();
-    const title = getCharacterTitle(info)?.toLowerCase() ?? "";
-    return info.name.toLowerCase().includes(query) || title.includes(query);
-  });
+  const available = useMemo(
+    () =>
+      characters.filter((c) => {
+        if (chatCharIds.includes(c.id)) return false;
+        const info = getCharacterInfo(c);
+        const query = search.toLowerCase();
+        const title = getCharacterTitle(info)?.toLowerCase() ?? "";
+        return info.name.toLowerCase().includes(query) || title.includes(query);
+      }),
+    [characters, chatCharIds, getCharacterInfo, search],
+  );
+  const visibleAvailable = available.slice(0, characterPickerLimit);
+  const hasMoreAvailable = available.length > visibleAvailable.length;
 
   const hasConnection = !!chat.connectionId;
   const hasCharacters = chatCharIds.length > 0;
@@ -1304,7 +1316,7 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
                 <Plus size="0.75rem" className="text-[var(--muted-foreground)]" />
               </button>
             )}
-            {available.map((character) => {
+            {visibleAvailable.map((character) => {
               const info = getCharacterInfo(character);
               const title = getCharacterTitle(info);
               return (
@@ -1335,6 +1347,15 @@ function ConversationQuickSetup({ chat, onFinish }: ChatSetupWizardProps) {
                 </button>
               );
             })}
+            {hasMoreAvailable && (
+              <button
+                type="button"
+                onClick={() => setCharacterPickerLimit((limit) => limit + CHARACTER_PICKER_PAGE_SIZE)}
+                className="w-full border-t border-[var(--border)] px-3 py-2 text-xs font-medium text-[var(--primary)] transition-colors hover:bg-[var(--primary)]/10"
+              >
+                Load more ({visibleAvailable.length} of {available.length})
+              </button>
+            )}
             {available.length === 0 && (
               <p className="px-3 py-3 text-center text-[0.6875rem] text-[var(--muted-foreground)]">
                 {characters.filter((character) => !chatCharIds.includes(character.id)).length === 0
@@ -2032,10 +2053,15 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
   // Search state for character & lorebook pickers
   const [charSearch, setCharSearch] = useState("");
   const [selectedRoleplayFolderId, setSelectedRoleplayFolderId] = useState("");
+  const [characterPickerLimit, setCharacterPickerLimit] = useState(CHARACTER_PICKER_PAGE_SIZE);
   const [lbSearch, setLbSearch] = useState("");
   const [agentSearch, setAgentSearch] = useState("");
   const [agentAddPreview, setAgentAddPreview] = useState<AgentAddPreview | null>(null);
   const [addingAgentToChat, setAddingAgentToChat] = useState(false);
+
+  useEffect(() => {
+    setCharacterPickerLimit(CHARACTER_PICKER_PAGE_SIZE);
+  }, [charSearch]);
 
   // On the preset step, wait for full preset data before allowing advance
   const isPresetStep = currentStep.key === "preset";
@@ -2255,6 +2281,8 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
       const title = charTitle(c)?.toLowerCase() ?? "";
       return charName(c).toLowerCase().includes(query) || title.includes(query);
     });
+    const visibleAvailable = available.slice(0, characterPickerLimit);
+    const hasMoreAvailable = available.length > visibleAvailable.length;
     const addRandomCharacter = () => {
       const selected = new Set(chatCharIds);
       const query = charSearch.trim().toLowerCase();
@@ -2378,7 +2406,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
                 <Plus size="0.75rem" className="text-[var(--muted-foreground)]" />
               </button>
             )}
-            {available.map((c) => {
+            {visibleAvailable.map((c) => {
               const name = charName(c);
               const title = charTitle(c);
               return (
@@ -2411,6 +2439,15 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
                 </button>
               );
             })}
+            {hasMoreAvailable && (
+              <button
+                type="button"
+                onClick={() => setCharacterPickerLimit((limit) => limit + CHARACTER_PICKER_PAGE_SIZE)}
+                className="w-full border-t border-[var(--border)] px-3 py-2 text-xs font-medium text-[var(--primary)] transition-colors hover:bg-[var(--primary)]/10"
+              >
+                Load more ({visibleAvailable.length} of {available.length})
+              </button>
+            )}
             {available.length === 0 && (
               <p className="px-3 py-2 text-[0.6875rem] text-[var(--muted-foreground)]">
                 {characters.filter((c) => !chatCharIds.includes(c.id)).length === 0

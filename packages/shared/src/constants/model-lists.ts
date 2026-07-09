@@ -27,11 +27,59 @@ export function isClaudeAdaptiveOnlyNoSamplingModel(model: string): boolean {
 export function supportsXhighReasoningEffort(model: string): boolean {
   const normalized = model.toLowerCase();
   return (
+    normalized.startsWith("gpt-5.6") ||
     normalized.startsWith("gpt-5.5") ||
     normalized.startsWith("gpt-5.4") ||
     normalized === "grok-4.20-multi-agent" ||
     isClaudeAdaptiveOnlyNoSamplingModel(normalized)
   );
+}
+
+export function isOpenAIGpt56Model(model: string): boolean {
+  return model.toLowerCase().startsWith("gpt-5.6");
+}
+
+export function isOpenAIGpt56SolProAlias(model: string): boolean {
+  return model.toLowerCase() === "gpt-5.6-sol-pro";
+}
+
+export function resolveOpenAIGpt56ModelForRequest(model: string): string {
+  return isOpenAIGpt56SolProAlias(model) ? "gpt-5.6-sol" : model;
+}
+
+export type StoredReasoningEffort = "low" | "medium" | "high" | "xhigh" | "maximum" | "max" | null;
+export type ProviderReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max" | null;
+
+export function resolveProviderReasoningEffort(args: {
+  provider: string;
+  model: string;
+  reasoningEffort: StoredReasoningEffort | undefined;
+}): ProviderReasoningEffort {
+  if (!args.reasoningEffort) return null;
+  const modelLower = args.model.toLowerCase();
+  const providerLower = args.provider.toLowerCase();
+
+  const xaiUsesAutoReasoning =
+    (providerLower === "xai" && isXaiAutoReasoningModel(modelLower)) ||
+    (providerLower === "openrouter" && modelLower.startsWith("x-ai/grok-"));
+  if (xaiUsesAutoReasoning) return null;
+
+  const isNativeAnthropicAdaptiveOnly =
+    (providerLower === "anthropic" || providerLower === "claude_subscription") &&
+    isClaudeAdaptiveOnlyNoSamplingModel(modelLower);
+  const supportsXhigh = supportsXhighReasoningEffort(modelLower);
+  const supportsMax = isOpenAIGpt56Model(modelLower) || isNativeAnthropicAdaptiveOnly;
+
+  if (args.reasoningEffort === "maximum") {
+    return supportsMax ? "max" : supportsXhigh ? "xhigh" : "high";
+  }
+  if (args.reasoningEffort === "max") {
+    return supportsMax ? "max" : supportsXhigh ? "xhigh" : "high";
+  }
+  if (args.reasoningEffort === "xhigh") {
+    return supportsXhigh ? "xhigh" : "high";
+  }
+  return args.reasoningEffort;
 }
 
 export function isXaiConfigurableReasoningModel(model: string): boolean {
@@ -47,6 +95,12 @@ export function isXaiAutoReasoningModel(model: string): boolean {
 // ── OpenAI (from #model_openai_select) ──
 
 export const OPENAI_MODELS: KnownModel[] = [
+  // GPT-5.6
+  { id: "gpt-5.6", name: "gpt-5.6 (alias for gpt-5.6-sol)", context: 1050000, maxOutput: 128000 },
+  { id: "gpt-5.6-sol", name: "gpt-5.6-sol", context: 1050000, maxOutput: 128000 },
+  { id: "gpt-5.6-sol-pro", name: "gpt-5.6-sol-pro (Sol with pro mode)", context: 1050000, maxOutput: 128000 },
+  { id: "gpt-5.6-terra", name: "gpt-5.6-terra", context: 1050000, maxOutput: 128000 },
+  { id: "gpt-5.6-luna", name: "gpt-5.6-luna", context: 1050000, maxOutput: 128000 },
   // GPT-5.5
   { id: "gpt-5.5", name: "gpt-5.5", context: 1050000, maxOutput: 128000 },
   { id: "gpt-5.5-2026-04-23", name: "gpt-5.5-2026-04-23", context: 1050000, maxOutput: 128000 },

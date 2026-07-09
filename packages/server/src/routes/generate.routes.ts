@@ -252,6 +252,7 @@ import {
   getTurnGameContextBuilder,
   startTurnGame,
 } from "../services/turn-games/turn-game-runner.service.js";
+import { buildRecentSocialMediaActivityBlock } from "../services/noodle/noodle-context.js";
 import { normalizeContextInjections } from "./generate/agent-normalizers.js";
 import {
   buildGenerationPromptPresetCandidates,
@@ -2139,6 +2140,23 @@ export async function generateRoutes(app: FastifyInstance) {
           chats,
           finalMessages,
         });
+
+        const recentSocialMediaActivityBlock = await buildRecentSocialMediaActivityBlock({
+          db: app.db,
+          chatMode,
+          characterIds: promptCharacterIds,
+          personaId,
+          wrapFormat,
+        });
+        if (recentSocialMediaActivityBlock) {
+          const firstUserIdx = finalMessages.findIndex((m) => m.role === "user" || m.role === "assistant");
+          const insertAt = firstUserIdx >= 0 ? firstUserIdx : finalMessages.length;
+          finalMessages.splice(insertAt, 0, {
+            role: "system" as const,
+            content: recentSocialMediaActivityBlock,
+            contextKind: "injection",
+          });
+        }
 
         const providerRuntime = resolveGenerationProviderRuntime({
           connectionId: connId ?? "",
@@ -4669,6 +4687,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   enableThinking,
                   captureReasoning,
                   reasoningEffort: resolvedEffort ?? undefined,
+                  excludePastReasoning,
                   verbosity: verbosity ?? undefined,
                   serviceTier,
                   customParameters,
@@ -4753,7 +4772,9 @@ export async function generateRoutes(app: FastifyInstance) {
                 // user isn't impersonating; otherwise the caller is ambiguous (merged group)
                 // and the tool refuses rather than write the wrong character's about-me.
                 callingCharacterId:
-                  speaksOnlyTargetCharacter && !input.impersonate ? (targetCharId ?? input.forCharacterId ?? null) : null,
+                  speaksOnlyTargetCharacter && !input.impersonate
+                    ? (targetCharId ?? input.forCharacterId ?? null)
+                    : null,
               });
               const toolResultsById = new Map(
                 [...executedToolResults, ...deniedToolResults].map((result) => [result.toolCallId, result]),
@@ -4877,6 +4898,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   enableThinking,
                   captureReasoning,
                   reasoningEffort: resolvedEffort ?? undefined,
+                  excludePastReasoning,
                   verbosity: verbosity ?? undefined,
                   serviceTier,
                   customParameters,
@@ -4934,6 +4956,7 @@ export async function generateRoutes(app: FastifyInstance) {
               enableThinking,
               captureReasoning,
               reasoningEffort: resolvedEffort ?? undefined,
+              excludePastReasoning,
               verbosity: verbosity ?? undefined,
               serviceTier,
               customParameters,
@@ -7206,9 +7229,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 const updates = Array.isArray(rawUpdates) ? (rawUpdates as Array<Record<string, unknown>>) : [];
                 const validCharIds = new Set(agentContext.characters.map((c) => c.id));
                 const isUsable = (u: Record<string, unknown>) =>
-                  typeof u.characterId === "string" &&
-                  validCharIds.has(u.characterId) &&
-                  typeof u.newText === "string";
+                  typeof u.characterId === "string" && validCharIds.has(u.characterId) && typeof u.newText === "string";
                 const chatUpdates = updates.filter((u) => u.target === "chat" && isUsable(u));
                 const publicUpdates = updates.filter((u) => u.target === "public" && isUsable(u));
 

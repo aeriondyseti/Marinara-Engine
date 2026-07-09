@@ -6,6 +6,8 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Added
 
+- Added OpenAI GPT-5.6 Sol/Terra/Luna model support, including the `gpt-5.6` Sol alias, a `gpt-5.6-sol-pro` pro-mode alias, Responses API routing, GPT-5.6 `max` reasoning effort mapping, and reuse of the existing Exclude Past Reasoning toggle for GPT-5.6 reasoning context.
+- Added the first Noodle fake-social-media surface: a top-bar Noodle tab, persona-linked user profiles, character invites, a scrollable fake timeline with posts/replies/likes/reposts, configurable refresh generation, stored image-prompt slots, and optional recent-social activity carryover into Conversation, Roleplay/VN, and Game prompts using the chat preset wrapper.
 - Added a configurable source picker (⚙️) for the Conversation "about me" AI-write, in both the character-card editor and the in-chat profile popout: choose which of the card fields (description, personality, scenario, backstory, appearance), the Convo behavior directive, the character's lorebook entries (with per-entry selection in the card editor), and recent chat context feed the draft. Defaults to personality only.
 - Added a Revert control to the about-me editor (card editor and in-chat popout) to undo a manual or AI-write change, and an emoji picker in the about-me editor.
 - Added an optional per-character toggle to declare a character's Convo display name on its card in the prompt, so the model can map the display name to the right card in group chats.
@@ -14,8 +16,19 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Added a selectable poker dealer: choose the silent house dealer or seat any chat character as the croupier, who announces hand starts, flop/turn/river reveals, showdowns, and blind increases in their own voice and personality — narration only, with dealing always seeded and fair.
 - Poker joins the `[poker]` Conversation command family alongside `[uno]` and `[chess]`, with a `/poker` slash command, natural-language launcher, per-chat command toggle, and a setup modal for players, dealer, and stakes.
 
+### Changed
+
+- Restyled Noodle around the Klusek blue logo asset, replacing the always-visible settings column with a profile-triggered drawer and a more Twitter-like central feed.
+- Updated Noodle image prompt generation so character posts may request either character-focused images or in-character memes when image generation is enabled.
+- Updated Noodle settings so selected character folders can be bulk-invited directly, and automated refreshes can be disabled by setting refreshes per day to `0`.
+- Updated Noodle posts with edit/delete actions for every post, toggleable likes/reposts, a confirmed timeline reset control, multi-character image references, and automatic character-gallery saves for generated character post images.
+
 ### Fixed
 
+- Fixed PocketTTS voice refresh so built-in and custom voices returned by the provider `/v1/voices` endpoint are listed, including custom voices identified by URL/path fields (#3410).
+- Fixed Conversation Call live-mic input so Local Whisper/provider media submissions cannot queue unbounded speech segments and lock the call UI behind repeated "too many requests" failures (#3411).
+- Fixed Game Mode reputation widget updates accepting generated action descriptions longer than 50 characters, preventing scene-analysis reputation updates from failing on natural-language actions (#3409).
+- Fixed the v2.1.1 auto-update build regression by resolving the stale TypeScript errors that broke the server/client build during update (#3401).
 - Fixed the chat-specific about-me override being lost on reload or refetch — the popout read chat metadata without parsing it, so the override reset to the card default and, on save, could drop other characters' overrides.
 - Fixed the about-me AI-write failing on "thinking" models (e.g. Gemini 3.x) that spent the entire output budget on reasoning and returned no content; the output ceiling was raised and reasoning effort lowered.
 - Fixed the about-me source picker listing only "linked" lorebooks — a character whose lorebook is embedded now sees and can select its entries.

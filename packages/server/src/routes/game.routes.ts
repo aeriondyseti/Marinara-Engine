@@ -115,9 +115,8 @@ import {
   normalizeVideoGenerationProfile,
   normalizeAgentPromptTemplateOptions,
   isClaudeAdaptiveOnlyNoSamplingModel,
-  isXaiAutoReasoningModel,
   localAuthProviderBaseUrl,
-  supportsXhighReasoningEffort,
+  resolveProviderReasoningEffort,
   scoreMusic,
   scoreAmbient,
   serializeResolvedSkillCheckTag,
@@ -418,9 +417,7 @@ function addUniqueCharacterName(target: string[], seen: Set<string>, name: unkno
 }
 
 function readStringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.map((item) => (typeof item === "string" ? item.trim() : "")).filter(Boolean)
-    : [];
+  return Array.isArray(value) ? value.map((item) => (typeof item === "string" ? item.trim() : "")).filter(Boolean) : [];
 }
 
 function addCharacterRowIllustrationAssets(
@@ -446,7 +443,16 @@ function addCharacterRowIllustrationAssets(
 
 function addPersonaIllustrationAssets(
   maps: IllustrationCharacterAssetMaps,
-  persona: { id: string; name?: string | null; avatarPath?: string | null; appearance?: string | null; description?: string | null } | null | undefined,
+  persona:
+    | {
+        id: string;
+        name?: string | null;
+        avatarPath?: string | null;
+        appearance?: string | null;
+        description?: string | null;
+      }
+    | null
+    | undefined,
 ): string | null {
   const name = typeof persona?.name === "string" && persona.name.trim() ? persona.name.trim() : null;
   if (!persona || !name) return null;
@@ -611,7 +617,7 @@ function collectIllustrationCharacterAssets(opts: {
 
     let appearanceAttached = false;
     const description = includeCharacterDescriptions
-      ? findCharAvatarFuzzy(name, opts.charDescriptionByName) ?? findCharAvatarFuzzy(name, npcDescriptionByName)
+      ? (findCharAvatarFuzzy(name, opts.charDescriptionByName) ?? findCharAvatarFuzzy(name, npcDescriptionByName))
       : undefined;
     const normalizedName = normalizeAvatarLookupName(name);
     if (description && !described.has(normalizedName)) {
@@ -1540,6 +1546,7 @@ function sourceIllustrationPathForMetadata(assetPath: string): string {
 }
 
 const MAX_GAME_HUD_WIDGETS = 4;
+const GAME_REPUTATION_ACTION_MAX_LENGTH = 500;
 const trimmedWidgetString = (max: number) => z.string().trim().min(1).max(max);
 
 const hudWidgetSchema = z.object({
@@ -2737,21 +2744,13 @@ function resolveGameReasoningEffort(
   if (!reasoningEffort) return undefined;
   const modelLower = model.toLowerCase();
   const providerLower = (provider ?? "").toLowerCase();
-  const isClaudeAdaptiveOnly = isClaudeAdaptiveOnlyNoSamplingModel(modelLower);
-  const isNativeAnthropicAdaptiveOnly =
-    (providerLower === "anthropic" || providerLower === "claude_subscription") && isClaudeAdaptiveOnly;
-  if (
-    (providerLower === "xai" && isXaiAutoReasoningModel(modelLower)) ||
-    (providerLower === "openrouter" && modelLower.startsWith("x-ai/grok-"))
-  ) {
-    return undefined;
-  }
-  const supportsXhigh = supportsXhighReasoningEffort(modelLower);
-  if (reasoningEffort === "max") return isNativeAnthropicAdaptiveOnly ? "max" : "high";
-  if (reasoningEffort === "xhigh") return supportsXhigh ? "xhigh" : "high";
-  if (reasoningEffort !== "maximum") return reasoningEffort;
-
-  return isNativeAnthropicAdaptiveOnly ? "max" : supportsXhigh ? "xhigh" : "high";
+  return (
+    resolveProviderReasoningEffort({
+      provider: providerLower,
+      model: modelLower,
+      reasoningEffort,
+    }) ?? undefined
+  );
 }
 
 /** Build model-aware generation options for game calls. */
@@ -2789,19 +2788,18 @@ function gameGenOptions(
   // provider strips them on the wire, but we omit them here so the
   // logged options match what is actually sent.
   const isClaudeAdaptiveOnly = isClaudeAdaptiveOnlyNoSamplingModel(m);
-  const isNativeAnthropicAdaptiveOnly =
-    (providerLower === "anthropic" || providerLower === "claude_subscription") && isClaudeAdaptiveOnly;
-  const isGrokAutoReasoning =
-    (providerLower === "xai" && isXaiAutoReasoningModel(m)) ||
-    (providerLower === "openrouter" && m.startsWith("x-ai/grok-"));
-  const supportsXhigh = supportsXhighReasoningEffort(m);
+  const defaultReasoningEffort = resolveProviderReasoningEffort({
+    provider: providerLower,
+    model: m,
+    reasoningEffort: "maximum",
+  });
   const base: ChatOptions = {
     model,
     maxTokens: 8192,
     verbosity: "high",
   };
-  if (!isGrokAutoReasoning) {
-    base.reasoningEffort = isNativeAnthropicAdaptiveOnly ? "max" : supportsXhigh ? "xhigh" : "high";
+  if (defaultReasoningEffort) {
+    base.reasoningEffort = defaultReasoningEffort;
     // Required for providers that actually attach thinking config to the request body.
     base.enableThinking = true;
   }
@@ -4747,9 +4745,7 @@ function sanitizeStoryboardCharactersForRoster(
   if (!allowedCharacterNames?.length) return characters;
 
   const allowed = new Set(
-    allowedCharacterNames
-      .map((name) => normalizeAvatarLookupName(name))
-      .filter((name) => name.length > 0),
+    allowedCharacterNames.map((name) => normalizeAvatarLookupName(name)).filter((name) => name.length > 0),
   );
   return characters.filter((name) => {
     const normalized = normalizeAvatarLookupName(name);
@@ -4795,7 +4791,11 @@ function reconcileStoryboardCharactersForFrame(args: {
   return { characters: result, omittedMentionedCharacters };
 }
 
-function appendStoryboardCharacterScopeToPrompt(prompt: string, characters: string[], omittedCharacters: string[]): string {
+function appendStoryboardCharacterScopeToPrompt(
+  prompt: string,
+  characters: string[],
+  omittedCharacters: string[],
+): string {
   const cleanPrompt = prompt.trim();
   if (!characters.length) return cleanPrompt;
   const basePrompt = cleanPrompt.replace(/\s+Final visibility rule:[\s\S]*$/u, "").trim();
@@ -4817,12 +4817,7 @@ function reconcileStoryboardFrameForRendering(args: {
   maxVisibleCharacters: number;
 }): PlannedStoryboardKeyframe {
   const basePrompt = args.frame.imagePrompt || args.frame.mangaPanelPrompt || args.frame.narrationBeat;
-  const frameText = [
-    args.frame.title,
-    args.frame.imagePrompt,
-    args.frame.mangaPanelPrompt,
-    args.frame.narrationBeat,
-  ]
+  const frameText = [args.frame.title, args.frame.imagePrompt, args.frame.mangaPanelPrompt, args.frame.narrationBeat]
     .filter(Boolean)
     .join("\n");
   const reconciledCharacters = reconcileStoryboardCharactersForFrame({
@@ -8734,7 +8729,7 @@ export async function gameRoutes(app: FastifyInstance) {
       actions: z.array(
         z.object({
           npcId: z.string(),
-          action: z.string().min(1).max(50),
+          action: z.string().min(1).max(GAME_REPUTATION_ACTION_MAX_LENGTH),
           modifier: z.number().optional(),
         }),
       ),

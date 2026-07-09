@@ -171,6 +171,7 @@ const CALL_TTS_MAX_REQUEST_CHARS = 3_900;
 const CALL_VIDEO_LOOP_GUARD_SECONDS = 0.12;
 const CALL_OPTIMISTIC_MESSAGE_RECONCILE_MS = 5 * 60 * 1000;
 const CALL_MUTED_REMINDER_TIMEOUT_MS = 10_000;
+const CALL_SPEECH_BACKPRESSURE_NOTICE_MS = 8_000;
 const DEFAULT_TEXT_TO_VOICE_PAUSE_MS = 1_800;
 const ONLINE_CHARACTER_JOIN_DELAY_MS = 1_600;
 const AWAY_CHARACTER_JOIN_DELAY_MS = 10_000;
@@ -1188,6 +1189,8 @@ export function ConversationCallSurface({
   const micSpeechFrameCountRef = useRef(0);
   const userSpeakingRef = useRef(false);
   const callInteractionQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const callSpeechSubmissionPendingRef = useRef(false);
+  const callSpeechDropNoticeAtRef = useRef(0);
   const speechRecognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const inputBarRef = useRef<HTMLDivElement | null>(null);
@@ -1441,6 +1444,7 @@ export function ConversationCallSurface({
 
   const cleanupLiveCallMedia = useCallback(() => {
     activeCallVoiceRef.current = null;
+    callSpeechSubmissionPendingRef.current = false;
     userInterruptionVoicedMsRef.current = 0;
     voicePlaybackInterruptedRef.current = false;
     ttsService.stop();
@@ -2407,10 +2411,22 @@ export function ConversationCallSurface({
 
   const enqueueRecordedCallMedia = useCallback(
     (blob: Blob, includeVideo: boolean) => {
+      if (callSpeechSubmissionPendingRef.current) {
+        const now = Date.now();
+        if (now - callSpeechDropNoticeAtRef.current >= CALL_SPEECH_BACKPRESSURE_NOTICE_MS) {
+          callSpeechDropNoticeAtRef.current = now;
+          toast.info("Still processing your last voice message.");
+        }
+        return;
+      }
+
+      callSpeechSubmissionPendingRef.current = true;
       void enqueueCallInteraction(
         () => submitRecordedCallMedia(blob, includeVideo),
         "Call speech transcription failed.",
-      );
+      ).finally(() => {
+        callSpeechSubmissionPendingRef.current = false;
+      });
     },
     [enqueueCallInteraction, submitRecordedCallMedia],
   );

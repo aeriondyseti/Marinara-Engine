@@ -1062,7 +1062,7 @@ export function TTSConfigCard() {
                 source === "elevenlabs"
                   ? "ElevenLabs voices are fetched by name and saved by voice ID."
                   : source === "pockettts"
-                    ? "PocketTTS built-in voice name or a voice URL/path accepted by your PocketTTS server."
+                    ? "PocketTTS built-in or custom voice from your server, or a voice URL/path accepted by PocketTTS."
                     : source === "xai"
                       ? "xAI Voice ID. Built-ins include eve, ara, rex, sal, and leo; custom xAI voice IDs can be typed after saving."
                       : "Voice to use for synthesis. Fetched from your configured provider when available."
@@ -1135,7 +1135,8 @@ export function TTSConfigCard() {
               )}
               {!voicesFromProvider && source === "pockettts" && voices.length > 0 && (
                 <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                  Showing PocketTTS built-in voices. You can type a custom voice URL or path accepted by your server.
+                  Showing PocketTTS built-in fallbacks. Save and refresh to load built-in and custom voices from your
+                  server.
                 </p>
               )}
               {!voicesFromProvider && source === "xai" && voices.length > 0 && (

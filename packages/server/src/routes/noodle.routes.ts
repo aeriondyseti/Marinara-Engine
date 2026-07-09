@@ -1,0 +1,1332 @@
+// ──────────────────────────────────────────────
+// Routes: Noodle Fake Social Media
+// ──────────────────────────────────────────────
+import type { FastifyInstance } from "fastify";
+import { basename } from "path";
+import {
+  noodleAccountUpdateSchema,
+  noodleBulkInviteSchema,
+  noodleCreateInteractionSchema,
+  noodleCreatePostSchema,
+  noodleGeneratedProfilesSchema,
+  noodleGeneratedRefreshSchema,
+  noodleInviteSchema,
+  noodlePostUpdateSchema,
+  noodleRemoveInteractionSchema,
+  noodleRefreshSchema,
+  noodleSettingsUpdateSchema,
+  PROFESSOR_MARI_ID,
+  type APIProvider,
+  type NoodleAccount,
+  type NoodleBootstrap,
+  type NoodleInteractionType,
+  type NoodlePost,
+  type NoodleSettings,
+} from "@marinara-engine/shared";
+import type { ChatMessage } from "../services/llm/base-provider.js";
+import { createCharactersStorage } from "../services/storage/characters.storage.js";
+import { createChatsStorage } from "../services/storage/chats.storage.js";
+import { createConnectionsStorage } from "../services/storage/connections.storage.js";
+import { createGalleryStorage } from "../services/storage/gallery.storage.js";
+import { createCharacterGalleryStorage } from "../services/storage/character-gallery.storage.js";
+import { createNoodleStorage } from "../services/storage/noodle.storage.js";
+import { createPromptOverridesStorage } from "../services/storage/prompt-overrides.storage.js";
+import { createLLMProvider } from "../services/llm/provider-registry.js";
+import { generateImage, saveImageToDisk } from "../services/image/image-generation.js";
+import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
+import { loadImageGenerationUserSettings } from "../services/image/image-generation-settings.js";
+import { compileImagePrompt } from "../services/image/image-prompt-compiler.js";
+import { loadPrompt, NOODLE_IMAGE_POST } from "../services/prompt-overrides/index.js";
+import { parseGameJsonish } from "../services/game/jsonish.js";
+import { resolveIllustratorCharacterReferences } from "./generate/illustrator-references.js";
+import { resolveBaseUrl } from "./generate/generate-route-utils.js";
+import { logger, logDebugOverride } from "../lib/logger.js";
+import { clampGenerationMaxOutputTokens } from "../services/generation/output-token-limits.js";
+
+function parseRecord(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function parseStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string" && item.length > 0);
+  if (typeof value !== "string") return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string" && item.length > 0)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function escapePromptAttribute(value: string) {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+const NOODLE_ADULT_PLATFORM_POLICY =
+  "Noodle only accepts confirmed adult accounts and personas. Every participant on Noodle is 18+; minors are not allowed on the platform. BSFW/NSFW content is allowed, anything goes, and adult in-character drama, flirtation, gossip, and explicit references may appear when they fit the accounts involved.";
+
+function dayStartIso(offsetDays = 0) {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString();
+}
+
+function sinceHoursIso(hours: number) {
+  return new Date(Date.now() - Math.max(1, hours) * 60 * 60 * 1000).toISOString();
+}
+
+function characterNameFromRow(row: { data: unknown } | null | undefined) {
+  const data = parseRecord(row?.data);
+  return typeof data.name === "string" && data.name.trim() ? data.name.trim() : "Character";
+}
+
+function personaNameFromRow(row: { name?: string | null; convoDisplayName?: string | null } | null | undefined) {
+  return row?.convoDisplayName?.trim() || row?.name?.trim() || "User";
+}
+
+function characterContextFromRow(row: { id: string; data: unknown; avatarPath?: string | null }) {
+  const data = parseRecord(row.data);
+  const extensions = parseRecord(data.extensions);
+  const name = typeof data.name === "string" && data.name.trim() ? data.name.trim() : "Character";
+  const lines = [`<character id="${row.id}" name="${name}">`];
+  for (const [label, value] of [
+    ["Description", data.description],
+    ["Personality", data.personality],
+    ["Scenario", data.scenario],
+    ["First message", data.first_mes],
+    ["Appearance", data.appearance ?? extensions.appearance],
+    ["Backstory", data.backstory ?? extensions.backstory],
+  ] as const) {
+    if (typeof value === "string" && value.trim()) lines.push(`${label}: ${value.trim()}`);
+  }
+  lines.push(`</character>`);
+  return lines.join("\n");
+}
+
+function personaContextFromRow(row: {
+  id: string;
+  name: string;
+  description?: string | null;
+  personality?: string | null;
+  scenario?: string | null;
+  backstory?: string | null;
+  appearance?: string | null;
+}) {
+  const lines = [`<persona id="${row.id}" name="${row.name || "User"}">`];
+  for (const [label, value] of [
+    ["Description", row.description],
+    ["Personality", row.personality],
+    ["Scenario", row.scenario],
+    ["Backstory", row.backstory],
+    ["Appearance", row.appearance],
+  ] as const) {
+    if (typeof value === "string" && value.trim()) lines.push(`${label}: ${value.trim()}`);
+  }
+  lines.push(`</persona>`);
+  return lines.join("\n");
+}
+
+function characterAppearanceFromRow(row: { data: unknown }) {
+  const data = parseRecord(row.data);
+  const extensions = parseRecord(data.extensions);
+  const value = data.appearance ?? extensions.appearance ?? data.description;
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function galleryImageUrl(filePath: string, fallbackChatId: string) {
+  const filename = basename(filePath.replace(/\\/g, "/"));
+  return `/api/gallery/file/${encodeURIComponent(fallbackChatId)}/${encodeURIComponent(filename)}`;
+}
+
+function characterGalleryImageUrl(characterId: string, filePath: string) {
+  const filename = basename(filePath.replace(/\\/g, "/"));
+  return `/api/characters/${encodeURIComponent(characterId)}/gallery/file/${encodeURIComponent(filename)}`;
+}
+
+function readBoolSetting(settings: Record<string, unknown>, key: string) {
+  const value = settings[key];
+  return value === true || value === "true";
+}
+
+function isProfileGenerated(account: NoodleAccount) {
+  return readBoolSetting(account.settings, "profileGenerated");
+}
+
+function generatedProfileSettings(settings: Record<string, unknown>, location: string, bannerUrl: string | null) {
+  return {
+    ...settings,
+    profileGenerated: true,
+    location,
+    bannerUrl: bannerUrl ?? "",
+  };
+}
+
+function profileSetupMaxTokens(characterCount: number) {
+  return 1024 + Math.max(0, characterCount) * 1024;
+}
+
+function timelineRefreshMaxTokens(characterCount: number) {
+  return 4096 + Math.max(0, characterCount) * 1024;
+}
+
+function shuffle<T>(items: T[]): T[] {
+  const next = [...items];
+  for (let i = next.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [next[i], next[j]] = [next[j]!, next[i]!];
+  }
+  return next;
+}
+
+const RANDOM_NOODLE_USERS = [
+  {
+    entityId: "random_user:thread-countess",
+    displayName: "Thread Countess",
+    bio: "Chronically online textile hobbyist who treats every Noodle argument like court gossip.",
+  },
+  {
+    entityId: "random_user:packet-soup",
+    displayName: "Packet Soup",
+    bio: "Friendly lurker, recipe collector, and accidental drama amplifier.",
+  },
+  {
+    entityId: "random_user:orbit-notice",
+    displayName: "Orbit Notice",
+    bio: "Posts vague observations, likes too quickly, and follows anyone with interesting chaos.",
+  },
+  {
+    entityId: "random_user:glass-bulletin",
+    displayName: "Glass Bulletin",
+    bio: "Local rumor account with polished manners and questionable sources.",
+  },
+  {
+    entityId: "random_user:moth-hour",
+    displayName: "Moth Hour",
+    bio: "Night-scroller who replies with eerie encouragement and niche memes.",
+  },
+  {
+    entityId: "random_user:brine-index",
+    displayName: "Brine Index",
+    bio: "Overconfident commentator who keeps a spreadsheet of everyone else's scandals.",
+  },
+] as const;
+
+const PROFESSOR_MARI_NOODLE_BIO =
+  "She/Her | 18+ | Skill Issue | Your Assistant After Hours (hey, I get to do fun stuff, too!) | Simp for Il Dottore 24/7 | LLMs Fan";
+
+function chooseParticipantAccounts(
+  accounts: NoodleAccount[],
+  settings: NoodleSettings,
+  selectedGroupCharacterIds: Set<string>,
+  personaAccount: NoodleAccount | null,
+) {
+  const followedAccountIds = new Set(parseStringArray(personaAccount?.settings.followingAccountIds));
+  const candidates = accounts.filter((account) => {
+    if (account.kind === "character") return account.invited || selectedGroupCharacterIds.has(account.entityId);
+    if (account.kind === "random_user") return settings.allowRandomUsers;
+    return false;
+  });
+  if (settings.participantSelectionMode === "all") return candidates;
+  const min = Math.min(settings.participantMin, settings.participantMax, candidates.length);
+  const max = Math.min(Math.max(settings.participantMin, settings.participantMax), candidates.length);
+  const count =
+    settings.participantSelectionMode === "exact" ? max : min + Math.floor(Math.random() * Math.max(1, max - min + 1));
+  const followed = candidates.filter((account) => account.kind === "character" && followedAccountIds.has(account.id));
+  const others = candidates.filter((account) => !followed.some((followedAccount) => followedAccount.id === account.id));
+  return [...shuffle(followed), ...shuffle(others)].slice(0, count);
+}
+
+async function pickGalleryAttachmentForAccount(input: {
+  account: NoodleAccount;
+  chats: ReturnType<typeof createChatsStorage>;
+  gallery: ReturnType<typeof createGalleryStorage>;
+  characterGallery: ReturnType<typeof createCharacterGalleryStorage>;
+}) {
+  if (input.account.kind !== "character") return null;
+
+  const characterImages = await input.characterGallery.listByCharacterId(input.account.entityId);
+  const characterImage = characterImages[0];
+  if (characterImage) {
+    return {
+      imageUrl: characterGalleryImageUrl(input.account.entityId, characterImage.filePath),
+      metadata: {
+        galleryAttachmentSource: "character-gallery",
+        galleryAttachmentId: characterImage.id,
+      },
+    };
+  }
+
+  const chats = await input.chats.list();
+  const chatIds = chats
+    .filter((chat) => parseStringArray(chat.characterIds).includes(input.account.entityId))
+    .map((chat) => chat.id)
+    .slice(0, 20);
+  const chatImages = await input.gallery.listByChatIds(chatIds);
+  const chatImage = chatImages[0];
+  if (!chatImage) return null;
+  return {
+    imageUrl: galleryImageUrl(chatImage.filePath, chatImage.chatId),
+    metadata: {
+      galleryAttachmentSource: "chat-gallery",
+      galleryAttachmentId: chatImage.id,
+      galleryAttachmentChatId: chatImage.chatId,
+    },
+  };
+}
+
+async function pickRandomCharacterBannerUrl(
+  characterGallery: ReturnType<typeof createCharacterGalleryStorage>,
+  characterId: string,
+) {
+  const images = await characterGallery.listByCharacterId(characterId);
+  const image = images.length > 0 ? shuffle(images)[0] : null;
+  return image ? characterGalleryImageUrl(characterId, image.filePath) : null;
+}
+
+async function ensureRandomUserAccounts(noodle: ReturnType<typeof createNoodleStorage>) {
+  for (const profile of RANDOM_NOODLE_USERS) {
+    await noodle.upsertAccountFromProfile({
+      kind: "random_user",
+      entityId: profile.entityId,
+      displayName: profile.displayName,
+      bio: profile.bio,
+      invited: true,
+    });
+  }
+}
+
+async function ensureProfessorMariAccount(
+  noodle: ReturnType<typeof createNoodleStorage>,
+  characters: ReturnType<typeof createCharactersStorage>,
+) {
+  const row = await characters.getById(PROFESSOR_MARI_ID);
+  const account = await noodle.upsertAccountFromProfile({
+    kind: "character",
+    entityId: PROFESSOR_MARI_ID,
+    displayName: row ? characterNameFromRow(row) : "Professor Mari",
+    avatarUrl: row?.avatarPath ?? "/sprites/mari/Mari_profile.png",
+    bio: PROFESSOR_MARI_NOODLE_BIO,
+    invited: true,
+  });
+  if (account.bio !== PROFESSOR_MARI_NOODLE_BIO || !isProfileGenerated(account) || !account.settings.location) {
+    await noodle.updateAccount(account.id, {
+      handle: account.handle || "professor_mari",
+      displayName: account.displayName || "Professor Mari",
+      bio: PROFESSOR_MARI_NOODLE_BIO,
+      avatarUrl: account.avatarUrl || row?.avatarPath || "/sprites/mari/Mari_profile.png",
+      settings: generatedProfileSettings(account.settings, "Marinara Engine", null),
+    });
+  }
+}
+
+async function ensureSelectedGroupCharacterAccounts(
+  noodle: ReturnType<typeof createNoodleStorage>,
+  characters: ReturnType<typeof createCharactersStorage>,
+  groupIds: string[],
+) {
+  const selectedGroupIds = new Set(groupIds);
+  if (selectedGroupIds.size === 0) return new Set<string>();
+  const groups = await characters.listGroups();
+  const selectedCharacterIds = new Set<string>();
+  for (const group of groups) {
+    if (!selectedGroupIds.has(group.id)) continue;
+    for (const characterId of parseStringArray(group.characterIds)) selectedCharacterIds.add(characterId);
+  }
+
+  for (const characterId of selectedCharacterIds) {
+    const row = await characters.getById(characterId);
+    if (!row) continue;
+    await noodle.upsertAccountFromProfile({
+      kind: "character",
+      entityId: row.id,
+      displayName: characterNameFromRow(row),
+      avatarUrl: row.avatarPath ?? null,
+      bio: String(parseRecord(row.data).description ?? ""),
+    });
+  }
+  return selectedCharacterIds;
+}
+
+function formatTimelineForPrompt(posts: NoodlePost[]) {
+  if (posts.length === 0) return "No Noodle posts yet today.";
+  return posts
+    .slice()
+    .reverse()
+    .map((post) => {
+      const author = post.authorSnapshot?.displayName ?? post.authorAccountId;
+      return `- ${post.id} by ${author}: ${post.content}${post.imagePrompt ? ` [image prompt: ${post.imagePrompt}]` : ""}`;
+    })
+    .join("\n");
+}
+
+async function ensurePersonaAccounts(
+  noodle: ReturnType<typeof createNoodleStorage>,
+  characters: ReturnType<typeof createCharactersStorage>,
+) {
+  const personas = await characters.listPersonas();
+  const livePersonaIds = new Set<string>();
+  for (const persona of personas) {
+    livePersonaIds.add(persona.id);
+    await noodle.upsertAccountFromProfile({
+      kind: "persona",
+      entityId: persona.id,
+      displayName: persona.convoDisplayName || persona.name || "User",
+      avatarUrl: persona.avatarPath ?? null,
+      bio: persona.aboutMe || persona.description || "",
+      invited: true,
+    });
+  }
+  return livePersonaIds;
+}
+
+function filterStalePersonaAccounts(bootstrap: NoodleBootstrap, livePersonaIds: Set<string>): NoodleBootstrap {
+  return {
+    ...bootstrap,
+    accounts: bootstrap.accounts.filter(
+      (account) => account.kind !== "persona" || livePersonaIds.has(account.entityId),
+    ),
+  };
+}
+
+async function bootstrapVisibleNoodle(
+  noodle: ReturnType<typeof createNoodleStorage>,
+  characters: ReturnType<typeof createCharactersStorage>,
+) {
+  const livePersonaIds = await ensurePersonaAccounts(noodle, characters);
+  await ensureProfessorMariAccount(noodle, characters);
+  return filterStalePersonaAccounts(await noodle.bootstrap(), livePersonaIds);
+}
+
+async function resolvePersonaAccount(
+  noodle: ReturnType<typeof createNoodleStorage>,
+  characters: ReturnType<typeof createCharactersStorage>,
+  personaId?: string,
+) {
+  const personas = await characters.listPersonas();
+  const persona =
+    personas.find((p) => p.id === personaId) ?? personas.find((p) => p.isActive === "true") ?? personas[0];
+  if (!persona) return null;
+  return noodle.upsertAccountFromProfile({
+    kind: "persona",
+    entityId: persona.id,
+    displayName: persona.convoDisplayName || persona.name || "User",
+    avatarUrl: persona.avatarPath ?? null,
+    bio: persona.aboutMe || persona.description || "",
+    invited: true,
+  });
+}
+
+const NOODLE_CHAT_CONTEXT_MESSAGE_LIMIT = 8;
+const NOODLE_CHAT_CONTEXT_CHAT_LIMIT = 8;
+
+async function resolveCharacterName(
+  characters: ReturnType<typeof createCharactersStorage>,
+  characterId: string,
+  cache: Map<string, string>,
+) {
+  const cached = cache.get(characterId);
+  if (cached) return cached;
+  const row = await characters.getById(characterId);
+  const name = characterNameFromRow(row);
+  cache.set(characterId, name);
+  return name;
+}
+
+async function resolvePersonaName(
+  characters: ReturnType<typeof createCharactersStorage>,
+  personaId: string | null | undefined,
+  cache: Map<string, string>,
+) {
+  if (!personaId) return "User";
+  const cached = cache.get(personaId);
+  if (cached) return cached;
+  const row = await characters.getPersona(personaId);
+  const name = personaNameFromRow(row);
+  cache.set(personaId, name);
+  return name;
+}
+
+function messageRoleLabel(role: string) {
+  if (role === "user") return "user";
+  if (role === "assistant") return "assistant";
+  if (role === "narrator") return "narrator";
+  return "system";
+}
+
+async function buildOptedInChatContext(
+  chats: ReturnType<typeof createChatsStorage>,
+  characters: ReturnType<typeof createCharactersStorage>,
+  selectedCharacterIds: string[],
+) {
+  if (selectedCharacterIds.length === 0) return "No selected character chats are eligible for Noodle context.";
+  const selected = new Set(selectedCharacterIds);
+  const allChats = await chats.list();
+  const relevant = allChats
+    .filter((chat) => parseRecord(chat.metadata).noodleTimelineContextEnabled === true)
+    .filter((chat) => parseStringArray(chat.characterIds).some((characterId) => selected.has(characterId)))
+    .slice(0, NOODLE_CHAT_CONTEXT_CHAT_LIMIT);
+  const blocks: string[] = [];
+  const characterNameCache = new Map<string, string>();
+  const personaNameCache = new Map<string, string>();
+  for (const chat of relevant) {
+    const chatCharacterIds = parseStringArray(chat.characterIds);
+    const [personaName, characterNames, messages] = await Promise.all([
+      resolvePersonaName(characters, chat.personaId, personaNameCache),
+      Promise.all(
+        chatCharacterIds.map(async (characterId) => ({
+          id: characterId,
+          name: await resolveCharacterName(characters, characterId, characterNameCache),
+        })),
+      ),
+      chats.listMessagesPaginated(chat.id, NOODLE_CHAT_CONTEXT_MESSAGE_LIMIT),
+    ]);
+    if (messages.length === 0) continue;
+    const speakerNameByCharacterId = new Map(characterNames.map((character) => [character.id, character.name]));
+    const participantLines = [
+      `- User persona: ${personaName}${chat.personaId ? ` (id=${chat.personaId})` : " (no persona id)"}`,
+      ...characterNames.map((character) => `- Character: ${character.name} (id=${character.id})`),
+    ];
+    const messageLines = await Promise.all(
+      messages.map(async (message) => {
+        const role = messageRoleLabel(message.role);
+        let speaker = role === "user" ? personaName : role === "narrator" ? "Narrator" : "Assistant";
+        if (message.characterId) {
+          speaker =
+            speakerNameByCharacterId.get(message.characterId) ??
+            (await resolveCharacterName(characters, message.characterId, characterNameCache));
+        }
+        const content = String(message.content ?? "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 900);
+        const characterId = message.characterId ? `, characterId=${message.characterId}` : "";
+        return `- ${speaker} (${role}${characterId}): ${content}`;
+      }),
+    );
+    blocks.push(
+      [
+        `<chat_context id="${escapePromptAttribute(chat.id)}" mode="${escapePromptAttribute(
+          chat.mode,
+        )}" name="${escapePromptAttribute(chat.name)}">`,
+        "Participants:",
+        ...participantLines,
+        "Recent messages:",
+        ...messageLines,
+        `</chat_context>`,
+      ].join("\n"),
+    );
+  }
+  return blocks.length > 0
+    ? blocks.join("\n\n")
+    : "No opted-in chats with recent messages for the selected characters.";
+}
+
+async function buildRefreshPrompt(input: {
+  noodle: ReturnType<typeof createNoodleStorage>;
+  characters: ReturnType<typeof createCharactersStorage>;
+  chats: ReturnType<typeof createChatsStorage>;
+  activeAccounts: NoodleAccount[];
+  personaAccount: NoodleAccount | null;
+  settings: NoodleSettings;
+}) {
+  const activeCharacters = input.activeAccounts.filter((account) => account.kind === "character");
+  const activeRandomUsers = input.activeAccounts.filter((account) => account.kind === "random_user");
+  const selectedCharacterIds = activeCharacters.map((account) => account.entityId);
+  const characterRows = await Promise.all(selectedCharacterIds.map((id) => input.characters.getById(id)));
+  const personaRow = input.personaAccount ? await input.characters.getPersona(input.personaAccount.entityId) : null;
+  const todayPosts = await input.noodle.listPosts({ since: dayStartIso(), limit: 100 });
+  const [chatContext] = await Promise.all([
+    buildOptedInChatContext(input.chats, input.characters, selectedCharacterIds),
+  ]);
+
+  const characterContext = characterRows
+    .filter((row): row is NonNullable<typeof row> => !!row)
+    .map(characterContextFromRow)
+    .join("\n\n");
+  const randomUserContext = activeRandomUsers
+    .map(
+      (account) =>
+        `<random_user entityId="${account.entityId}" name="${account.displayName}" handle="${account.handle}">\nBio: ${
+          account.bio || "A casual Noodle user."
+        }\n</random_user>`,
+    )
+    .join("\n\n");
+  const personaContext = personaRow ? personaContextFromRow(personaRow) : "No user persona is active.";
+  const activeAccountList = [...input.activeAccounts, ...(input.personaAccount ? [input.personaAccount] : [])]
+    .map(
+      (account) =>
+        `- ${account.displayName} (@${account.handle}) kind=${account.kind} entityId=${account.entityId} accountId=${account.id}`,
+    )
+    .join("\n");
+
+  const system = [
+    "You write a fake social media timeline for Marinara Engine's in-app parody site called Noodle.",
+    NOODLE_ADULT_PLATFORM_POLICY,
+    "Characters should act in character but like people posting online: funny, messy, indirect, petty, affectionate, dramatic, or casual as fits them.",
+    "Random user accounts are not characters. Treat them as ordinary fictional Noodle profiles that may follow, like, reply, repost, gossip, or casually join public drama.",
+    "Structured actions are limited to posts, follows, likes, reposts, and replies.",
+    "Use only the active accounts listed by entityId. Do not invent accounts.",
+    "Fresh interactions may target existing recent posts or posts you create in this response.",
+    "When image generation is enabled, imagePrompt should be a concrete visual idea for the attached image: either a character-focused image of the author/their scene/selfie, or an in-character meme they would plausibly post.",
+    "When gallery attachments are enabled, set attachGalleryImage to true only when the post naturally fits an existing gallery or chat image.",
+    "Return JSON only. No prose outside the JSON object.",
+  ].join("\n");
+
+  const context = [
+    "# Active Noodle Accounts",
+    activeAccountList || "No active accounts.",
+    "",
+    "# User Persona",
+    personaContext,
+    "",
+    "# Character Profiles",
+    characterContext || "No character profiles.",
+    "",
+    "# Random User Profiles",
+    randomUserContext || "Random users are disabled for this refresh.",
+    "",
+    "# Opted-In Chat Context",
+    "Only chats whose Chat Settings allow Noodle references are included here.",
+    chatContext,
+    "",
+    "# Today's Existing Noodle Timeline",
+    formatTimelineForPrompt(todayPosts),
+    "",
+    "# Quotas",
+    `posts: at most ${input.settings.maxGeneratedPostsPerRefresh}`,
+    `replies: at most ${input.settings.maxRepliesPerRefresh}`,
+    `reposts: at most ${input.settings.maxRepostsPerRefresh}`,
+    `likes: at most ${input.settings.maxLikesPerRefresh}`,
+    "follows: optional; use sparingly when an account would naturally follow another active account after today's public activity.",
+    input.settings.enableImagePrompts
+      ? `image generation: at most ${input.settings.maxImagePromptsPerDay} images today; imagePrompt may request either a character image or a meme. For character images, describe concrete appearance, build, clothing, and scene composition. For memes, describe the meme format, visual gag, intended caption/text if any, and why it fits the author's personality.`
+      : "image generation: disabled; omit imagePrompt or return null.",
+    input.settings.allowGalleryImageAttachments
+      ? "gallery attachments: enabled; you may set attachGalleryImage true on posts that should reuse existing character/chat gallery media."
+      : "gallery attachments: disabled; set attachGalleryImage false or omit it.",
+  ].join("\n");
+
+  const outputFormat = [
+    "# Output Format",
+    JSON.stringify(
+      {
+        posts: [
+          {
+            tempId: "local id used only inside this response",
+            authorEntityId: "exact entityId from Active Noodle Accounts",
+            content: "post text",
+            imagePrompt: "optional image prompt or null",
+            attachGalleryImage: false,
+          },
+        ],
+        interactions: [
+          {
+            actorEntityId: "exact entityId from Active Noodle Accounts",
+            targetTempId: "tempId from posts, if targeting a newly created post",
+            targetPostId: "existing post id, if targeting an existing post",
+            type: "like | repost | reply",
+            content: "required for reply, optional/null otherwise",
+          },
+        ],
+        follows: [
+          {
+            actorEntityId: "exact entityId from Active Noodle Accounts",
+            targetEntityId: "exact entityId from Active Noodle Accounts",
+          },
+        ],
+        digests: [
+          {
+            accountEntityIds: ["entity ids affected by this event"],
+            content: "short durable summary suitable for later chat context",
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+  ].join("\n");
+
+  return {
+    messages: [
+      { role: "system" as const, content: system },
+      { role: "user" as const, content: context },
+      { role: "user" as const, content: outputFormat },
+    ] satisfies ChatMessage[],
+    promptForLog: `${system}\n\n${context}\n\n${outputFormat}`,
+  };
+}
+
+async function generateMissingNoodleProfiles(input: {
+  noodle: ReturnType<typeof createNoodleStorage>;
+  characters: ReturnType<typeof createCharactersStorage>;
+  characterGallery: ReturnType<typeof createCharacterGalleryStorage>;
+  accounts: NoodleAccount[];
+  provider: ReturnType<typeof createLLMProvider>;
+  connection: {
+    provider: string;
+    model: string;
+    maxTokensOverride?: number | null;
+  };
+  debugMode: boolean;
+}) {
+  const targets: Array<{
+    account: NoodleAccount;
+    row: { id: string; data: unknown; avatarPath?: string | null };
+    bannerUrl: string | null;
+  }> = [];
+  for (const account of input.accounts) {
+    if (account.kind !== "character" || isProfileGenerated(account)) continue;
+    const row = await input.characters.getById(account.entityId);
+    if (!row) continue;
+    const bannerUrl = await pickRandomCharacterBannerUrl(input.characterGallery, account.entityId);
+    targets.push({ account, row, bannerUrl });
+  }
+  if (targets.length === 0) return;
+
+  const characterBlocks = targets
+    .map(({ account, row }) =>
+      [
+        `<profile_target entityId="${account.entityId}" currentName="${account.displayName}" currentHandle="${account.handle}">`,
+        characterContextFromRow(row),
+        `</profile_target>`,
+      ].join("\n"),
+    )
+    .join("\n\n");
+  const outputFormat = [
+    "# Output Format",
+    JSON.stringify(
+      {
+        profiles: [
+          {
+            entityId: "exact entityId from profile_target",
+            name: "display name for the social profile",
+            handle: "short @nickname without @, lowercase letters/numbers/underscores preferred",
+            bio: "short in-character social media bio",
+            location: "short profile location, fictional or canonical if known",
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+  ].join("\n");
+  const messages: ChatMessage[] = [
+    {
+      role: "system",
+      content: [
+        "You set up fake Noodle social media profiles for existing Marinara Engine characters.",
+        NOODLE_ADULT_PLATFORM_POLICY,
+        "Create concise profile metadata only. Do not write posts, replies, likes, or timeline content.",
+        "Use each character's personality, setting, and appearance to make the profile feel natural and in character.",
+        "Return JSON only. No prose outside the JSON object.",
+      ].join("\n"),
+    },
+    {
+      role: "user",
+      content: ["# Characters Needing Noodle Profiles", characterBlocks, "", outputFormat].join("\n"),
+    },
+  ];
+  const promptForLog = messages.map((m) => `${m.role.toUpperCase()}:\n${m.content}`).join("\n\n");
+  logDebugOverride(input.debugMode, "[debug/noodle] Profile prompt sent to model:\n%s", promptForLog);
+  const maxTokens = clampGenerationMaxOutputTokens({
+    provider: input.connection.provider as APIProvider,
+    model: input.connection.model,
+    maxTokens: profileSetupMaxTokens(targets.length),
+    maxTokensOverride: input.connection.maxTokensOverride,
+  });
+  const result = await input.provider.chatComplete(messages, {
+    model: input.connection.model,
+    maxTokens,
+    temperature: 0.55,
+    topP: 0.9,
+    stream: false,
+    debugMode: input.debugMode,
+    responseFormat: { type: "json_object" },
+  });
+  const generated = noodleGeneratedProfilesSchema.parse(parseGameJsonish(result.content ?? ""));
+  const profileByEntityId = new Map(generated.profiles.map((profile) => [profile.entityId, profile]));
+
+  for (const target of targets) {
+    const profile = profileByEntityId.get(target.account.entityId);
+    if (!profile) continue;
+    await input.noodle.updateAccount(target.account.id, {
+      handle: profile.handle,
+      displayName: profile.name,
+      bio: profile.bio,
+      avatarUrl: target.row.avatarPath ?? target.account.avatarUrl,
+      settings: generatedProfileSettings(target.account.settings, profile.location, target.bannerUrl),
+    });
+  }
+}
+
+function interactionDigestVerb(type: NoodleInteractionType) {
+  if (type === "reply") return "replied on";
+  if (type === "repost") return "reposted";
+  return "liked";
+}
+
+async function generateNoodlePostImage(input: {
+  account: NoodleAccount;
+  referenceAccounts: NoodleAccount[];
+  postContent: string;
+  draftPrompt: string;
+  settings: NoodleSettings;
+  characters: ReturnType<typeof createCharactersStorage>;
+  characterGallery: ReturnType<typeof createCharacterGalleryStorage>;
+  promptOverrides: ReturnType<typeof createPromptOverridesStorage>;
+  imageConnection: NonNullable<Awaited<ReturnType<ReturnType<typeof createConnectionsStorage>["getWithKey"]>>>;
+  app: FastifyInstance;
+  debugMode: boolean;
+}) {
+  const imageSettings = await loadImageGenerationUserSettings(input.app.db);
+  const imageDefaults = resolveConnectionImageDefaults(input.imageConnection);
+  const imageModel = input.imageConnection.model || "";
+  const imageBaseUrl = input.imageConnection.baseUrl || "https://image.pollinations.ai";
+  const imageSource = input.imageConnection.imageGenerationSource || imageModel;
+  const imageServiceHint = input.imageConnection.imageService || imageSource;
+  let characterDescription = "";
+  let referenceImages: string[] | undefined;
+
+  if (
+    input.account.kind === "character" &&
+    (input.settings.imageGenerationIncludeDescriptions || input.settings.imageGenerationUseAvatarReferences)
+  ) {
+    const character = await input.characters.getById(input.account.entityId);
+    if (character) {
+      const referenceAccountByEntityId = new Map(
+        [input.account, ...input.referenceAccounts]
+          .filter((account) => account.kind === "character")
+          .map((account) => [account.entityId, account]),
+      );
+      const referenceRows = await Promise.all(
+        Array.from(referenceAccountByEntityId.keys()).map((characterId) => input.characters.getById(characterId)),
+      );
+      const chatCharacters = referenceRows
+        .filter((row): row is NonNullable<typeof row> => !!row)
+        .map((row) => {
+          const account = referenceAccountByEntityId.get(row.id);
+          return {
+            id: row.id,
+            name: account?.displayName || characterNameFromRow(row),
+            avatarPath: row.avatarPath ?? null,
+            appearance: characterAppearanceFromRow(row),
+          };
+        });
+      const referenceResolution = await resolveIllustratorCharacterReferences({
+        charactersStore: input.characters,
+        chatCharacters,
+        persona: null,
+        requestedNames: [input.account.displayName],
+        promptText: [input.account.displayName, input.postContent, input.draftPrompt].join("\n"),
+        maxReferences: 6,
+      });
+      if (input.settings.imageGenerationIncludeDescriptions && referenceResolution.appearanceBlock) {
+        characterDescription = referenceResolution.appearanceBlock;
+      }
+      if (input.settings.imageGenerationUseAvatarReferences && referenceResolution.referenceImages.length > 0) {
+        referenceImages = referenceResolution.referenceImages;
+      }
+    }
+  }
+
+  const postPrompt = await loadPrompt(input.promptOverrides, NOODLE_IMAGE_POST, {
+    authorName: input.account.displayName,
+    postContent: input.postContent,
+    draftPrompt: input.draftPrompt,
+    userInstructions: input.settings.imageGenerationPrompt,
+    characterDescription,
+  });
+  const compiledPrompt = compileImagePrompt({
+    kind: "illustration",
+    prompt: postPrompt,
+    styleProfiles: imageSettings.styleProfiles,
+    imageDefaults,
+  });
+  logDebugOverride(
+    input.debugMode,
+    "[debug/noodle/image] final image prompt for %s:\n%s",
+    input.account.displayName,
+    compiledPrompt.prompt,
+  );
+  if (compiledPrompt.negativePrompt) {
+    logDebugOverride(input.debugMode, "[debug/noodle/image] negative prompt:\n%s", compiledPrompt.negativePrompt);
+  }
+
+  const image = await generateImage(imageSource, imageBaseUrl, input.imageConnection.apiKey || "", imageServiceHint, {
+    prompt: compiledPrompt.prompt,
+    negativePrompt: compiledPrompt.negativePrompt || undefined,
+    model: imageModel,
+    width: imageSettings.illustration.width,
+    height: imageSettings.illustration.height,
+    imageEndpointId: input.imageConnection.imageEndpointId || undefined,
+    comfyWorkflow: input.imageConnection.comfyuiWorkflow || undefined,
+    imageDefaults,
+    referenceImages,
+  });
+  const provider = input.imageConnection.provider ?? "image_generation";
+  if (input.account.kind === "character") {
+    const filePath = saveImageToDisk(`characters/${input.account.entityId}`, image.base64, image.ext);
+    const galleryImage = await input.characterGallery.create({
+      characterId: input.account.entityId,
+      filePath,
+      prompt: compiledPrompt.prompt,
+      provider,
+      model: imageModel || "unknown",
+      width: imageSettings.illustration.width,
+      height: imageSettings.illustration.height,
+    });
+    return {
+      imageUrl: characterGalleryImageUrl(input.account.entityId, filePath),
+      metadata: {
+        imageGenerated: true,
+        imageProvider: provider,
+        imageModel: imageModel || "unknown",
+        imageStyleProfileId: compiledPrompt.profile.id,
+        characterGalleryImageId: galleryImage?.id ?? null,
+      },
+    };
+  }
+
+  const filePath = saveImageToDisk("noodle", image.base64, image.ext);
+  return {
+    imageUrl: galleryImageUrl(filePath, "noodle"),
+    metadata: {
+      imageGenerated: true,
+      imageProvider: provider,
+      imageModel: imageModel || "unknown",
+      imageStyleProfileId: compiledPrompt.profile.id,
+    },
+  };
+}
+
+export async function noodleRoutes(app: FastifyInstance) {
+  const noodle = createNoodleStorage(app.db);
+  const characters = createCharactersStorage(app.db);
+  const chats = createChatsStorage(app.db);
+  const connections = createConnectionsStorage(app.db);
+  const gallery = createGalleryStorage(app.db);
+  const characterGallery = createCharacterGalleryStorage(app.db);
+  const promptOverrides = createPromptOverridesStorage(app.db);
+
+  app.get("/", async () => {
+    return bootstrapVisibleNoodle(noodle, characters);
+  });
+
+  app.put("/settings", async (req, reply) => {
+    const parsed = noodleSettingsUpdateSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    return noodle.updateSettings(parsed.data);
+  });
+
+  app.put("/accounts/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const parsed = noodleAccountUpdateSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const updated = await noodle.updateAccount(id, parsed.data);
+    if (!updated) return reply.code(404).send({ error: "Noodle account not found" });
+    return updated;
+  });
+
+  app.post("/invites", async (req, reply) => {
+    const parsed = noodleInviteSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const row = await characters.getById(parsed.data.characterId);
+    if (!row) return reply.code(404).send({ error: "Character not found" });
+    const name = characterNameFromRow(row);
+    return noodle.upsertAccountFromProfile({
+      kind: "character",
+      entityId: row.id,
+      displayName: name,
+      avatarUrl: row.avatarPath ?? null,
+      bio: String(parseRecord(row.data).description ?? ""),
+      invited: true,
+    });
+  });
+
+  app.post("/invites/bulk", async (req, reply) => {
+    const parsed = noodleBulkInviteSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const uniqueCharacterIds = Array.from(new Set(parsed.data.characterIds));
+    const accounts: NoodleAccount[] = [];
+    for (const characterId of uniqueCharacterIds) {
+      const row = await characters.getById(characterId);
+      if (!row) continue;
+      accounts.push(
+        await noodle.upsertAccountFromProfile({
+          kind: "character",
+          entityId: row.id,
+          displayName: characterNameFromRow(row),
+          avatarUrl: row.avatarPath ?? null,
+          bio: String(parseRecord(row.data).description ?? ""),
+          invited: true,
+        }),
+      );
+    }
+    return accounts;
+  });
+
+  app.delete("/invites/:characterId", async (req, reply) => {
+    const { characterId } = req.params as { characterId: string };
+    const account = await noodle.setCharacterInvited(characterId, false);
+    if (!account) return reply.code(404).send({ error: "Noodle character account not found" });
+    return account;
+  });
+
+  app.post("/posts", async (req, reply) => {
+    const parsed = noodleCreatePostSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    let account = await noodle.getAccountByEntity(parsed.data.authorKind, parsed.data.authorEntityId);
+    if (!account && parsed.data.authorKind === "persona") {
+      account = await resolvePersonaAccount(noodle, characters, parsed.data.authorEntityId);
+    }
+    if (!account) return reply.code(404).send({ error: "Noodle account not found" });
+    const post = await noodle.createPost({
+      authorAccountId: account.id,
+      content: parsed.data.content,
+      imageUrl: parsed.data.imageUrl ?? null,
+      imagePrompt: parsed.data.imagePrompt ?? null,
+      parentPostId: parsed.data.parentPostId ?? null,
+      quotePostId: parsed.data.quotePostId ?? null,
+      source: "manual",
+    });
+    if (!post) return reply.code(404).send({ error: "Noodle author not found" });
+    await noodle.createDigest({
+      accountIds: [account.id],
+      content: `${account.displayName} posted on Noodle: ${post.content}`,
+      sourcePostId: post.id,
+    });
+    return post;
+  });
+
+  app.patch("/posts/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const parsed = noodlePostUpdateSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const post = await noodle.updatePost(id, parsed.data);
+    if (!post) return reply.code(404).send({ error: "Noodle post not found" });
+    return post;
+  });
+
+  app.delete("/posts/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const deleted = await noodle.deletePost(id);
+    if (!deleted) return reply.code(404).send({ error: "Noodle post not found" });
+    return deleted;
+  });
+
+  app.delete("/timeline", async () => {
+    await noodle.resetTimeline();
+    return bootstrapVisibleNoodle(noodle, characters);
+  });
+
+  app.post("/posts/:id/interactions", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const parsed = noodleCreateInteractionSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    let actor = await noodle.getAccountByEntity(parsed.data.actorKind, parsed.data.actorEntityId);
+    if (!actor && parsed.data.actorKind === "persona") {
+      actor = await resolvePersonaAccount(noodle, characters, parsed.data.actorEntityId);
+    }
+    if (!actor) return reply.code(404).send({ error: "Noodle actor not found" });
+    const interaction = await noodle.createInteraction(id, {
+      actorAccountId: actor.id,
+      type: parsed.data.type,
+      content: parsed.data.content ?? null,
+    });
+    if (!interaction) return reply.code(404).send({ error: "Noodle post not found" });
+    const post = await noodle.getPostById(id);
+    if (post && parsed.data.type !== "like") {
+      await noodle.createDigest({
+        accountIds: Array.from(new Set([actor.id, post.authorAccountId])),
+        content: `${actor.displayName} ${interactionDigestVerb(parsed.data.type)} a Noodle post: ${
+          interaction.content || post.content
+        }`,
+        sourcePostId: post.id,
+      });
+    }
+    return interaction;
+  });
+
+  app.delete("/posts/:id/interactions", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const parsed = noodleRemoveInteractionSchema.safeParse(req.query);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    let actor = await noodle.getAccountByEntity(parsed.data.actorKind, parsed.data.actorEntityId);
+    if (!actor && parsed.data.actorKind === "persona") {
+      actor = await resolvePersonaAccount(noodle, characters, parsed.data.actorEntityId);
+    }
+    if (!actor) return reply.code(404).send({ error: "Noodle actor not found" });
+    const interaction = await noodle.deleteInteraction(id, {
+      actorAccountId: actor.id,
+      type: parsed.data.type,
+    });
+    if (!interaction) return reply.code(404).send({ error: "Noodle interaction not found" });
+    return interaction;
+  });
+
+  app.post("/refresh", async (req, reply) => {
+    const parsed = noodleRefreshSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    const settings = await noodle.getSettings();
+    const connectionId = parsed.data.connectionId ?? settings.generationConnectionId;
+    if (!connectionId) return reply.code(400).send({ error: "Select a Noodle generation connection first." });
+    const conn = await connections.getWithKey(connectionId);
+    if (!conn) return reply.code(404).send({ error: "Noodle generation connection not found" });
+    const imageConnection = settings.enableImagePrompts
+      ? settings.imageGenerationConnectionId
+        ? await connections.getWithKey(settings.imageGenerationConnectionId)
+        : await connections.getDefaultForImageGeneration()
+      : null;
+    if (settings.enableImagePrompts && !imageConnection) {
+      return reply.code(400).send({ error: "Select a Noodle image generation connection first." });
+    }
+
+    const debugMode = parsed.data.debugMode === true;
+    let run: Awaited<ReturnType<typeof noodle.createRefreshRun>> | null = null;
+
+    try {
+      const baseUrl = resolveBaseUrl(conn);
+      const provider = createLLMProvider(
+        conn.provider,
+        baseUrl,
+        conn.apiKey,
+        conn.maxContext,
+        conn.openrouterProvider,
+        conn.maxTokensOverride,
+        conn.claudeFastMode === "true",
+        conn.treatAsLocalEndpoint === "true",
+      );
+      await ensurePersonaAccounts(noodle, characters);
+      await ensureProfessorMariAccount(noodle, characters);
+      const personaAccount = await resolvePersonaAccount(noodle, characters, parsed.data.personaId);
+      const selectedGroupCharacterIds = await ensureSelectedGroupCharacterAccounts(
+        noodle,
+        characters,
+        settings.invitedCharacterGroupIds,
+      );
+      if (settings.allowRandomUsers) await ensureRandomUserAccounts(noodle);
+      const eligibleAccounts = await noodle.listAccounts();
+      const eligibleCharacterAccounts = eligibleAccounts.filter(
+        (account) =>
+          account.kind === "character" && (account.invited || selectedGroupCharacterIds.has(account.entityId)),
+      );
+      await generateMissingNoodleProfiles({
+        noodle,
+        characters,
+        characterGallery,
+        accounts: eligibleCharacterAccounts,
+        provider,
+        connection: conn,
+        debugMode,
+      });
+      const selectedParticipants = chooseParticipantAccounts(
+        await noodle.listAccounts(),
+        settings,
+        selectedGroupCharacterIds,
+        personaAccount,
+      );
+      if (selectedParticipants.length === 0) {
+        return reply
+          .code(400)
+          .send({ error: "Invite a character, select a character folder, or enable random users before refreshing." });
+      }
+
+      const activeAccounts = [...selectedParticipants, ...(personaAccount ? [personaAccount] : [])];
+      const { messages, promptForLog } = await buildRefreshPrompt({
+        noodle,
+        characters,
+        chats,
+        activeAccounts: selectedParticipants,
+        personaAccount,
+        settings,
+      });
+      logDebugOverride(debugMode, "[debug/noodle] Prompt sent to model:\n%s", promptForLog);
+      run = await noodle.createRefreshRun({
+        activeAccountIds: activeAccounts.map((account) => account.id),
+        prompt: promptForLog,
+      });
+      const runId = run.id;
+      const timelineMaxTokens = clampGenerationMaxOutputTokens({
+        provider: conn.provider as APIProvider,
+        model: conn.model,
+        maxTokens: timelineRefreshMaxTokens(
+          selectedParticipants.filter((account) => account.kind === "character").length,
+        ),
+        maxTokensOverride: conn.maxTokensOverride,
+      });
+      const result = await provider.chatComplete(messages, {
+        model: conn.model,
+        maxTokens: timelineMaxTokens,
+        temperature: 0.9,
+        topP: 0.95,
+        stream: false,
+        debugMode,
+        responseFormat: { type: "json_object" },
+      });
+      const content = result.content ?? "";
+      const generated = noodleGeneratedRefreshSchema.parse(parseGameJsonish(content));
+      const entityToAccount = new Map(activeAccounts.map((account) => [account.entityId, account]));
+      const mutableAccountSettings = new Map(
+        activeAccounts.map((account) => [account.id, { ...account.settings }] as const),
+      );
+      const freshPosts = await noodle.listPosts({ since: sinceHoursIso(48), limit: 200 });
+      const freshPostIds = new Set(freshPosts.map((post) => post.id));
+      const todayPosts = await noodle.listPosts({ since: dayStartIso(), limit: 200 });
+      let remainingImagePrompts = settings.enableImagePrompts
+        ? Math.max(0, settings.maxImagePromptsPerDay - todayPosts.filter((post) => !!post.imagePrompt).length)
+        : 0;
+      const tempIdToPostId = new Map<string, string>();
+      const createdPostIds: string[] = [];
+      const activeCharacterReferenceAccounts = activeAccounts.filter((account) => account.kind === "character");
+
+      for (const generatedPost of generated.posts.slice(0, settings.maxGeneratedPostsPerRefresh)) {
+        const account = entityToAccount.get(generatedPost.authorEntityId);
+        if (!account) continue;
+        const imagePrompt =
+          remainingImagePrompts > 0 && generatedPost.imagePrompt?.trim() ? generatedPost.imagePrompt.trim() : null;
+        if (imagePrompt) remainingImagePrompts -= 1;
+        let imageUrl: string | null = null;
+        const mediaMetadata: Record<string, unknown> = {};
+        if (imagePrompt && imageConnection) {
+          try {
+            const generatedImage = await generateNoodlePostImage({
+              account,
+              referenceAccounts: activeCharacterReferenceAccounts,
+              postContent: generatedPost.content,
+              draftPrompt: imagePrompt,
+              settings,
+              characters,
+              characterGallery,
+              promptOverrides,
+              imageConnection,
+              app,
+              debugMode,
+            });
+            imageUrl = generatedImage.imageUrl;
+            Object.assign(mediaMetadata, generatedImage.metadata);
+          } catch (err) {
+            logger.warn(err, "[noodle] Failed to generate image for %s", account.displayName);
+            mediaMetadata.imageGenerationFailed = true;
+            mediaMetadata.imageGenerationError = getErrorMessage(err).slice(0, 500);
+          }
+        }
+        if (!imageUrl && settings.allowGalleryImageAttachments && generatedPost.attachGalleryImage === true) {
+          try {
+            const attachment = await pickGalleryAttachmentForAccount({ account, chats, gallery, characterGallery });
+            if (attachment) {
+              imageUrl = attachment.imageUrl;
+              Object.assign(mediaMetadata, attachment.metadata);
+            }
+          } catch (err) {
+            logger.warn(err, "[noodle] Failed to attach gallery image for %s", account.displayName);
+          }
+        }
+        const post = await noodle.createPost({
+          authorAccountId: account.id,
+          content: generatedPost.content,
+          imagePrompt,
+          imageUrl,
+          source: "generated",
+          metadata: { runId, ...mediaMetadata },
+        });
+        if (!post) continue;
+        createdPostIds.push(post.id);
+        if (generatedPost.tempId) tempIdToPostId.set(generatedPost.tempId, post.id);
+        await noodle.createDigest({
+          accountIds: [account.id],
+          content: `${account.displayName} posted on Noodle: ${post.content}`,
+          sourceRunId: runId,
+          sourcePostId: post.id,
+        });
+      }
+
+      const quotas: Record<NoodleInteractionType, number> = {
+        like: settings.maxLikesPerRefresh,
+        repost: settings.maxRepostsPerRefresh,
+        reply: settings.maxRepliesPerRefresh,
+      };
+      for (const generatedInteraction of generated.interactions) {
+        if (quotas[generatedInteraction.type] <= 0) continue;
+        const actor = entityToAccount.get(generatedInteraction.actorEntityId);
+        if (!actor) continue;
+        const targetPostId =
+          generatedInteraction.targetPostId ?? tempIdToPostId.get(generatedInteraction.targetTempId ?? "");
+        if (!targetPostId || (!freshPostIds.has(targetPostId) && !createdPostIds.includes(targetPostId))) continue;
+        const interaction = await noodle.createInteraction(targetPostId, {
+          actorAccountId: actor.id,
+          type: generatedInteraction.type,
+          content: generatedInteraction.content ?? null,
+        });
+        if (!interaction) continue;
+        quotas[generatedInteraction.type] -= 1;
+        if (generatedInteraction.type !== "like") {
+          const targetPost = await noodle.getPostById(targetPostId);
+          await noodle.createDigest({
+            accountIds: Array.from(new Set([actor.id, targetPost?.authorAccountId ?? ""])).filter(Boolean),
+            content: `${actor.displayName} ${interactionDigestVerb(generatedInteraction.type)} a Noodle post: ${
+              interaction.content || targetPost?.content || ""
+            }`,
+            sourceRunId: runId,
+            sourcePostId: targetPostId,
+          });
+        }
+      }
+
+      const maxGeneratedFollows = Math.max(12, activeAccounts.length * 2);
+      const seenGeneratedFollows = new Set<string>();
+      for (const generatedFollow of generated.follows.slice(0, maxGeneratedFollows)) {
+        const actor = entityToAccount.get(generatedFollow.actorEntityId);
+        const target = entityToAccount.get(generatedFollow.targetEntityId);
+        if (!actor || !target || actor.id === target.id || actor.kind === "persona") continue;
+        const followKey = `${actor.id}:${target.id}`;
+        if (seenGeneratedFollows.has(followKey)) continue;
+        seenGeneratedFollows.add(followKey);
+        const actorSettings = mutableAccountSettings.get(actor.id) ?? actor.settings;
+        const currentFollowingAccountIds = parseStringArray(actorSettings.followingAccountIds);
+        if (currentFollowingAccountIds.includes(target.id)) continue;
+        const nextSettings = {
+          ...actorSettings,
+          followingAccountIds: [...currentFollowingAccountIds, target.id],
+        };
+        mutableAccountSettings.set(actor.id, nextSettings);
+        await noodle.updateAccount(actor.id, { settings: nextSettings });
+        await noodle.createDigest({
+          accountIds: [actor.id, target.id],
+          content: `${actor.displayName} followed ${target.displayName} on Noodle.`,
+          sourceRunId: runId,
+        });
+      }
+
+      for (const digest of generated.digests) {
+        const accountIds = digest.accountEntityIds
+          .map((entityId) => entityToAccount.get(entityId)?.id)
+          .filter((id): id is string => !!id);
+        if (accountIds.length === 0) continue;
+        await noodle.createDigest({ accountIds, content: digest.content, sourceRunId: runId });
+      }
+
+      await noodle.finishRefreshRun(runId, { status: "completed", result: content });
+      return bootstrapVisibleNoodle(noodle, characters);
+    } catch (error) {
+      logger.error(error, "[noodle] Timeline refresh failed");
+      if (run) await noodle.finishRefreshRun(run.id, { status: "failed", error: getErrorMessage(error) });
+      return reply.code(500).send({ error: getErrorMessage(error) });
+    }
+  });
+}

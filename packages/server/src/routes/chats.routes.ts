@@ -796,6 +796,12 @@ export async function chatsRoutes(app: FastifyInstance) {
       incoming.summaryMaxTokens = clampRoleplaySummaryMaxTokens(incoming.summaryMaxTokens);
     }
     if (
+      Object.prototype.hasOwnProperty.call(incoming, "noodleTimelineContextEnabled") &&
+      typeof incoming.noodleTimelineContextEnabled !== "boolean"
+    ) {
+      return reply.status(400).send({ error: "noodleTimelineContextEnabled must be a boolean" });
+    }
+    if (
       Object.prototype.hasOwnProperty.call(incoming, "hideSummarisedMessages") &&
       typeof incoming.hideSummarisedMessages === "boolean"
     ) {

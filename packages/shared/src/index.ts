@@ -30,6 +30,7 @@ export * from "./types/image-style-profile.js";
 export * from "./types/professor-mari-workspace.js";
 export * from "./types/achievement.js";
 export * from "./types/conversation-call.js";
+export * from "./types/noodle.js";
 
 // Schemas
 export * from "./schemas/chat.schema.js";
@@ -47,6 +48,7 @@ export * from "./schemas/theme.schema.js";
 export * from "./schemas/extension.schema.js";
 export * from "./schemas/app-settings.schema.js";
 export * from "./schemas/conversation-call.schema.js";
+export * from "./schemas/noodle.schema.js";
 
 // Constants
 export * from "./constants/providers.js";

@@ -352,6 +352,8 @@ export interface ChatMetadata {
   enableMemoryRecall?: boolean;
   /** Discord webhook URL to mirror messages to a Discord channel. */
   discordWebhookUrl?: string;
+  /** When true, Noodle timeline refreshes may include this chat's recent messages as generation context. */
+  noodleTimelineContextEnabled?: boolean;
   /** Per-chat ephemeral / enabled overrides for lorebook entries (entryId → state).
    *  Tracked per-chat so ephemeral countdown in one chat doesn't affect others. */
   entryStateOverrides?: Record<string, { ephemeral?: number | null; enabled?: boolean }>;

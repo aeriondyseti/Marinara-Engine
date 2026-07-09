@@ -1,0 +1,203 @@
+// ──────────────────────────────────────────────
+// React Query: Noodle hooks
+// ──────────────────────────────────────────────
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api } from "../lib/api-client";
+import { useUIStore } from "../stores/ui.store";
+import type {
+  NoodleAccount,
+  NoodleAccountKind,
+  NoodleBootstrap,
+  NoodleCreateInteractionInput,
+  NoodleCreatePostInput,
+  NoodleInteraction,
+  NoodlePost,
+  NoodlePostUpdateInput,
+  NoodleRemoveInteractionInput,
+  NoodleSettings,
+  NoodleSettingsUpdateInput,
+} from "@marinara-engine/shared";
+
+export const noodleKeys = {
+  all: ["noodle"] as const,
+  bootstrap: () => [...noodleKeys.all, "bootstrap"] as const,
+};
+
+export function useNoodle(enabled = true) {
+  return useQuery({
+    queryKey: noodleKeys.bootstrap(),
+    queryFn: () => api.get<NoodleBootstrap>("/noodle"),
+    enabled,
+    staleTime: 10_000,
+  });
+}
+
+export function useUpdateNoodleSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (settings: NoodleSettingsUpdateInput) => api.put<NoodleSettings>("/noodle/settings", settings),
+    onSuccess: (settings) => {
+      qc.setQueryData<NoodleBootstrap | undefined>(noodleKeys.bootstrap(), (current) =>
+        current ? { ...current, settings } : current,
+      );
+      qc.invalidateQueries({ queryKey: noodleKeys.bootstrap() });
+    },
+  });
+}
+
+export function useUpdateNoodleAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...patch }: { id: string } & Partial<NoodleAccount>) =>
+      api.put<NoodleAccount>(`/noodle/accounts/${id}`, patch),
+    onSuccess: (account) => {
+      qc.setQueryData<NoodleBootstrap | undefined>(noodleKeys.bootstrap(), (current) =>
+        current
+          ? {
+              ...current,
+              accounts: current.accounts.map((item) => (item.id === account.id ? account : item)),
+            }
+          : current,
+      );
+      qc.invalidateQueries({ queryKey: noodleKeys.bootstrap() });
+    },
+  });
+}
+
+export function useInviteNoodleCharacter() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (characterId: string) => api.post<NoodleAccount>("/noodle/invites", { characterId }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: noodleKeys.bootstrap() }),
+  });
+}
+
+export function useInviteNoodleCharacters() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (characterIds: string[]) => api.post<NoodleAccount[]>("/noodle/invites/bulk", { characterIds }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: noodleKeys.bootstrap() }),
+  });
+}
+
+export function useRemoveNoodleCharacter() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (characterId: string) =>
+      api.delete<NoodleAccount>(`/noodle/invites/${encodeURIComponent(characterId)}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: noodleKeys.bootstrap() }),
+  });
+}
+
+export function useCreateNoodlePost() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: NoodleCreatePostInput) => api.post<NoodlePost>("/noodle/posts", input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: noodleKeys.bootstrap() }),
+  });
+}
+
+export function useUpdateNoodlePost() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...input }: { id: string } & NoodlePostUpdateInput) =>
+      api.patch<NoodlePost>(`/noodle/posts/${encodeURIComponent(id)}`, input),
+    onSuccess: (post) => {
+      qc.setQueryData<NoodleBootstrap | undefined>(noodleKeys.bootstrap(), (current) =>
+        current
+          ? {
+              ...current,
+              posts: current.posts.map((item) => (item.id === post.id ? post : item)),
+            }
+          : current,
+      );
+      qc.invalidateQueries({ queryKey: noodleKeys.bootstrap() });
+    },
+  });
+}
+
+export function useDeleteNoodlePost() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete<NoodlePost>(`/noodle/posts/${encodeURIComponent(id)}`),
+    onSuccess: (post) => {
+      qc.setQueryData<NoodleBootstrap | undefined>(noodleKeys.bootstrap(), (current) =>
+        current
+          ? {
+              ...current,
+              posts: current.posts.filter((item) => item.id !== post.id),
+              interactions: current.interactions.filter((interaction) => interaction.postId !== post.id),
+              digests: current.digests.filter((digest) => digest.sourcePostId !== post.id),
+            }
+          : current,
+      );
+      qc.invalidateQueries({ queryKey: noodleKeys.bootstrap() });
+    },
+  });
+}
+
+export function useResetNoodleTimeline() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.delete<NoodleBootstrap>("/noodle/timeline"),
+    onSuccess: (bootstrap) => qc.setQueryData(noodleKeys.bootstrap(), bootstrap),
+    onSettled: () => qc.invalidateQueries({ queryKey: noodleKeys.bootstrap() }),
+  });
+}
+
+export function useCreateNoodleInteraction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      postId,
+      ...input
+    }: NoodleCreateInteractionInput & {
+      postId: string;
+      actorKind: NoodleAccountKind;
+      actorEntityId: string;
+    }) => api.post<NoodleInteraction>(`/noodle/posts/${postId}/interactions`, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: noodleKeys.bootstrap() }),
+  });
+}
+
+export function useRemoveNoodleInteraction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      postId,
+      ...input
+    }: NoodleRemoveInteractionInput & {
+      postId: string;
+      actorKind: NoodleAccountKind;
+      actorEntityId: string;
+    }) => {
+      const params = new URLSearchParams({
+        actorKind: input.actorKind,
+        actorEntityId: input.actorEntityId,
+        type: input.type,
+      });
+      return api.delete<NoodleInteraction>(`/noodle/posts/${encodeURIComponent(postId)}/interactions?${params}`);
+    },
+    onSuccess: (interaction) => {
+      qc.setQueryData<NoodleBootstrap | undefined>(noodleKeys.bootstrap(), (current) =>
+        current
+          ? {
+              ...current,
+              interactions: current.interactions.filter((item) => item.id !== interaction.id),
+            }
+          : current,
+      );
+      qc.invalidateQueries({ queryKey: noodleKeys.bootstrap() });
+    },
+  });
+}
+
+export function useRefreshNoodle() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { personaId?: string; connectionId?: string }) =>
+      api.post<NoodleBootstrap>("/noodle/refresh", { ...input, debugMode: useUIStore.getState().debugMode }),
+    onSuccess: (bootstrap) => qc.setQueryData(noodleKeys.bootstrap(), bootstrap),
+    onSettled: () => qc.invalidateQueries({ queryKey: noodleKeys.bootstrap() }),
+  });
+}

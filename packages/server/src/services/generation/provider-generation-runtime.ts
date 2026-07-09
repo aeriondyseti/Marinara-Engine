@@ -1,8 +1,7 @@
 import {
   isClaudeAdaptiveOnlyNoSamplingModel,
-  isXaiAutoReasoningModel,
   normalizeThinkingTagPairs,
-  supportsXhighReasoningEffort,
+  resolveProviderReasoningEffort,
   type GenerationParameterSendMap,
   type ThinkingTagPair,
 } from "@marinara-engine/shared";
@@ -17,13 +16,8 @@ import {
   parseStoredGenerationParameters,
   resolveProviderTopK,
 } from "../../routes/generate/generate-route-utils.js";
-import {
-  mergeModelContextLimit,
-  resolveStoredModelContextLimit,
-} from "./model-access-policy.js";
-import {
-  normalizeChatTopP,
-} from "./generation-parameters.js";
+import { mergeModelContextLimit, resolveStoredModelContextLimit } from "./model-access-policy.js";
+import { normalizeChatTopP } from "./generation-parameters.js";
 import { clampGenerationMaxOutputTokens } from "./output-token-limits.js";
 
 type GenerationConnection = {
@@ -149,25 +143,12 @@ export function resolveGenerationProviderRuntime(args: GenerationProviderRuntime
 
   const modelLower = (args.connection.model ?? "").toLowerCase();
   const providerLower = (args.connection.provider ?? "").toLowerCase();
-  let resolvedEffort: "low" | "medium" | "high" | "xhigh" | "max" | null =
-    runtime.reasoningEffort !== "maximum" ? runtime.reasoningEffort : null;
-  const supportsXhigh = supportsXhighReasoningEffort(modelLower);
-  if (runtime.reasoningEffort === "xhigh" && !supportsXhigh) {
-    resolvedEffort = "high";
-  }
-  if (runtime.reasoningEffort === "maximum") {
-    const isNativeAnthropicAdaptiveOnly =
-      (providerLower === "anthropic" || providerLower === "claude_subscription") &&
-      isClaudeAdaptiveOnlyNoSamplingModel(modelLower);
-    resolvedEffort = isNativeAnthropicAdaptiveOnly ? "max" : supportsXhigh ? "xhigh" : "high";
-  }
+  let resolvedEffort = resolveProviderReasoningEffort({
+    provider: providerLower,
+    model: modelLower,
+    reasoningEffort: runtime.reasoningEffort,
+  });
 
-  const xaiUsesAutoReasoning =
-    (providerLower === "xai" && isXaiAutoReasoningModel(modelLower)) ||
-    (providerLower === "openrouter" && modelLower.startsWith("x-ai/grok-"));
-  if (xaiUsesAutoReasoning) {
-    resolvedEffort = null;
-  }
   if (resolvedEffort && !runtime.showThoughts) {
     runtime.showThoughts = true;
   }

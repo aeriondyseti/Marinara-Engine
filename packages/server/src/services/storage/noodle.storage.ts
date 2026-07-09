@@ -1,0 +1,602 @@
+// ──────────────────────────────────────────────
+// Storage: Noodle Fake Social Media
+// ──────────────────────────────────────────────
+import { and, desc, eq, gt, inArray } from "drizzle-orm";
+import {
+  DEFAULT_NOODLE_SETTINGS,
+  noodleSettingsSchema,
+  type NoodleAccount,
+  type NoodleAccountKind,
+  type NoodleAuthorSnapshot,
+  type NoodleBootstrap,
+  type NoodleCreateInteractionInput,
+  type NoodleCreatePostInput,
+  type NoodleDigestEntry,
+  type NoodleInteraction,
+  type NoodleInteractionType,
+  type NoodleCarryoverMode,
+  type NoodleCarryoverTarget,
+  type NoodlePost,
+  type NoodlePostUpdateInput,
+  type NoodlePostSource,
+  type NoodleRefreshRun,
+  type NoodleRemoveInteractionInput,
+  type NoodleSettings,
+  type NoodleSettingsUpdateInput,
+} from "@marinara-engine/shared";
+import type { DB } from "../../db/connection.js";
+import {
+  noodleAccounts,
+  noodleActivityDigests,
+  noodleInteractions,
+  noodlePosts,
+  noodleRefreshRuns,
+} from "../../db/schema/index.js";
+import { newId, now } from "../../utils/id-generator.js";
+import { createAppSettingsStorage } from "./app-settings.storage.js";
+
+const NOODLE_SETTINGS_KEY = "noodle.settings";
+const NOODLE_CARRYOVER_TARGETS: NoodleCarryoverTarget[] = ["conversation", "roleplay", "game"];
+
+type AccountRow = typeof noodleAccounts.$inferSelect;
+type PostRow = typeof noodlePosts.$inferSelect;
+type InteractionRow = typeof noodleInteractions.$inferSelect;
+type DigestRow = typeof noodleActivityDigests.$inferSelect;
+type RefreshRunRow = typeof noodleRefreshRuns.$inferSelect;
+
+function parseRecord(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  }
+  return typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+function parseStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string" && item.length > 0);
+  if (typeof value !== "string") return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string" && item.length > 0)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseAuthorSnapshot(value: unknown): NoodleAuthorSnapshot | null {
+  const parsed = parseRecord(value);
+  const id = typeof parsed.id === "string" ? parsed.id : "";
+  const kind =
+    parsed.kind === "persona" || parsed.kind === "character" || parsed.kind === "random_user" ? parsed.kind : null;
+  const entityId = typeof parsed.entityId === "string" ? parsed.entityId : "";
+  const handle = typeof parsed.handle === "string" ? parsed.handle : "";
+  const displayName = typeof parsed.displayName === "string" ? parsed.displayName : "";
+  if (!id || !kind || !entityId || !handle || !displayName) return null;
+  return {
+    id,
+    kind,
+    entityId,
+    handle,
+    displayName,
+    avatarUrl: typeof parsed.avatarUrl === "string" && parsed.avatarUrl ? parsed.avatarUrl : null,
+  };
+}
+
+function normalizeBool(value: unknown): boolean {
+  return value === true || value === "true";
+}
+
+function normalizeHandle(name: string, fallback: string) {
+  const base = (name || fallback || "noodle")
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 36);
+  return base || "noodle";
+}
+
+function normalizeAccountKind(kind: string): NoodleAccountKind {
+  if (kind === "character" || kind === "random_user") return kind;
+  return "persona";
+}
+
+function legacyCarryoverTargets(mode: NoodleCarryoverMode): NoodleCarryoverTarget[] {
+  if (mode === "all") return [...NOODLE_CARRYOVER_TARGETS];
+  if (mode === "conversation" || mode === "roleplay" || mode === "game") return [mode];
+  return [];
+}
+
+function legacyCarryoverMode(targets: NoodleCarryoverTarget[]): NoodleCarryoverMode {
+  const selected = new Set(targets);
+  if (NOODLE_CARRYOVER_TARGETS.every((target) => selected.has(target))) return "all";
+  if (targets.length === 1) return targets[0]!;
+  return "off";
+}
+
+function isToggleInteractionType(type: NoodleInteractionType) {
+  return type === "like" || type === "repost";
+}
+
+function isUniqueConstraintError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /SQLITE_CONSTRAINT|unique constraint failed|constraint failed/i.test(message);
+}
+
+function normalizeSettings(raw: unknown): NoodleSettings {
+  const rawRecord = parseRecord(raw);
+  const parsed = noodleSettingsSchema.safeParse({
+    ...DEFAULT_NOODLE_SETTINGS,
+    ...rawRecord,
+  });
+  if (!parsed.success) return noodleSettingsSchema.parse(DEFAULT_NOODLE_SETTINGS);
+  const min = Math.min(parsed.data.participantMin, parsed.data.participantMax);
+  const max = Math.max(parsed.data.participantMin, parsed.data.participantMax);
+  const providedCarryoverModes = Array.isArray(rawRecord.carryoverModes);
+  const carryoverModes = Array.from(
+    new Set(parsed.data.carryoverModes.filter((mode) => NOODLE_CARRYOVER_TARGETS.includes(mode))),
+  );
+  const normalizedCarryoverModes =
+    carryoverModes.length > 0 || providedCarryoverModes
+      ? carryoverModes
+      : legacyCarryoverTargets(parsed.data.carryoverMode);
+  return {
+    ...parsed.data,
+    participantMin: min,
+    participantMax: max,
+    carryoverModes: normalizedCarryoverModes,
+    carryoverMode: legacyCarryoverMode(normalizedCarryoverModes),
+  };
+}
+
+function mapAccount(row: AccountRow): NoodleAccount {
+  return {
+    id: row.id,
+    kind: normalizeAccountKind(row.kind),
+    entityId: row.entityId,
+    handle: row.handle,
+    displayName: row.displayName,
+    bio: row.bio ?? "",
+    avatarUrl: row.avatarUrl ?? null,
+    invited: normalizeBool(row.invited),
+    settings: parseRecord(row.settings),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function snapshotForAccount(account: NoodleAccount): NoodleAuthorSnapshot {
+  return {
+    id: account.id,
+    kind: account.kind,
+    entityId: account.entityId,
+    handle: account.handle,
+    displayName: account.displayName,
+    avatarUrl: account.avatarUrl,
+  };
+}
+
+function mapPost(row: PostRow): NoodlePost {
+  return {
+    id: row.id,
+    authorAccountId: row.authorAccountId,
+    content: row.content ?? "",
+    imageUrl: row.imageUrl ?? null,
+    imagePrompt: row.imagePrompt ?? null,
+    parentPostId: row.parentPostId ?? null,
+    quotePostId: row.quotePostId ?? null,
+    source: row.source === "generated" ? "generated" : "manual",
+    metadata: parseRecord(row.metadata),
+    authorSnapshot: parseAuthorSnapshot(row.authorSnapshot),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function mapInteraction(row: InteractionRow): NoodleInteraction {
+  return {
+    id: row.id,
+    postId: row.postId,
+    actorAccountId: row.actorAccountId,
+    type:
+      row.type === "repost" || row.type === "reply" || row.type === "like"
+        ? (row.type as NoodleInteractionType)
+        : "like",
+    content: row.content ?? null,
+    actorSnapshot: parseAuthorSnapshot(row.actorSnapshot),
+    createdAt: row.createdAt,
+  };
+}
+
+function mapDigest(row: DigestRow): NoodleDigestEntry {
+  return {
+    id: row.id,
+    accountIds: parseStringArray(row.accountIds),
+    content: row.content ?? "",
+    sourceRunId: row.sourceRunId ?? null,
+    sourcePostId: row.sourcePostId ?? null,
+    createdAt: row.createdAt,
+  };
+}
+
+function mapRefreshRun(row: RefreshRunRow): NoodleRefreshRun {
+  return {
+    id: row.id,
+    status: row.status === "completed" || row.status === "failed" ? row.status : "running",
+    activeAccountIds: parseStringArray(row.activeAccountIds),
+    prompt: row.prompt ?? "",
+    result: row.result ?? null,
+    error: row.error ?? null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+export function createNoodleStorage(db: DB) {
+  const settingsStore = createAppSettingsStorage(db);
+
+  return {
+    async getSettings(): Promise<NoodleSettings> {
+      const raw = await settingsStore.get(NOODLE_SETTINGS_KEY);
+      return normalizeSettings(raw);
+    },
+
+    async updateSettings(input: NoodleSettingsUpdateInput): Promise<NoodleSettings> {
+      const current = await this.getSettings();
+      const next = normalizeSettings({ ...current, ...input });
+      await settingsStore.set(NOODLE_SETTINGS_KEY, JSON.stringify(next));
+      return next;
+    },
+
+    async listAccounts(): Promise<NoodleAccount[]> {
+      const rows = await db.select().from(noodleAccounts).orderBy(desc(noodleAccounts.updatedAt));
+      return rows.map(mapAccount);
+    },
+
+    async getAccountById(id: string): Promise<NoodleAccount | null> {
+      const rows = await db.select().from(noodleAccounts).where(eq(noodleAccounts.id, id));
+      return rows[0] ? mapAccount(rows[0]) : null;
+    },
+
+    async getAccountByEntity(kind: NoodleAccountKind, entityId: string): Promise<NoodleAccount | null> {
+      const rows = await db
+        .select()
+        .from(noodleAccounts)
+        .where(and(eq(noodleAccounts.kind, kind), eq(noodleAccounts.entityId, entityId)));
+      return rows[0] ? mapAccount(rows[0]) : null;
+    },
+
+    async getAccountsByEntities(kind: NoodleAccountKind, entityIds: string[]): Promise<NoodleAccount[]> {
+      if (entityIds.length === 0) return [];
+      const rows = await db
+        .select()
+        .from(noodleAccounts)
+        .where(and(eq(noodleAccounts.kind, kind), inArray(noodleAccounts.entityId, entityIds)));
+      return rows.map(mapAccount);
+    },
+
+    async upsertAccountFromProfile(input: {
+      kind: NoodleAccountKind;
+      entityId: string;
+      displayName: string;
+      avatarUrl?: string | null;
+      bio?: string | null;
+      invited?: boolean;
+    }): Promise<NoodleAccount> {
+      const existing = await this.getAccountByEntity(input.kind, input.entityId);
+      if (existing) {
+        const updates: Record<string, unknown> = { updatedAt: now() };
+        if (!existing.displayName.trim()) updates.displayName = input.displayName || existing.handle;
+        if (!existing.bio.trim() && input.bio) updates.bio = input.bio;
+        if (!existing.avatarUrl && input.avatarUrl) updates.avatarUrl = input.avatarUrl;
+        if (input.invited !== undefined) updates.invited = String(input.invited);
+        await db.update(noodleAccounts).set(updates).where(eq(noodleAccounts.id, existing.id));
+        return (await this.getAccountById(existing.id)) ?? existing;
+      }
+
+      const timestamp = now();
+      const id = newId();
+      const displayName = input.displayName.trim() || (input.kind === "persona" ? "User" : "Character");
+      await db.insert(noodleAccounts).values({
+        id,
+        kind: input.kind,
+        entityId: input.entityId,
+        handle: normalizeHandle(displayName, input.entityId),
+        displayName,
+        bio: input.bio?.trim() ?? "",
+        avatarUrl: input.avatarUrl ?? null,
+        invited: String(input.invited ?? input.kind === "persona"),
+        settings: "{}",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      return (await this.getAccountById(id))!;
+    },
+
+    async updateAccount(id: string, input: Partial<NoodleAccount>): Promise<NoodleAccount | null> {
+      const existing = await this.getAccountById(id);
+      if (!existing) return null;
+      await db
+        .update(noodleAccounts)
+        .set({
+          ...(input.handle !== undefined && { handle: normalizeHandle(input.handle, existing.entityId) }),
+          ...(input.displayName !== undefined && { displayName: input.displayName.trim().slice(0, 120) }),
+          ...(input.bio !== undefined && { bio: input.bio.slice(0, 500) }),
+          ...(input.avatarUrl !== undefined && { avatarUrl: input.avatarUrl }),
+          ...(input.invited !== undefined && { invited: String(input.invited) }),
+          ...(input.settings !== undefined && { settings: JSON.stringify(input.settings) }),
+          updatedAt: now(),
+        })
+        .where(eq(noodleAccounts.id, id));
+      return this.getAccountById(id);
+    },
+
+    async setCharacterInvited(characterId: string, invited: boolean): Promise<NoodleAccount | null> {
+      const existing = await this.getAccountByEntity("character", characterId);
+      if (!existing) return null;
+      return this.updateAccount(existing.id, { invited });
+    },
+
+    async listPosts(options: { limit?: number; since?: string } = {}): Promise<NoodlePost[]> {
+      const limit = Math.max(1, Math.min(300, Math.floor(options.limit ?? 120)));
+      const rows = options.since
+        ? await db
+            .select()
+            .from(noodlePosts)
+            .where(gt(noodlePosts.createdAt, options.since))
+            .orderBy(desc(noodlePosts.createdAt))
+            .limit(limit)
+        : await db.select().from(noodlePosts).orderBy(desc(noodlePosts.createdAt)).limit(limit);
+      return rows.map(mapPost);
+    },
+
+    async createPost(
+      input: Omit<NoodleCreatePostInput, "authorKind" | "authorEntityId"> & {
+        authorAccountId: string;
+        source?: NoodlePostSource;
+        metadata?: Record<string, unknown>;
+      },
+    ): Promise<NoodlePost | null> {
+      const account = await this.getAccountById(input.authorAccountId);
+      if (!account) return null;
+      const timestamp = now();
+      const id = newId();
+      await db.insert(noodlePosts).values({
+        id,
+        authorAccountId: input.authorAccountId,
+        content: input.content,
+        imageUrl: input.imageUrl ?? null,
+        imagePrompt: input.imagePrompt ?? null,
+        parentPostId: input.parentPostId ?? null,
+        quotePostId: input.quotePostId ?? null,
+        source: input.source ?? "manual",
+        metadata: JSON.stringify(input.metadata ?? {}),
+        authorSnapshot: JSON.stringify(snapshotForAccount(account)),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      return (await this.getPostById(id))!;
+    },
+
+    async getPostById(id: string): Promise<NoodlePost | null> {
+      const rows = await db.select().from(noodlePosts).where(eq(noodlePosts.id, id));
+      return rows[0] ? mapPost(rows[0]) : null;
+    },
+
+    async updatePostMedia(
+      id: string,
+      input: { imageUrl?: string | null; imagePrompt?: string | null; metadata?: Record<string, unknown> },
+    ): Promise<NoodlePost | null> {
+      const existing = await this.getPostById(id);
+      if (!existing) return null;
+      await db
+        .update(noodlePosts)
+        .set({
+          ...(input.imageUrl !== undefined && { imageUrl: input.imageUrl }),
+          ...(input.imagePrompt !== undefined && { imagePrompt: input.imagePrompt }),
+          ...(input.metadata !== undefined && {
+            metadata: JSON.stringify({ ...existing.metadata, ...input.metadata }),
+          }),
+          updatedAt: now(),
+        })
+        .where(eq(noodlePosts.id, id));
+      return this.getPostById(id);
+    },
+
+    async updatePost(id: string, input: NoodlePostUpdateInput): Promise<NoodlePost | null> {
+      const existing = await this.getPostById(id);
+      if (!existing) return null;
+      await db
+        .update(noodlePosts)
+        .set({
+          ...(input.content !== undefined && { content: input.content.trim().slice(0, 4000) }),
+          ...(input.imageUrl !== undefined && { imageUrl: input.imageUrl }),
+          ...(input.imagePrompt !== undefined && { imagePrompt: input.imagePrompt }),
+          updatedAt: now(),
+        })
+        .where(eq(noodlePosts.id, id));
+      return this.getPostById(id);
+    },
+
+    async deletePost(id: string): Promise<NoodlePost | null> {
+      const existing = await this.getPostById(id);
+      if (!existing) return null;
+      await db.transaction(async (tx) => {
+        await tx.delete(noodleInteractions).where(eq(noodleInteractions.postId, id));
+        await tx.delete(noodleActivityDigests).where(eq(noodleActivityDigests.sourcePostId, id));
+        await tx.delete(noodlePosts).where(eq(noodlePosts.id, id));
+      });
+      return existing;
+    },
+
+    async resetTimeline(): Promise<void> {
+      await db.transaction(async (tx) => {
+        await tx.delete(noodleInteractions);
+        await tx.delete(noodleActivityDigests);
+        await tx.delete(noodleRefreshRuns);
+        await tx.delete(noodlePosts);
+      });
+    },
+
+    async listInteractions(postIds: string[] = []): Promise<NoodleInteraction[]> {
+      if (postIds.length === 0) return [];
+      const rows = await db
+        .select()
+        .from(noodleInteractions)
+        .where(inArray(noodleInteractions.postId, postIds))
+        .orderBy(noodleInteractions.createdAt);
+      return rows.map(mapInteraction);
+    },
+
+    async createInteraction(
+      postId: string,
+      input: Omit<NoodleCreateInteractionInput, "actorKind" | "actorEntityId"> & { actorAccountId: string },
+    ): Promise<NoodleInteraction | null> {
+      const [post, actor] = await Promise.all([this.getPostById(postId), this.getAccountById(input.actorAccountId)]);
+      if (!post || !actor) return null;
+
+      const readExistingToggleInteraction = async () => {
+        if (!isToggleInteractionType(input.type)) return null;
+        const existing = await db
+          .select()
+          .from(noodleInteractions)
+          .where(
+            and(
+              eq(noodleInteractions.postId, postId),
+              eq(noodleInteractions.actorAccountId, input.actorAccountId),
+              eq(noodleInteractions.type, input.type),
+            ),
+          );
+        return existing[0] ? mapInteraction(existing[0]) : null;
+      };
+
+      const existingToggleInteraction = await readExistingToggleInteraction();
+      if (existingToggleInteraction) return existingToggleInteraction;
+
+      const id = newId();
+      try {
+        await db.insert(noodleInteractions).values({
+          id,
+          postId,
+          actorAccountId: input.actorAccountId,
+          type: input.type,
+          content: input.content?.trim() || null,
+          actorSnapshot: JSON.stringify(snapshotForAccount(actor)),
+          createdAt: now(),
+        });
+      } catch (error) {
+        if (isUniqueConstraintError(error)) {
+          const existing = await readExistingToggleInteraction();
+          if (existing) return existing;
+        }
+        throw error;
+      }
+      const rows = await db.select().from(noodleInteractions).where(eq(noodleInteractions.id, id));
+      return rows[0] ? mapInteraction(rows[0]) : null;
+    },
+
+    async deleteInteraction(
+      postId: string,
+      input: Omit<NoodleRemoveInteractionInput, "actorKind" | "actorEntityId"> & { actorAccountId: string },
+    ): Promise<NoodleInteraction | null> {
+      const rows = await db
+        .select()
+        .from(noodleInteractions)
+        .where(
+          and(
+            eq(noodleInteractions.postId, postId),
+            eq(noodleInteractions.actorAccountId, input.actorAccountId),
+            eq(noodleInteractions.type, input.type),
+          ),
+        );
+      const existing = rows[0];
+      if (!existing) return null;
+      await db.delete(noodleInteractions).where(eq(noodleInteractions.id, existing.id));
+      return mapInteraction(existing);
+    },
+
+    async createDigest(input: {
+      accountIds: string[];
+      content: string;
+      sourceRunId?: string | null;
+      sourcePostId?: string | null;
+    }): Promise<NoodleDigestEntry> {
+      const id = newId();
+      const uniqueAccountIds = Array.from(new Set(input.accountIds.filter(Boolean)));
+      await db.insert(noodleActivityDigests).values({
+        id,
+        accountIds: JSON.stringify(uniqueAccountIds),
+        content: input.content.trim().slice(0, 1200),
+        sourceRunId: input.sourceRunId ?? null,
+        sourcePostId: input.sourcePostId ?? null,
+        createdAt: now(),
+      });
+      const rows = await db.select().from(noodleActivityDigests).where(eq(noodleActivityDigests.id, id));
+      return mapDigest(rows[0]!);
+    },
+
+    async listDigests(options: { limit?: number; since?: string } = {}): Promise<NoodleDigestEntry[]> {
+      const limit = Math.max(1, Math.min(200, Math.floor(options.limit ?? 80)));
+      const rows = options.since
+        ? await db
+            .select()
+            .from(noodleActivityDigests)
+            .where(gt(noodleActivityDigests.createdAt, options.since))
+            .orderBy(desc(noodleActivityDigests.createdAt))
+            .limit(limit)
+        : await db.select().from(noodleActivityDigests).orderBy(desc(noodleActivityDigests.createdAt)).limit(limit);
+      return rows.map(mapDigest);
+    },
+
+    async createRefreshRun(input: { activeAccountIds: string[]; prompt: string }): Promise<NoodleRefreshRun> {
+      const timestamp = now();
+      const id = newId();
+      await db.insert(noodleRefreshRuns).values({
+        id,
+        status: "running",
+        activeAccountIds: JSON.stringify(input.activeAccountIds),
+        prompt: input.prompt,
+        result: null,
+        error: null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      });
+      const rows = await db.select().from(noodleRefreshRuns).where(eq(noodleRefreshRuns.id, id));
+      return mapRefreshRun(rows[0]!);
+    },
+
+    async finishRefreshRun(
+      id: string,
+      patch: { status: "completed" | "failed"; result?: string | null; error?: string | null },
+    ): Promise<NoodleRefreshRun | null> {
+      await db
+        .update(noodleRefreshRuns)
+        .set({
+          status: patch.status,
+          result: patch.result ?? null,
+          error: patch.error ?? null,
+          updatedAt: now(),
+        })
+        .where(eq(noodleRefreshRuns.id, id));
+      const rows = await db.select().from(noodleRefreshRuns).where(eq(noodleRefreshRuns.id, id));
+      return rows[0] ? mapRefreshRun(rows[0]) : null;
+    },
+
+    async bootstrap(): Promise<NoodleBootstrap> {
+      const posts = await this.listPosts({ limit: 160 });
+      return {
+        settings: await this.getSettings(),
+        accounts: await this.listAccounts(),
+        posts,
+        interactions: await this.listInteractions(posts.map((post) => post.id)),
+        digests: await this.listDigests({ limit: 80 }),
+      };
+    },
+  };
+}

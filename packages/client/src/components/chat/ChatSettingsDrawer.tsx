@@ -878,6 +878,46 @@ export function ChatSettingsDrawer({
     () => (typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {})),
     [chat.metadata],
   );
+  const noodleTimelineContextEnabled = metadata.noodleTimelineContextEnabled === true;
+  const renderNoodleTimelineContextToggle = () => (
+    <button
+      type="button"
+      onClick={() =>
+        updateMeta.mutate({
+          id: chat.id,
+          noodleTimelineContextEnabled: !noodleTimelineContextEnabled,
+        })
+      }
+      disabled={updateMeta.isPending}
+      className={cn(
+        "flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left transition-all disabled:cursor-not-allowed disabled:opacity-60",
+        noodleTimelineContextEnabled
+          ? "bg-[var(--primary)]/10 ring-1 ring-[var(--primary)]/30"
+          : "bg-[var(--secondary)] hover:bg-[var(--accent)]",
+      )}
+    >
+      <div className="min-w-0 flex-1">
+        <span className="text-[0.6875rem] font-medium">Allow Noodle references</span>
+        <p className="text-[0.625rem] leading-relaxed text-[var(--muted-foreground)]">
+          Timeline refreshes may include recent messages from this chat, with the chat name, mode, and participants
+          stated in the prompt.
+        </p>
+      </div>
+      <div
+        className={cn(
+          "h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors",
+          noodleTimelineContextEnabled ? "bg-[var(--primary)]" : "bg-[var(--muted-foreground)]/50",
+        )}
+      >
+        <div
+          className={cn(
+            "h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+            noodleTimelineContextEnabled && "translate-x-3.5",
+          )}
+        />
+      </div>
+    </button>
+  );
   const videoGenerationSettingsQuery = useQuery({
     queryKey: ["app-settings", VIDEO_GENERATION_SETTINGS_KEY],
     queryFn: () => api.get<{ value: string | null }>(`/app-settings/${VIDEO_GENERATION_SETTINGS_KEY}`),
@@ -5749,74 +5789,77 @@ export function ChatSettingsDrawer({
               icon={<ArrowRightLeft size="0.875rem" />}
               help="Link this conversation to a roleplay or game. Recent messages from the linked chat are pulled into context here automatically. To send something the other direction, the character uses `<influence>` (steers the next linked turn, one-shot) or `<note>` (persists on every future linked turn until cleared)."
             >
-              {chat.connectedChatId ? (
-                (() => {
-                  const linked = (allChats ?? []).find((c: Chat) => c.id === chat.connectedChatId);
-                  return (
-                    <div className="flex items-center gap-2.5 rounded-lg bg-[var(--primary)]/10 px-3 py-2 ring-1 ring-[var(--primary)]/30">
-                      <ArrowRightLeft size="0.875rem" className="text-[var(--primary)]" />
-                      <div className="flex-1 min-w-0">
-                        <span className="truncate text-xs font-medium">
-                          {linked ? getConnectedChatDisplayName(linked) : "Unknown chat"}
-                        </span>
-                        <p className="text-[0.625rem] text-[var(--muted-foreground)]">
-                          {linked ? (linked.mode === "roleplay" ? "Roleplay" : linked.mode) : "Deleted"}
-                        </p>
+              <div className="space-y-2">
+                {chat.connectedChatId ? (
+                  (() => {
+                    const linked = (allChats ?? []).find((c: Chat) => c.id === chat.connectedChatId);
+                    return (
+                      <div className="flex items-center gap-2.5 rounded-lg bg-[var(--primary)]/10 px-3 py-2 ring-1 ring-[var(--primary)]/30">
+                        <ArrowRightLeft size="0.875rem" className="text-[var(--primary)]" />
+                        <div className="min-w-0 flex-1">
+                          <span className="truncate text-xs font-medium">
+                            {linked ? getConnectedChatDisplayName(linked) : "Unknown chat"}
+                          </span>
+                          <p className="text-[0.625rem] text-[var(--muted-foreground)]">
+                            {linked ? (linked.mode === "roleplay" ? "Roleplay" : linked.mode) : "Deleted"}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => disconnectChat.mutate(chat.id)}
+                          className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
+                          title="Disconnect"
+                        >
+                          <Unlink size="0.6875rem" />
+                        </button>
                       </div>
-                      <button
-                        onClick={() => disconnectChat.mutate(chat.id)}
-                        className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
-                        title="Disconnect"
-                      >
-                        <Unlink size="0.6875rem" />
-                      </button>
-                    </div>
-                  );
-                })()
-              ) : !showConnectionPicker ? (
-                <button
-                  onClick={() => {
-                    setShowConnectionPicker(true);
-                    setConnectionSearch("");
-                  }}
-                  className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-xs text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/40 hover:text-[var(--primary)]"
-                >
-                  <Plus size="0.75rem" /> Link to Roleplay or Game
-                </button>
-              ) : (
-                <PickerDropdown
-                  search={connectionSearch}
-                  onSearchChange={setConnectionSearch}
-                  onClose={() => setShowConnectionPicker(false)}
-                  placeholder="Search roleplay or game chats…"
-                >
-                  {((allChats ?? []) as Chat[])
-                    .filter(
-                      (c) =>
-                        c.id !== chat.id &&
-                        (c.mode === "roleplay" || c.mode === "game") &&
-                        !c.connectedChatId &&
-                        includesTextForMatch(getConnectedChatDisplayName(c), connectionSearch),
-                    )
-                    .map((c) => (
-                      <button
-                        key={c.id}
-                        onClick={() => {
-                          connectChat.mutate({ chatId: chat.id, targetChatId: c.id });
-                          setShowConnectionPicker(false);
-                        }}
-                        className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs transition-colors hover:bg-[var(--accent)]"
-                      >
-                        <MessageSquare size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
-                        <span className="truncate">{getConnectedChatDisplayName(c)}</span>
-                      </button>
-                    ))}
-                </PickerDropdown>
-              )}
-              <DiscordMirrorControls
-                webhookUrl={(metadata.discordWebhookUrl as string) ?? ""}
-                onWebhookUrlChange={(discordWebhookUrl) => updateMeta.mutate({ id: chat.id, discordWebhookUrl })}
-              />
+                    );
+                  })()
+                ) : !showConnectionPicker ? (
+                  <button
+                    onClick={() => {
+                      setShowConnectionPicker(true);
+                      setConnectionSearch("");
+                    }}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-xs text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/40 hover:text-[var(--primary)]"
+                  >
+                    <Plus size="0.75rem" /> Link to Roleplay or Game
+                  </button>
+                ) : (
+                  <PickerDropdown
+                    search={connectionSearch}
+                    onSearchChange={setConnectionSearch}
+                    onClose={() => setShowConnectionPicker(false)}
+                    placeholder="Search roleplay or game chats…"
+                  >
+                    {((allChats ?? []) as Chat[])
+                      .filter(
+                        (c) =>
+                          c.id !== chat.id &&
+                          (c.mode === "roleplay" || c.mode === "game") &&
+                          !c.connectedChatId &&
+                          includesTextForMatch(getConnectedChatDisplayName(c), connectionSearch),
+                      )
+                      .map((c) => (
+                        <button
+                          key={c.id}
+                          onClick={() => {
+                            connectChat.mutate({ chatId: chat.id, targetChatId: c.id });
+                            setShowConnectionPicker(false);
+                          }}
+                          className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs transition-colors hover:bg-[var(--accent)]"
+                        >
+                          <MessageSquare size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
+                          <span className="truncate">{getConnectedChatDisplayName(c)}</span>
+                        </button>
+                      ))}
+                  </PickerDropdown>
+                )}
+                {renderNoodleTimelineContextToggle()}
+                <DiscordMirrorControls
+                  webhookUrl={(metadata.discordWebhookUrl as string) ?? ""}
+                  onWebhookUrlChange={(discordWebhookUrl) => updateMeta.mutate({ id: chat.id, discordWebhookUrl })}
+                />
+              </div>
             </Section>
           )}
 
@@ -5858,6 +5901,8 @@ export function ChatSettingsDrawer({
                     No OOC conversation is linked. Direct-message commands can still create new Conversation DMs.
                   </p>
                 )}
+
+                {renderNoodleTimelineContextToggle()}
 
                 <button
                   type="button"
@@ -5914,31 +5959,34 @@ export function ChatSettingsDrawer({
               icon={<ArrowRightLeft size="0.875rem" />}
               help="Linked to a conversation. `<influence>` tags from the conversation steer the next turn here (one-shot, then consumed). `<note>` tags persist on every turn until cleared. Raw conversation messages are not injected — use `<note>` for facts this chat should keep remembering."
             >
-              {(() => {
-                const linked = (allChats ?? []).find((c: Chat) => c.id === chat.connectedChatId);
-                return (
-                  <div className="flex items-center gap-2.5 rounded-lg bg-[var(--primary)]/10 px-3 py-2 ring-1 ring-[var(--primary)]/30">
-                    <MessageCircle size="0.875rem" className="text-[var(--primary)]" />
-                    <div className="flex-1 min-w-0">
-                      <span className="truncate text-xs font-medium">
-                        {linked ? getConnectedChatDisplayName(linked) : "Unknown chat"}
-                      </span>
-                      <p className="text-[0.625rem] text-[var(--muted-foreground)]">Conversation</p>
+              <div className="space-y-2">
+                {(() => {
+                  const linked = (allChats ?? []).find((c: Chat) => c.id === chat.connectedChatId);
+                  return (
+                    <div className="flex items-center gap-2.5 rounded-lg bg-[var(--primary)]/10 px-3 py-2 ring-1 ring-[var(--primary)]/30">
+                      <MessageCircle size="0.875rem" className="text-[var(--primary)]" />
+                      <div className="min-w-0 flex-1">
+                        <span className="truncate text-xs font-medium">
+                          {linked ? getConnectedChatDisplayName(linked) : "Unknown chat"}
+                        </span>
+                        <p className="text-[0.625rem] text-[var(--muted-foreground)]">Conversation</p>
+                      </div>
+                      <button
+                        onClick={() => disconnectChat.mutate(chat.id)}
+                        className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
+                        title="Disconnect"
+                      >
+                        <Unlink size="0.6875rem" />
+                      </button>
                     </div>
-                    <button
-                      onClick={() => disconnectChat.mutate(chat.id)}
-                      className="flex h-5 w-5 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:bg-[var(--destructive)]/15 hover:text-[var(--destructive)]"
-                      title="Disconnect"
-                    >
-                      <Unlink size="0.6875rem" />
-                    </button>
-                  </div>
-                );
-              })()}
-              <DiscordMirrorControls
-                webhookUrl={(metadata.discordWebhookUrl as string) ?? ""}
-                onWebhookUrlChange={(discordWebhookUrl) => updateMeta.mutate({ id: chat.id, discordWebhookUrl })}
-              />
+                  );
+                })()}
+                {renderNoodleTimelineContextToggle()}
+                <DiscordMirrorControls
+                  webhookUrl={(metadata.discordWebhookUrl as string) ?? ""}
+                  onWebhookUrlChange={(discordWebhookUrl) => updateMeta.mutate({ id: chat.id, discordWebhookUrl })}
+                />
+              </div>
             </Section>
           )}
 
@@ -5957,50 +6005,53 @@ export function ChatSettingsDrawer({
               icon={<ArrowRightLeft size="0.875rem" />}
               help="Link this game to an OOC conversation. The conversation character uses `<influence>` (one-shot) or `<note>` (durable) to bridge content into the game; raw conversation messages are not injected. Game events and roleplay moments flow back into the conversation automatically."
             >
-              {!showConnectionPicker ? (
-                <button
-                  onClick={() => {
-                    setShowConnectionPicker(true);
-                    setConnectionSearch("");
-                  }}
-                  className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-xs text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/40 hover:text-[var(--primary)]"
-                >
-                  <Plus size="0.75rem" /> Link to Conversation
-                </button>
-              ) : (
-                <PickerDropdown
-                  search={connectionSearch}
-                  onSearchChange={setConnectionSearch}
-                  onClose={() => setShowConnectionPicker(false)}
-                  placeholder="Search conversation chats…"
-                >
-                  {((allChats ?? []) as Chat[])
-                    .filter(
-                      (c) =>
-                        c.id !== chat.id &&
-                        c.mode === "conversation" &&
-                        !c.connectedChatId &&
-                        includesTextForMatch(getConnectedChatDisplayName(c), connectionSearch),
-                    )
-                    .map((c) => (
-                      <button
-                        key={c.id}
-                        onClick={() => {
-                          connectChat.mutate({ chatId: chat.id, targetChatId: c.id });
-                          setShowConnectionPicker(false);
-                        }}
-                        className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs transition-colors hover:bg-[var(--accent)]"
-                      >
-                        <MessageSquare size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
-                        <span className="truncate">{getConnectedChatDisplayName(c)}</span>
-                      </button>
-                    ))}
-                </PickerDropdown>
-              )}
-              <DiscordMirrorControls
-                webhookUrl={(metadata.discordWebhookUrl as string) ?? ""}
-                onWebhookUrlChange={(discordWebhookUrl) => updateMeta.mutate({ id: chat.id, discordWebhookUrl })}
-              />
+              <div className="space-y-2">
+                {!showConnectionPicker ? (
+                  <button
+                    onClick={() => {
+                      setShowConnectionPicker(true);
+                      setConnectionSearch("");
+                    }}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-[var(--border)] px-3 py-2 text-xs text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/40 hover:text-[var(--primary)]"
+                  >
+                    <Plus size="0.75rem" /> Link to Conversation
+                  </button>
+                ) : (
+                  <PickerDropdown
+                    search={connectionSearch}
+                    onSearchChange={setConnectionSearch}
+                    onClose={() => setShowConnectionPicker(false)}
+                    placeholder="Search conversation chats…"
+                  >
+                    {((allChats ?? []) as Chat[])
+                      .filter(
+                        (c) =>
+                          c.id !== chat.id &&
+                          c.mode === "conversation" &&
+                          !c.connectedChatId &&
+                          includesTextForMatch(getConnectedChatDisplayName(c), connectionSearch),
+                      )
+                      .map((c) => (
+                        <button
+                          key={c.id}
+                          onClick={() => {
+                            connectChat.mutate({ chatId: chat.id, targetChatId: c.id });
+                            setShowConnectionPicker(false);
+                          }}
+                          className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs transition-colors hover:bg-[var(--accent)]"
+                        >
+                          <MessageSquare size="0.75rem" className="shrink-0 text-[var(--muted-foreground)]" />
+                          <span className="truncate">{getConnectedChatDisplayName(c)}</span>
+                        </button>
+                      ))}
+                  </PickerDropdown>
+                )}
+                {renderNoodleTimelineContextToggle()}
+                <DiscordMirrorControls
+                  webhookUrl={(metadata.discordWebhookUrl as string) ?? ""}
+                  onWebhookUrlChange={(discordWebhookUrl) => updateMeta.mutate({ id: chat.id, discordWebhookUrl })}
+                />
+              </div>
             </Section>
           )}
 

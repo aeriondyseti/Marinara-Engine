@@ -19,20 +19,20 @@ Generation parameters are **layered**. The effective parameters for a chat at ru
 
 What every new preset starts from:
 
-| Parameter          | Default  | Notes                                                                                                                                  |
-| ------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `temperature`      | `1`      | Higher = more variety; lower = more deterministic. See Claude notes below.                                                             |
+| Parameter          | Default  | Notes                                                                                                                                   |
+| ------------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `temperature`      | `1`      | Higher = more variety; lower = more deterministic. See Claude notes below.                                                              |
 | `maxTokens`        | `4096`   | Cap on response length. Game Mode manages its own output budget: world-gen is floored at `16384`, and regular game turns force `16384`. |
-| `topP`             | `1`      | See Claude notes below.                                                                                                                |
-| `topK`             | `0`      | Disabled; most providers ignore it anyway.                                                                                             |
-| `minP`             | `0`      | Disabled.                                                                                                                              |
-| `frequencyPenalty` | `0`      |                                                                                                                                        |
-| `presencePenalty`  | `0`      |                                                                                                                                        |
-| `reasoningEffort`  | `null`   | When set, used by reasoning-capable models (Claude with extended thinking, OpenAI o-series). `null` = provider default.                |
-| `verbosity`        | `null`   | When set, used by GPT-5-family models. `null` = provider default.                                                                      |
-| `assistantPrefill` | `""`     | Optional text to prefill into the assistant's response. Most users leave empty.                                                        |
-| `customParameters` | `{}`     | Provider-specific overrides for parameters Marinara doesn't expose by default.                                                         |
-| `maxContext`       | `128000` | Max context window in tokens. Connections typically override this with their actual model's context window.                            |
+| `topP`             | `1`      | See Claude notes below.                                                                                                                 |
+| `topK`             | `0`      | Disabled; most providers ignore it anyway.                                                                                              |
+| `minP`             | `0`      | Disabled.                                                                                                                               |
+| `frequencyPenalty` | `0`      |                                                                                                                                         |
+| `presencePenalty`  | `0`      |                                                                                                                                         |
+| `reasoningEffort`  | `null`   | When set, used by reasoning-capable models (Claude with extended thinking, OpenAI o-series/GPT-5 family). `null` = provider default.    |
+| `verbosity`        | `null`   | When set, used by GPT-5-family models. `null` = provider default.                                                                       |
+| `assistantPrefill` | `""`     | Optional text to prefill into the assistant's response. Most users leave empty.                                                         |
+| `customParameters` | `{}`     | Provider-specific overrides for parameters Marinara doesn't expose by default.                                                          |
+| `maxContext`       | `128000` | Max context window in tokens. Connections typically override this with their actual model's context window.                             |
 
 ### Send Toggles
 
@@ -72,6 +72,8 @@ For ongoing chat or roleplay turns, `temperature` somewhere in the `0.8`–`1.0`
 - **Claude via OpenRouter or an OpenAI-compatible endpoint** — the engine automatically omits `topP` for Sonnet/Opus 4.5-4.6 on Anthropic direct, OpenRouter, and OpenAI-compatible routes, and strips all sampler params for **Opus 4.7+**, **Fable 5**, and **Mythos 5**. The manual workaround applies mainly to Claude models the engine does not recognize, notably Claude Haiku 4.5 through OpenRouter or an OpenAI-compatible endpoint: turn off either `temperature` or `topP` with that parameter's Send toggle, save, and retry.
 
 - **Claude thinking mode** — when extended thinking is enabled, the engine strips `temperature` from the request to satisfy Claude's constraint that sampler params can't combine with extended thinking. `presencePenalty` and `frequencyPenalty` aren't native Claude sampling parameters and don't typically have effect on Claude. Output behavior is shaped primarily by `reasoningEffort` and model choice; tuning samplers in this configuration may produce no observable change.
+
+- **OpenAI GPT-5.6** — Marinara routes GPT-5.6 API models through the Responses API. `reasoningEffort: "maximum"` maps to OpenAI's `reasoning.effort: "max"` for GPT-5.6 Sol/Terra/Luna. Sampler controls such as temperature/top-p are stripped because GPT-5.6 rejects them. Selecting `gpt-5.6-sol-pro` uses `gpt-5.6-sol` with provider-native pro mode internally. The chat-level **Exclude Past Reasoning** toggle controls whether compatible prior reasoning is reused.
 
 - **OpenRouter auto-routing** — sampler behavior depends on the underlying model your route resolves to. If you're using `openrouter/auto`, `openrouter/free`, or any other auto-routing model, your sampler settings may behave inconsistently between calls because the underlying model can change. Pinning a specific model keeps behavior predictable.
 

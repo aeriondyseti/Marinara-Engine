@@ -1272,9 +1272,9 @@ export function ConversationView({
         {/* Welcome message at the start of a conversation */}
         {!isLoading && !hasNextPage && messages && messages.length === 0 && (
           <div className="px-4 pt-2">
-            <p className="text-xs text-[var(--muted-foreground)]">
+            <p className="text-xs text-[var(--marinara-chat-chrome-panel-muted)]">
               This is the start of your conversation with{" "}
-              <span className="font-medium text-[var(--foreground)]">
+              <span className="font-medium text-[var(--marinara-chat-chrome-panel-title)]">
                 {(() => {
                   const names = chatCharIds.map((id) => characterMap.get(id)?.name).filter(Boolean) as string[];
                   if (names.length === 0) return "this group";

@@ -240,6 +240,10 @@ function nanoGptV1BaseUrl(baseUrl: string) {
   return root.endsWith("/v1") ? root : `${root}/v1`;
 }
 
+function pocketTtsV1BaseUrl(baseUrl: string) {
+  return baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
+}
+
 function normalizeElevenLabsTtsModelId(model: string) {
   const trimmed = model.trim();
   return ELEVENLABS_TTS_MODEL_ALIASES[trimmed.toLowerCase()] ?? trimmed;
@@ -302,16 +306,24 @@ function parseVoiceOption(value: unknown): VoiceOption | null {
   if (!obj) return null;
 
   const id =
-    readString(obj["voice_id"]) ?? readString(obj["voiceId"]) ?? readString(obj["id"]) ?? readString(obj["name"]);
+    readString(obj["voice_id"]) ??
+    readString(obj["voiceId"]) ??
+    readString(obj["id"]) ??
+    readString(obj["name"]) ??
+    readString(obj["voice_url"]) ??
+    readString(obj["voiceUrl"]) ??
+    readString(obj["url"]) ??
+    readString(obj["path"]);
   if (!id) return null;
 
-  const name = readString(obj["name"]) ?? id;
+  const name = readString(obj["name"]) ?? readString(obj["display_name"]) ?? readString(obj["displayName"]) ?? id;
+  const providerType = readString(obj["type"]);
   return {
     id,
     name,
     description: readString(obj["description"]) ?? null,
     previewUrl: readString(obj["preview_url"]) ?? readString(obj["previewUrl"]) ?? null,
-    category: readString(obj["category"]) ?? null,
+    category: readString(obj["category"]) ?? providerType ?? null,
     labels: readLabels(obj["labels"]),
   };
 }
@@ -491,7 +503,19 @@ async function fetchProviderVoices(cfg: TTSConfig): Promise<TTSVoicesResponse> {
   const base = configuredBaseUrl(cfg);
 
   if (cfg.source === "pockettts") {
-    return fallbackVoices(cfg.source);
+    const res = await safeFetch(`${pocketTtsV1BaseUrl(base)}/voices`, {
+      headers: optionalBearerHeaders(cfg.apiKey),
+      signal: AbortSignal.timeout(10_000),
+      policy: {
+        allowLocal: true,
+        allowedProtocols: ["https:", "http:"],
+        flagName: "TTS_LOCAL_URLS_ENABLED",
+      },
+      maxResponseBytes: 2 * 1024 * 1024,
+    });
+    if (!res.ok) return fallbackVoices(cfg.source);
+    const voices = mergeVoiceOptions(parseVoiceOptions(await res.json()));
+    return voices.length > 0 ? responseFromVoiceOptions(cfg.source, voices, true) : fallbackVoices(cfg.source);
   }
 
   if (cfg.source === "elevenlabs") {

@@ -67,6 +67,7 @@ const BotBrowserView = lazy(() =>
 const GameAssetsBrowserView = lazy(() =>
   import("../game-assets/GameAssetsBrowserView").then((module) => ({ default: module.GameAssetsBrowserView })),
 );
+const NoodleView = lazy(() => import("../noodle/NoodleView").then((module) => ({ default: module.NoodleView })));
 const RightPanel = lazy(() => import("./RightPanel").then((module) => ({ default: module.RightPanel })));
 const TrackerDataSidebar = lazy(() =>
   import("./TrackerDataSidebar").then((module) => ({ default: module.TrackerDataSidebar })),
@@ -378,6 +379,7 @@ export function AppShell() {
   const regexDetailId = useUIStore((s) => s.regexDetailId);
   const botBrowserOpen = useUIStore((s) => s.botBrowserOpen);
   const gameAssetsBrowserOpen = useUIStore((s) => s.gameAssetsBrowserOpen);
+  const noodleOpen = useUIStore((s) => s.noodleOpen);
   const hasCompletedOnboarding = useUIStore((s) => s.hasCompletedOnboarding);
   const activeChatId = useChatStore((s) => s.activeChatId);
   const activeChat = useChatStore((s) => s.activeChat);
@@ -546,12 +548,13 @@ export function AppShell() {
     <LorebookEditor />
   ) : null;
 
-  const showAmbientDecor = isPageActive && !activeChatId && !detailView && !botBrowserOpen && !gameAssetsBrowserOpen;
+  const showAmbientDecor =
+    isPageActive && !activeChatId && !detailView && !botBrowserOpen && !gameAssetsBrowserOpen && !noodleOpen;
   const hasDetailView = detailView != null;
   const trackerPanelModeAvailable = activeChat?.mode === "roleplay" || activeChat?.mode === "visual_novel";
   const trackerPanelActive = trackerPanelEnabled && trackerPanelOpen;
   const trackerPanelSurfaceAvailable =
-    trackerPanelModeAvailable && !botBrowserOpen && !gameAssetsBrowserOpen && !hasDetailView;
+    trackerPanelModeAvailable && !botBrowserOpen && !gameAssetsBrowserOpen && !noodleOpen && !hasDetailView;
   const trackerPanelVisible = trackerPanelActive && trackerPanelSurfaceAvailable;
 
   const professorMariFloatingActive = hasDetailView && hasProfessorMariFloatingFollowup();
@@ -902,7 +905,17 @@ export function AppShell() {
             }
           >
             <Suspense fallback={<MainPaneFallback />}>
-              {shellOverlayMode ? <ChatArea /> : (detailView ?? <ChatArea />)}
+              {shellOverlayMode ? (
+                noodleOpen ? (
+                  <NoodleView />
+                ) : (
+                  <ChatArea />
+                )
+              ) : noodleOpen ? (
+                <NoodleView />
+              ) : (
+                (detailView ?? <ChatArea />)
+              )}
             </Suspense>
           </div>
           <Suspense fallback={null}>
