@@ -491,6 +491,10 @@ export interface ChatMetadata {
   gameStoryboardAutoIllustrationsEnabled?: boolean;
   /** When true, completed Game Mode GM turns automatically create storyboard keyframe videos. */
   gameStoryboardAutoGenerationEnabled?: boolean;
+  /** Target number of Game Mode storyboard keyframes to create per GM turn. */
+  gameStoryboardKeyframeCount?: number;
+  /** Per-chat storyboard animation clip duration in seconds. Null/omitted uses Video Generation settings. */
+  gameStoryboardAnimationDurationSeconds?: number | null;
   /** How the Game Mode storyboard viewer is displayed in the game surface. */
   gameStoryboardViewerDisplayMode?: GameStoryboardViewerDisplayMode;
   /** Selected Game Mode storyboard prompt template for image-only auto storyboards. */

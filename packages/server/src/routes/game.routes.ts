@@ -102,8 +102,13 @@ import {
   VIDEO_GENERATION_SETTINGS_KEY,
   VIDEO_DEFAULTS_STORAGE_KEY,
   GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MAX,
+  GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MIN,
   GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES,
   GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_KEYFRAME_COUNT_DEFAULT,
+  GAME_STORYBOARD_KEYFRAME_COUNT_MAX,
+  GAME_STORYBOARD_KEYFRAME_COUNT_MIN,
   createDefaultVideoGenerationProfile,
   inferVideoSource,
   normalizeVideoGenerationUserSettings,
@@ -4547,9 +4552,23 @@ function normalizeStoryboardAspectRatio(
   return value === "9:16" || value === "16:9" ? value : fallback;
 }
 
+function clampStoryboardDuration(value: number): number {
+  return Math.min(
+    GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MAX,
+    Math.max(GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MIN, Math.trunc(value)),
+  );
+}
+
 function normalizeStoryboardDuration(value: unknown, fallback: number): number {
   const parsed = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
-  return Number.isFinite(parsed) ? Math.min(15, Math.max(1, Math.trunc(parsed))) : fallback;
+  return Number.isFinite(parsed) ? clampStoryboardDuration(parsed) : clampStoryboardDuration(fallback);
+}
+
+function normalizeStoryboardKeyframeCount(value: unknown, fallback = GAME_STORYBOARD_KEYFRAME_COUNT_DEFAULT): number {
+  const parsed = typeof value === "number" ? value : Number.parseInt(String(value ?? ""), 10);
+  return Number.isFinite(parsed)
+    ? Math.min(GAME_STORYBOARD_KEYFRAME_COUNT_MAX, Math.max(GAME_STORYBOARD_KEYFRAME_COUNT_MIN, Math.trunc(parsed)))
+    : fallback;
 }
 
 function compactStoryboardText(value: unknown, max: number): string {
@@ -4847,7 +4866,7 @@ function fallbackStoryboardPlan(args: {
   maxVisibleCharacters?: number;
 }): PlannedStoryboard {
   const cleanNarration = compactStoryboardText(args.sourceNarration, 2000);
-  const frameCount = Math.min(6, Math.max(2, args.keyframeCount));
+  const frameCount = normalizeStoryboardKeyframeCount(args.keyframeCount);
   const sentences = cleanNarration.split(/(?<=[.!?])\s+/).filter(Boolean);
   const chunks = Array.from({ length: frameCount }, (_, index) => {
     if (args.sections.length > 0) {
@@ -4923,7 +4942,7 @@ function sanitizeStoryboardPlan(
   const root = asStoryboardRecord(raw);
   const rawKeyframes = Array.isArray(root.keyframes) ? root.keyframes : [];
   const fallback = fallbackStoryboardPlan(args);
-  const keyframeCount = Math.min(6, Math.max(2, args.keyframeCount));
+  const keyframeCount = normalizeStoryboardKeyframeCount(args.keyframeCount);
   const frames = rawKeyframes
     .map((rawFrame, index): PlannedStoryboardKeyframe | null => {
       const frame = asStoryboardRecord(rawFrame);
@@ -4985,9 +5004,9 @@ function sanitizeStoryboardPlan(
       };
     })
     .filter((frame): frame is PlannedStoryboardKeyframe => Boolean(frame))
-    .slice(0, Math.max(keyframeCount, 2));
+    .slice(0, keyframeCount);
 
-  if (frames.length < 2) return fallback;
+  if (frames.length < 1) return fallback;
 
   return {
     title: compactStoryboardText(root.title, 160) || fallback.title,
@@ -9920,8 +9939,18 @@ export async function gameRoutes(app: FastifyInstance) {
       )
       .max(200)
       .optional(),
-    keyframeCount: z.number().int().min(2).max(6).optional().default(4),
-    durationSeconds: z.number().int().min(1).max(15).optional(),
+    keyframeCount: z
+      .number()
+      .int()
+      .min(GAME_STORYBOARD_KEYFRAME_COUNT_MIN)
+      .max(GAME_STORYBOARD_KEYFRAME_COUNT_MAX)
+      .optional(),
+    durationSeconds: z
+      .number()
+      .int()
+      .min(GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MIN)
+      .max(GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MAX)
+      .optional(),
     aspectRatio: z.enum(["16:9", "9:16"]).optional().default("16:9"),
     generateVideos: z.boolean().optional(),
     debugMode: z.boolean().optional().default(false),
@@ -9979,10 +10008,6 @@ export async function gameRoutes(app: FastifyInstance) {
       const videoSettings = normalizeVideoGenerationUserSettings(
         await createAppSettingsStorage(app.db).get(VIDEO_GENERATION_SETTINGS_KEY),
       );
-      const storyboardDurationSeconds = Math.min(
-        15,
-        Math.max(1, Math.trunc(input.durationSeconds ?? videoSettings.sceneVideoDurationSeconds)),
-      );
       await recoverStaleGameStoryboards(storyboards, storyboardStaleRenderCutoff(), "storyboard generate");
 
       const chat = await chats.getById(input.chatId);
@@ -10000,6 +10025,14 @@ export async function gameRoutes(app: FastifyInstance) {
       const sourceSections = normalizeStoryboardSections(input.sections, sourceNarration);
 
       const meta = parseMeta(chat.metadata);
+      const storyboardDurationSeconds = normalizeStoryboardDuration(
+        input.durationSeconds ?? meta.gameStoryboardAnimationDurationSeconds,
+        videoSettings.sceneVideoDurationSeconds,
+      );
+      const storyboardKeyframeCount = normalizeStoryboardKeyframeCount(
+        input.keyframeCount,
+        normalizeStoryboardKeyframeCount(meta.gameStoryboardKeyframeCount),
+      );
       const generateStoryboardVideos = input.generateVideos ?? meta.gameStoryboardAutoGenerationEnabled === true;
       const enableGen = !!meta.enableSpriteGeneration;
       const imgConnId = await resolveGameImageConnectionId(meta, agents);
@@ -10057,7 +10090,7 @@ export async function gameRoutes(app: FastifyInstance) {
         latestState: fallbackState,
         sourceNarration,
         sections: sourceSections,
-        keyframeCount: input.keyframeCount,
+        keyframeCount: storyboardKeyframeCount,
         durationSeconds: storyboardDurationSeconds,
         aspectRatio: input.aspectRatio,
         generateVideos: generateStoryboardVideos,
@@ -10097,7 +10130,7 @@ export async function gameRoutes(app: FastifyInstance) {
         plan = sanitizeStoryboardPlan(parseJSON(rawPlan), {
           sourceNarration,
           sections: sourceSections,
-          keyframeCount: input.keyframeCount,
+          keyframeCount: storyboardKeyframeCount,
           durationSeconds: storyboardDurationSeconds,
           aspectRatio: input.aspectRatio,
           allowedCharacterNames: storyboardCharacterContext.allowedCharacterNames,
@@ -10112,7 +10145,7 @@ export async function gameRoutes(app: FastifyInstance) {
         plan = fallbackStoryboardPlan({
           sourceNarration,
           sections: sourceSections,
-          keyframeCount: input.keyframeCount,
+          keyframeCount: storyboardKeyframeCount,
           durationSeconds: storyboardDurationSeconds,
           aspectRatio: input.aspectRatio,
           allowedCharacterNames: storyboardCharacterContext.allowedCharacterNames,

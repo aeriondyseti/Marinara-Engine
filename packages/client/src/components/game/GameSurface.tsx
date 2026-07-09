@@ -121,6 +121,12 @@ import type {
 } from "@marinara-engine/shared";
 import type { SceneSegmentEffect } from "@marinara-engine/shared";
 import {
+  GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_DEFAULT,
+  GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MAX,
+  GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MIN,
+  GAME_STORYBOARD_KEYFRAME_COUNT_DEFAULT,
+  GAME_STORYBOARD_KEYFRAME_COUNT_MAX,
+  GAME_STORYBOARD_KEYFRAME_COUNT_MIN,
   PROFESSOR_MARI_ID,
   formatTextQuotes,
   normalizeRpgStatPools,
@@ -243,6 +249,31 @@ const STORYBOARD_VIEWER_PRESET_WIDTH: Record<StoryboardViewerSize, number> = {
 const STORYBOARD_VIEWER_VERTICAL_CHROME = 116;
 const STORYBOARD_VIEWER_CONTROL_BUTTON =
   "flex h-7 w-7 items-center justify-center rounded-md border border-white/10 bg-white/10 text-white/70 transition-colors hover:bg-white/20 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-white/10";
+
+function normalizeGameStoryboardKeyframeCount(value: unknown): number {
+  if (value == null || value === "") return GAME_STORYBOARD_KEYFRAME_COUNT_DEFAULT;
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return GAME_STORYBOARD_KEYFRAME_COUNT_DEFAULT;
+  return Math.max(
+    GAME_STORYBOARD_KEYFRAME_COUNT_MIN,
+    Math.min(GAME_STORYBOARD_KEYFRAME_COUNT_MAX, Math.trunc(numeric)),
+  );
+}
+
+function hasGameStoryboardAnimationDuration(value: unknown): boolean {
+  if (value == null || value === "") return false;
+  const numeric = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numeric);
+}
+
+function normalizeGameStoryboardAnimationDuration(value: unknown): number {
+  if (!hasGameStoryboardAnimationDuration(value)) return GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_DEFAULT;
+  const numeric = typeof value === "number" ? value : Number(value);
+  return Math.max(
+    GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MIN,
+    Math.min(GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MAX, Math.trunc(numeric)),
+  );
+}
 
 function nextStoryboardViewerSize(size: StoryboardViewerSize): StoryboardViewerSize {
   if (size === "small") return "medium";
@@ -3678,6 +3709,13 @@ function GameSurfaceComponent({
   const gameStoryboardAutoAnimationsEnabled = chatMeta.gameStoryboardAutoGenerationEnabled === true;
   const gameStoryboardAutoGenerationEnabled =
     gameStoryboardAutoIllustrationsEnabled || gameStoryboardAutoAnimationsEnabled;
+  const gameStoryboardKeyframeCount = normalizeGameStoryboardKeyframeCount(chatMeta.gameStoryboardKeyframeCount);
+  const gameStoryboardAnimationDurationConfigured = hasGameStoryboardAnimationDuration(
+    chatMeta.gameStoryboardAnimationDurationSeconds,
+  );
+  const gameStoryboardAnimationDurationSeconds = normalizeGameStoryboardAnimationDuration(
+    chatMeta.gameStoryboardAnimationDurationSeconds,
+  );
   const gameImageUseAvatarReferences = chatMeta.gameImageUseAvatarReferences !== false;
   const gameImageIncludeCharacterAppearance = chatMeta.gameImageIncludeCharacterAppearance !== false;
 
@@ -5515,6 +5553,11 @@ function GameSurfaceComponent({
         messageId: latestAssistantMsg.id,
         swipeIndex: latestAssistantSwipeIndex,
         sections: latestAssistantStoryboardSections,
+        keyframeCount: gameStoryboardKeyframeCount,
+        durationSeconds:
+          gameStoryboardAutoAnimationsEnabled && gameStoryboardAnimationDurationConfigured
+            ? gameStoryboardAnimationDurationSeconds
+            : undefined,
         generateVideos: gameStoryboardAutoAnimationsEnabled,
         debugMode: useUIStore.getState().debugMode,
       });
@@ -5533,8 +5576,11 @@ function GameSurfaceComponent({
     }
   }, [
     activeChatId,
+    gameStoryboardAnimationDurationConfigured,
+    gameStoryboardAnimationDurationSeconds,
     gameImageGenerationEnabled,
     gameStoryboardAutoAnimationsEnabled,
+    gameStoryboardKeyframeCount,
     generateTurnStoryboard,
     isStreaming,
     latestAssistantMsg?.id,
@@ -5563,6 +5609,10 @@ function GameSurfaceComponent({
       latestAssistantSwipeIndex,
       latestAssistantMsg.content.length,
       latestAssistantStoryboardSections.length,
+      gameStoryboardKeyframeCount,
+      gameStoryboardAutoAnimationsEnabled && gameStoryboardAnimationDurationConfigured
+        ? gameStoryboardAnimationDurationSeconds
+        : "default",
       lastSection?.index ?? 0,
       lastSection?.content.length ?? 0,
     ].join(":");
@@ -5575,6 +5625,11 @@ function GameSurfaceComponent({
         messageId: latestAssistantMsg.id,
         swipeIndex: latestAssistantSwipeIndex,
         sections: latestAssistantStoryboardSections,
+        keyframeCount: gameStoryboardKeyframeCount,
+        durationSeconds:
+          gameStoryboardAutoAnimationsEnabled && gameStoryboardAnimationDurationConfigured
+            ? gameStoryboardAnimationDurationSeconds
+            : undefined,
         generateVideos: gameStoryboardAutoAnimationsEnabled,
         debugMode: useUIStore.getState().debugMode,
       })
@@ -5586,9 +5641,12 @@ function GameSurfaceComponent({
       });
   }, [
     activeChatId,
+    gameStoryboardAnimationDurationConfigured,
+    gameStoryboardAnimationDurationSeconds,
     gameImageGenerationEnabled,
     gameStoryboardAutoAnimationsEnabled,
     gameStoryboardAutoGenerationEnabled,
+    gameStoryboardKeyframeCount,
     generateTurnStoryboard,
     isStreaming,
     latestAssistantMsg?.content,
