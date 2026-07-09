@@ -21,6 +21,10 @@ import {
   useUpdateChatMetadata,
   useUpdateSummaryEntry,
 } from "../../hooks/use-chats";
+import {
+  useChatSummaryPromptSettings,
+  useUpdateChatSummaryPromptSettings,
+} from "../../hooks/use-chat-summary-prompts";
 import { useRollingBackfillStore } from "../../stores/backfill.store";
 import {
   Check,
@@ -317,6 +321,8 @@ export function SummaryPopover({
   const summaryMaxTokensSaveRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
   const generateSummary = useGenerateSummary();
   const updateMeta = useUpdateChatMetadata();
+  const globalPromptSettings = useChatSummaryPromptSettings();
+  const updateGlobalPromptSettings = useUpdateChatSummaryPromptSettings();
   const { data: connectionsData } = useConnections();
   const updateSummaryEntry = useUpdateSummaryEntry();
   const deleteSummaryEntry = useDeleteSummaryEntry();
@@ -413,7 +419,8 @@ export function SummaryPopover({
   const selectedRangeCount = rangeHigh - rangeLow + 1;
   const hasMessages = totalMessageCount > 0;
   const rangeTooLarge = sourceMode === "range" && selectedRangeCount > MAX_SUMMARY_MESSAGES;
-  const canGenerate = hasMessages && !rangeTooLarge;
+  const globalPromptSettingsReady = globalPromptSettings.isSuccess;
+  const canGenerate = hasMessages && !rangeTooLarge && globalPromptSettingsReady;
   const sourceSummary =
     sourceMode === "range"
       ? `Messages ${rangeLow}-${rangeHigh}`
@@ -425,7 +432,20 @@ export function SummaryPopover({
         ? `Using ${Math.min(normalizedLastSize, totalMessageCount)} of ${totalMessageCount} messages`
         : "No messages yet";
   const rangeErrorText = `Choose ${MAX_SUMMARY_MESSAGES} messages or fewer.`;
-  const cleanedPromptTemplates = promptTemplates.filter(
+  const globalTemplates = globalPromptSettings.data?.templates ?? [];
+  const globalActivePromptTemplateId = globalPromptSettings.data?.activeTemplateId ?? null;
+  const hasGlobalPromptSettings = globalPromptSettings.data?.hasPersistedSettings === true;
+  const sourcePromptTemplates = !globalPromptSettingsReady
+    ? []
+    : hasGlobalPromptSettings
+      ? globalTemplates
+      : promptTemplates;
+  const resolvedActivePromptTemplateId = !globalPromptSettingsReady
+    ? null
+    : hasGlobalPromptSettings
+      ? globalActivePromptTemplateId
+      : activePromptTemplateId;
+  const cleanedPromptTemplates = sourcePromptTemplates.filter(
     (template) =>
       typeof template.id === "string" &&
       template.id.trim().length > 0 &&
@@ -433,8 +453,8 @@ export function SummaryPopover({
       typeof template.prompt === "string" &&
       template.prompt.trim().length > 0,
   );
-  const activePromptTemplate = activePromptTemplateId
-    ? cleanedPromptTemplates.find((template) => template.id === activePromptTemplateId)
+  const activePromptTemplate = resolvedActivePromptTemplateId
+    ? cleanedPromptTemplates.find((template) => template.id === resolvedActivePromptTemplateId)
     : null;
   const promptTemplateSummary = activePromptTemplate?.name ?? "Built-in default";
   const isEditingExistingTemplate = !!editingTemplateId;
@@ -581,7 +601,12 @@ export function SummaryPopover({
       setRangeStart(String(rangeLow));
       setRangeEnd(String(rangeHigh));
       generateSummary.mutate(
-        { chatId, rangeStartIndex: rangeLow, rangeEndIndex: rangeHigh, promptTemplateId: activePromptTemplateId },
+        {
+          chatId,
+          rangeStartIndex: rangeLow,
+          rangeEndIndex: rangeHigh,
+          promptTemplateId: resolvedActivePromptTemplateId,
+        },
         {
           onSuccess: (data) => {
             if (data.entry?.id) {
@@ -598,7 +623,7 @@ export function SummaryPopover({
     setLocalSize(String(normalizedLastSize));
     persistSummaryContextSize(normalizedLastSize);
     generateSummary.mutate(
-      { chatId, contextSize: normalizedLastSize, promptTemplateId: activePromptTemplateId },
+      { chatId, contextSize: normalizedLastSize, promptTemplateId: resolvedActivePromptTemplateId },
       {
         onSuccess: (data) => {
           if (data.entry?.id) {
@@ -619,12 +644,13 @@ export function SummaryPopover({
     rangeLow,
     persistSummaryContextSize,
     sourceMode,
-    activePromptTemplateId,
+    resolvedActivePromptTemplateId,
     persistSummaryMaxTokens,
     summaryMaxTokensDraft,
   ]);
 
   const handleBackfill = useCallback(async () => {
+    if (!globalPromptSettingsReady) return;
     try {
       await persistSummaryMaxTokens(summaryMaxTokensDraft);
     } catch {
@@ -635,12 +661,13 @@ export function SummaryPopover({
       summaryEntries: displayEntries,
       batchSize: normalizedAutomaticSummaryInterval,
       maxMessagesPerBatch: persistedContextSize,
-      promptTemplateId: activePromptTemplateId,
+      promptTemplateId: resolvedActivePromptTemplateId,
     });
   }, [
-    activePromptTemplateId,
+    resolvedActivePromptTemplateId,
     chatId,
     displayEntries,
+    globalPromptSettingsReady,
     normalizedAutomaticSummaryInterval,
     persistedContextSize,
     persistSummaryMaxTokens,
@@ -769,19 +796,26 @@ export function SummaryPopover({
   );
 
   const persistPromptTemplates = useCallback(
-    (templates: ChatSummaryPromptTemplate[], activeId: string | null) => {
-      updateMeta.mutate({
-        id: chatId,
-        summaryPromptTemplates: templates,
-        activeSummaryPromptTemplateId: activeId,
-      });
+    async (templates: ChatSummaryPromptTemplate[], activeId: string | null): Promise<boolean> => {
+      if (!globalPromptSettingsReady) return false;
+      try {
+        await updateGlobalPromptSettings.mutateAsync({
+          templates,
+          activeTemplateId: activeId,
+        });
+        return true;
+      } catch {
+        toast.error("Could not save global summary prompt settings.");
+        return false;
+      }
     },
-    [chatId, updateMeta],
+    [globalPromptSettingsReady, updateGlobalPromptSettings],
   );
 
   const handleSelectPromptTemplate = useCallback(
-    (templateId: string | null) => {
-      persistPromptTemplates(cleanedPromptTemplates, templateId);
+    async (templateId: string | null) => {
+      const saved = await persistPromptTemplates(cleanedPromptTemplates, templateId);
+      if (!saved) return;
       setTemplateSelectOpen(false);
     },
     [cleanedPromptTemplates, persistPromptTemplates],
@@ -822,7 +856,7 @@ export function SummaryPopover({
     handleDuplicatePromptTemplate(null);
   }, [activePromptTemplate, handleDuplicatePromptTemplate, handleEditPromptTemplate]);
 
-  const handleSavePromptTemplate = useCallback(() => {
+  const handleSavePromptTemplate = useCallback(async () => {
     if (!hasTemplateDraft) return;
     const trimmedName = templateNameDraft.trim().slice(0, 80);
     const trimmedPrompt = templatePromptDraft.trim();
@@ -839,12 +873,13 @@ export function SummaryPopover({
           },
         ];
     const nextActiveId = isEditingExistingTemplate
-      ? activePromptTemplateId
+      ? resolvedActivePromptTemplateId
       : nextTemplates[nextTemplates.length - 1]!.id;
-    persistPromptTemplates(nextTemplates, nextActiveId ?? null);
+    const saved = await persistPromptTemplates(nextTemplates, nextActiveId ?? null);
+    if (!saved) return;
     resetTemplateDraft();
   }, [
-    activePromptTemplateId,
+    resolvedActivePromptTemplateId,
     cleanedPromptTemplates,
     editingTemplateId,
     hasTemplateDraft,
@@ -861,17 +896,27 @@ export function SummaryPopover({
       if (!target) return;
       const confirmed = await showConfirmDialog({
         title: "Delete summary template?",
-        message: `Delete "${target.name}" from this chat? Existing summaries will stay unchanged.`,
+        message: `Delete "${target.name}" from global Roleplay summary prompts? Existing summaries will stay unchanged.`,
         confirmLabel: "Delete",
         cancelLabel: "Cancel",
         tone: "destructive",
       });
       if (!confirmed) return;
       const nextTemplates = cleanedPromptTemplates.filter((template) => template.id !== templateId);
-      persistPromptTemplates(nextTemplates, activePromptTemplateId === templateId ? null : activePromptTemplateId);
+      const saved = await persistPromptTemplates(
+        nextTemplates,
+        resolvedActivePromptTemplateId === templateId ? null : resolvedActivePromptTemplateId,
+      );
+      if (!saved) return;
       if (editingTemplateId === templateId) resetTemplateDraft();
     },
-    [activePromptTemplateId, cleanedPromptTemplates, editingTemplateId, persistPromptTemplates, resetTemplateDraft],
+    [
+      cleanedPromptTemplates,
+      editingTemplateId,
+      persistPromptTemplates,
+      resetTemplateDraft,
+      resolvedActivePromptTemplateId,
+    ],
   );
 
   const isGenerating = generateSummary.isPending;
@@ -1099,9 +1144,7 @@ export function SummaryPopover({
                       <button
                         type="button"
                         onClick={() => void handleBackfill()}
-                        disabled={
-                          totalMessageCount === 0
-                        }
+                        disabled={totalMessageCount === 0 || !globalPromptSettingsReady}
                         className="flex items-center gap-1.5 rounded-md bg-[var(--secondary)] px-2.5 py-1.5 text-[0.6875rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         <RefreshCw size="0.75rem" />
@@ -1126,7 +1169,8 @@ export function SummaryPopover({
                     <button
                       type="button"
                       onClick={handleEditActivePrompt}
-                      className="rounded-md px-2 py-1 text-xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                      disabled={!globalPromptSettingsReady || updateGlobalPromptSettings.isPending}
+                      className="rounded-md px-2 py-1 text-xs text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       Edit
                     </button>
@@ -1136,11 +1180,13 @@ export function SummaryPopover({
                         setTemplateEditorOpen((open) => !open);
                         if (templateEditorOpen) resetTemplateDraft();
                       }}
+                      disabled={!globalPromptSettingsReady}
                       className={cn(
                         "shrink-0 rounded-md px-2 py-1 text-xs transition-colors",
                         templateEditorOpen
                           ? "bg-[var(--accent)] text-[var(--foreground)] ring-1 ring-[var(--border)]"
                           : "text-[var(--muted-foreground)] hover:bg-[var(--accent)] hover:text-[var(--foreground)]",
+                        !globalPromptSettingsReady && "cursor-not-allowed opacity-50",
                       )}
                     >
                       {templateEditorOpen ? "Done" : "Templates"}
@@ -1152,7 +1198,8 @@ export function SummaryPopover({
                     <button
                       type="button"
                       onClick={() => setTemplateSelectOpen((open) => !open)}
-                      className="flex w-full min-w-0 items-center justify-between gap-2 rounded-md bg-[var(--card)] py-1 pl-2 pr-2 text-left truncate text-xs font-semibold text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                      disabled={!globalPromptSettingsReady}
+                      className="flex w-full min-w-0 items-center justify-between gap-2 rounded-md bg-[var(--card)] py-1 pl-2 pr-2 text-left truncate text-xs font-semibold text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-50"
                       aria-haspopup="listbox"
                       aria-expanded={templateSelectOpen}
                       aria-label="Summary prompt template"
@@ -1172,16 +1219,16 @@ export function SummaryPopover({
                         className="mt-1 max-h-40 overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--popover)] p-1 text-[var(--popover-foreground)] shadow-xl shadow-black/25"
                       >
                         <SummaryPromptSelectOption
-                          active={!activePromptTemplateId}
+                          active={!resolvedActivePromptTemplateId}
                           label="Built-in default"
-                          onSelect={() => handleSelectPromptTemplate(null)}
+                          onSelect={() => void handleSelectPromptTemplate(null)}
                         />
                         {cleanedPromptTemplates.map((template) => (
                           <SummaryPromptSelectOption
                             key={template.id}
-                            active={activePromptTemplateId === template.id}
+                            active={resolvedActivePromptTemplateId === template.id}
                             label={template.name}
-                            onSelect={() => handleSelectPromptTemplate(template.id)}
+                            onSelect={() => void handleSelectPromptTemplate(template.id)}
                           />
                         ))}
                       </div>
@@ -1190,7 +1237,8 @@ export function SummaryPopover({
                   <button
                     type="button"
                     onClick={() => handleDuplicatePromptTemplate(activePromptTemplate ?? null)}
-                    className="rounded-md p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)]"
+                    disabled={!globalPromptSettingsReady}
+                    className="rounded-md p-1.5 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--accent)] hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-50"
                     title="Copy current prompt to a new template"
                     aria-label="Copy current prompt to a new template"
                   >
@@ -1202,19 +1250,19 @@ export function SummaryPopover({
                   <div className="space-y-2 border-t border-[var(--border)] pt-2">
                     <div className="max-h-28 space-y-1 overflow-y-auto pr-0.5">
                       <SummaryPromptTemplateRow
-                        active={!activePromptTemplateId}
+                        active={!resolvedActivePromptTemplateId}
                         name="Built-in default"
                         detail="App default"
-                        onSelect={() => persistPromptTemplates(cleanedPromptTemplates, null)}
+                        onSelect={() => void persistPromptTemplates(cleanedPromptTemplates, null)}
                         onCopy={() => handleDuplicatePromptTemplate(null)}
                       />
                       {cleanedPromptTemplates.map((template) => (
                         <SummaryPromptTemplateRow
                           key={template.id}
-                          active={activePromptTemplateId === template.id}
+                          active={resolvedActivePromptTemplateId === template.id}
                           name={template.name}
                           detail={`${Math.ceil(template.prompt.length / 4)} tokens est.`}
-                          onSelect={() => persistPromptTemplates(cleanedPromptTemplates, template.id)}
+                          onSelect={() => void persistPromptTemplates(cleanedPromptTemplates, template.id)}
                           onCopy={() => handleDuplicatePromptTemplate(template)}
                           onEdit={() => handleEditPromptTemplate(template)}
                           onDelete={() => void handleDeletePromptTemplate(template.id)}
@@ -1225,7 +1273,8 @@ export function SummaryPopover({
                     <button
                       type="button"
                       onClick={handleNewPromptTemplate}
-                      className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-[var(--border)] bg-[var(--accent)]/35 px-2 py-1.5 text-[0.625rem] font-semibold text-[var(--foreground)] transition-colors hover:bg-[var(--accent)]"
+                      disabled={!globalPromptSettingsReady}
+                      className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-[var(--border)] bg-[var(--accent)]/35 px-2 py-1.5 text-[0.625rem] font-semibold text-[var(--foreground)] transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <Plus size="0.6875rem" />
                       New template
@@ -1257,8 +1306,12 @@ export function SummaryPopover({
                           </button>
                           <button
                             type="button"
-                            onClick={handleSavePromptTemplate}
-                            disabled={!hasTemplateDraft || updateMeta.isPending}
+                            onClick={() => void handleSavePromptTemplate()}
+                            disabled={
+                              !hasTemplateDraft ||
+                              updateGlobalPromptSettings.isPending ||
+                              !globalPromptSettingsReady
+                            }
                             className="flex items-center gap-1 rounded-md bg-[var(--secondary)] px-2 py-1 text-[0.625rem] font-semibold text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             <Save size="0.625rem" />

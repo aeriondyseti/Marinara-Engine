@@ -1894,6 +1894,7 @@ function renameInventoryItem<T extends { name: string; quantity: number }>(
 
 import {
   AlertTriangle,
+  ArrowRightLeft,
   BookOpen,
   CircleHelp,
   Feather,
@@ -2244,8 +2245,10 @@ interface GameSurfaceProps {
   }>;
   personaInfo?: PersonaInfo;
   chatBackground?: string | null;
+  connectedChatName?: string;
   onOpenSettings: (event?: ReactMouseEvent<HTMLElement>) => void;
   onCloseSettings: () => void;
+  onSwitchChat?: () => void;
   onDeleteMessage: (messageId: string) => void;
   multiSelectMode?: boolean;
   selectedMessageIds?: Set<string>;
@@ -2261,8 +2264,10 @@ function GameSurfaceComponent({
   characters,
   personaInfo,
   chatBackground,
+  connectedChatName,
   onOpenSettings,
   onCloseSettings,
+  onSwitchChat,
   onDeleteMessage,
   multiSelectMode = false,
   selectedMessageIds,
@@ -2567,6 +2572,10 @@ function GameSurfaceComponent({
     },
     [closeLocalFloatingWindows, onOpenSettings],
   );
+  const handleSwitchConnectedChat = useCallback(() => {
+    dismissOtherFloatingWindows();
+    onSwitchChat?.();
+  }, [dismissOtherFloatingWindows, onSwitchChat]);
   const handleCloseGalleryPanel = useCallback(() => {
     setGalleryOpen(false);
     setGalleryAnchor(null);
@@ -10184,6 +10193,16 @@ function GameSurfaceComponent({
                   <button onClick={handleOpenGalleryPanel} className={GAME_TOP_ICON_BUTTON} title="Gallery">
                     <Image size={14} />
                   </button>
+                  {onSwitchChat ? (
+                    <button
+                      onClick={handleSwitchConnectedChat}
+                      className={GAME_TOP_ICON_BUTTON}
+                      title={connectedChatName ? `Switch to ${connectedChatName}` : "Switch to connected chat"}
+                      aria-label={connectedChatName ? `Switch to ${connectedChatName}` : "Switch to connected chat"}
+                    >
+                      <ArrowRightLeft size={14} />
+                    </button>
+                  ) : null}
                   <button onClick={handleOpenSettingsPanel} className={GAME_TOP_ICON_BUTTON} title="Chat Settings">
                     <Settings2 size={14} />
                   </button>
@@ -10443,6 +10462,21 @@ function GameSurfaceComponent({
                         >
                           <Image size={14} />
                         </button>
+                        {onSwitchChat ? (
+                          <button
+                            onClick={() => {
+                              setMobileActionsOpen(false);
+                              handleSwitchConnectedChat();
+                            }}
+                            className={GAME_MOBILE_ICON_BUTTON}
+                            title={connectedChatName ? `Switch to ${connectedChatName}` : "Switch to connected chat"}
+                            aria-label={
+                              connectedChatName ? `Switch to ${connectedChatName}` : "Switch to connected chat"
+                            }
+                          >
+                            <ArrowRightLeft size={14} />
+                          </button>
+                        ) : null}
                         <button
                           onClick={(event) => {
                             handleOpenSettingsPanel(event);

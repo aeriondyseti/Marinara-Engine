@@ -260,6 +260,21 @@ export const ConversationMessage = memo(function ConversationMessage({
       : (msgPersona?.nameColor ?? personaInfo?.nameColor)
     : resolvedCharacterInfo?.nameColor;
 
+  // Conversation-only cosmetic display name (convoDisplayName). This component only
+  // ever mounts in Conversation mode, so reading it here can't leak into RP/Game.
+  // It's read live (character map / active persona), so renaming reflects on
+  // existing messages. Identity and macros keep the base `name`; only the visible
+  // label swaps. For personas we only have the *current* persona's live name, so we
+  // never stamp it onto a different persona's historical messages.
+  const convoDisplayName = isUser
+    ? plainUserMessages
+      ? undefined
+      : !msgPersona || msgPersona.personaId === personaInfo?.id
+        ? personaInfo?.convoDisplayName
+        : undefined
+    : primaryCharInfo?.convoDisplayName;
+  const headerDisplayName = convoDisplayName && convoDisplayName.trim() ? convoDisplayName : displayName;
+
   const macroContext = useMemo(
     () => ({
       userName: displayName,
@@ -681,7 +696,7 @@ export const ConversationMessage = memo(function ConversationMessage({
             height: anchor.height,
           },
           avatarUrl,
-          displayName,
+          displayName: headerDisplayName,
           nameColor: nameColor ?? null,
           status: aboutMeTarget.kind === "character" ? (resolvedCharacterInfo?.conversationStatus ?? null) : null,
           activity: aboutMeTarget.kind === "character" ? (resolvedCharacterInfo?.conversationActivity ?? null) : null,
@@ -693,7 +708,7 @@ export const ConversationMessage = memo(function ConversationMessage({
     extra,
     isUser,
     isGrouped: !!isGrouped,
-    displayName,
+    displayName: headerDisplayName,
     avatarUrl,
     avatarCropStyle,
     nameColor,

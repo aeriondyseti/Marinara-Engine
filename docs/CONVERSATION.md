@@ -71,6 +71,74 @@ The chat settings drawer has an **Impersonate** section with global defaults for
 
 For per-chat prompt tuning, use `/impersonate_prompt "your prompt"` or `/impersonate_prompt reset`.
 
+## Conversation profiles: display name, about me, and behavior
+
+Conversation Mode gives every participant — characters **and** your persona — a lightweight, Discord-style profile: a **display name**, an **about me**, and (for characters) a **behavior directive** that only applies here. These fields live on the character card (under a **Convo** tab) and in the persona editor, and they are **strictly Conversation-only**: they are never read, sent, or resolved in Roleplay, Visual Novel, or Game mode, even when the same card is used there.
+
+### Convo display name
+
+An optional name shown as the sender label above a character's (or your persona's) messages in Conversation, in place of the card/persona name. Leave it blank to fall back to the character card name or persona name.
+
+- Set it in the character card's **Convo** tab (**Convo Display Name**) or in the **Persona editor**.
+- It updates live — renaming reflects on existing messages in the chat.
+- The `{{convo_display}}` macro resolves to the responding character's convo display name (empty outside Conversation).
+- **Declare this name on the card in the prompt** (character-only toggle): when on, the character's card is prefixed with a line like `Conversation display name: Pancake`, so the model can map the name it sees in chat to that specific card. Handy in group chats where display names diverge from card names.
+
+Clicking a participant's **avatar or name** opens their profile popout (below).
+
+### About me
+
+A short, self-authored bio — a couple of lines, an inside joke, a single emoji, or nothing at all. There are two layers:
+
+- **Default (public)** — lives on the character card (**About Me** on the Convo tab) or on the persona. It's the cross-chat default and, being public, everyone in a chat can see it.
+- **Chat-specific override** — set from within one chat; applies only to that chat and **takes precedence** over the default there.
+
+**Viewing and editing:** click a participant's avatar or name in Conversation to open a Discord-style **profile popout** — blown-up avatar, presence, and their effective about me. From there:
+
+- **Edit** sets a **chat-specific override** for this chat (with an emoji picker; `:custom_emoji:` works too).
+- **Clear** removes the override and reverts to the public default.
+- **Revert** (while editing) undoes your changes back to what the field held when you opened the editor.
+
+The default about me is edited on the card/persona; the popout only changes the per-chat override.
+
+**In the prompt:** about mes are auto-injected for all present participants each turn, as a short "participant profiles" block, with a per-chat off-switch in chat settings if you'd rather place them yourself. The macros `{{char_about}}` (responding character) and `{{persona_about}}` (your persona) drop them exactly where you want in a custom prompt (both empty outside Conversation).
+
+### AI Write (and where it draws from)
+
+Both the card editor and the in-chat popout have an **AI Write** button that drafts an in-character about me. It's deliberately allowed to come back sparse, joking, or empty — it won't force a tidy, earnest bio, and it won't silently overwrite existing text with a blank result.
+
+A **⚙️** beside AI Write picks which sources the draft draws on (defaults to **Personality** only):
+
+- Card fields — **Description, Personality, Scenario, Backstory, Appearance**
+- **Convo behavior** directive
+- **Lorebook entries** — the character's lorebook entries. In the **card editor**, turning this on expands to a checkbox list so you can pick exactly which entries feed the bio (useful when a card leaves its fields blank and keeps everything in the lorebook). The in-chat popout points you back to the card editor to make that selection.
+- **Chat context** — recent messages from this chat, with a message-limit. Only available in the in-chat editor (a chat-specific about me), since the card editor has no chat to read.
+
+Different creators build cards differently — some leave the card fields empty and live entirely in a lorebook — so the source list is per-character and saved on the card.
+
+### Convo behavior
+
+A Conversation-only instruction for how a character behaves in chat (e.g. "keep replies short and lowercase; text like a real person, not a narrator"), plus a **placement** control for where it lands in the prompt:
+
+- **Constant — before / after the card**
+- **Append to / Prepend to / Replace post-history**
+- **Only where `{{convo_behavior}}` is placed** — for full manual control in a custom prompt
+
+Set it on the character card's Convo tab. Like the other profile fields, it never reaches RP/VN/Game prompts.
+
+### Characters that keep their own about me current
+
+Two **opt-in**, Conversation-only ways for a character to update its own about me mid-conversation:
+
+- **About Me Keeper agent** — an opt-in post-processing agent (configurable cadence) that lets a character refresh its about me over time. It can update either its **public** profile (routed through the normal character-card approval modal, so you review it first) or a **chat-specific** override (applied automatically to that chat). The prompt keeps the public/private distinction explicit and the results authentic. Enable it in the chat's agent settings.
+- **`update_about_me` command** — an opt-in function-call tool (**Chat Settings -> Commands -> Function Calling**) a character can call in-character to update its own about me mid-turn, choosing `public` or `chat` scope. Off by default.
+
+Both are the character speaking for itself, so they only ever touch the acting character's own about me — a character can't rewrite someone else's.
+
+### Theming the profile popout
+
+The popout is fully CSS-themable from a character's or persona's **Creator Notes** via `mari-about-me-*` hooks. See the [Card CSS Theming Guide -> About Me Profile Popout](card-css-theming-guide.md#about-me-profile-popout-conversation-only).
+
 ## Conversation-specific features
 
 These are features Conversation Mode has that other modes don't.

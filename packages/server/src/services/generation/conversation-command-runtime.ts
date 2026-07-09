@@ -244,7 +244,7 @@ export async function buildConversationCommandsReminder(args: {
   // Scene command: only in conversation mode
   if (sceneCommandEnabled && chatMode === "conversation") {
     addCommandLines(
-      `- [scene: scenario="brief description of what happens in this scene", background="place"] - initiate a mini-roleplay scene branching from this conversation. The system will plan and create a complete immersive scene for you.`,
+      `- [scene: scenario="brief description of what happens in this scene", background="place"] - request a mini-roleplay scene branching from this conversation. The user will be asked for POV, tense, and optional prompt wishes before the system plans and creates the scene.`,
       `   Example: You agree to go stargazing → include [scene: scenario="lying on a blanket in the park, looking at the stars together", background="park"]`,
       `   WHEN TO USE: You SHOULD proactively trigger a scene whenever the conversation naturally leads to an activity, outing, or situation that would be more immersive as a scene. Examples:`,
       `   - {{user}} says "I'm coming over" or "Let's go to the park" → trigger a scene for arriving/being at that location.`,

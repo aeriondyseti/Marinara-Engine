@@ -28,6 +28,7 @@ import type {
   SceneForkResponse,
   ScenePlanRequest,
   ScenePlanResponse,
+  ScenePromptPreferences,
   SceneFullPlan,
 } from "@marinara-engine/shared";
 
@@ -43,6 +44,43 @@ const SCENE_GUIDELINES = [
   `    - Portray violence in gory detail, blood squirting around like in a slasher movie.`,
   `</guidelines>`,
 ].join("\n");
+
+function normalizeScenePromptPreferences(value: unknown): ScenePromptPreferences | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const pov =
+    record.pov === "first_person" || record.pov === "second_person" || record.pov === "third_person"
+      ? record.pov
+      : null;
+  const tense =
+    record.tense === "past" || record.tense === "present" || record.tense === "future" ? record.tense : null;
+  if (!pov || !tense) return null;
+  const extraInstructions =
+    typeof record.extraInstructions === "string" ? record.extraInstructions.trim().slice(0, 2000) : "";
+  return { pov, tense, extraInstructions };
+}
+
+function formatScenePromptPreferences(preferences: ScenePromptPreferences | null): string {
+  if (!preferences) return "";
+  const povLabel: Record<ScenePromptPreferences["pov"], string> = {
+    first_person: "First Person",
+    second_person: "Second Person",
+    third_person: "Third Person",
+  };
+  const tenseLabel: Record<ScenePromptPreferences["tense"], string> = {
+    past: "Past",
+    present: "Present",
+    future: "Future",
+  };
+  return [
+    `User scene-writing preferences:`,
+    `- POV: ${povLabel[preferences.pov]}`,
+    `- Tense: ${tenseLabel[preferences.tense]}`,
+    preferences.extraInstructions ? `- Extra instructions: ${preferences.extraInstructions}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
 
 // ──────────────────────────────────────────────
 // Helpers (reused from encounter pattern)
@@ -704,6 +742,8 @@ export async function sceneRoutes(app: FastifyInstance) {
   // including system prompt, first message, background, rating, etc.
   app.post<{ Body: ScenePlanRequest }>("/plan", async (req, reply) => {
     const { chatId, prompt, connectionId } = req.body;
+    const promptPreferences = normalizeScenePromptPreferences(req.body.promptPreferences);
+    const promptPreferencesText = formatScenePromptPreferences(promptPreferences);
 
     const chat = await chats.getById(chatId);
     if (!chat) return reply.status(404).send({ error: "Chat not found" });
@@ -769,6 +809,7 @@ export async function sceneRoutes(app: FastifyInstance) {
           prompt
             ? `Plan a complete roleplay scene based on this request: "${prompt}"`
             : `Plan a complete roleplay scene based purely on the recent conversation above. Invent a compelling scenario that naturally extends the current situation, characters, and mood.`,
+          promptPreferencesText ? `\n${promptPreferencesText}` : "",
           ``,
           `Return ONLY a JSON object with ALL of the following fields:`,
           `{`,
@@ -778,7 +819,7 @@ export async function sceneRoutes(app: FastifyInstance) {
           `  "firstMessage": "The first in-character message from the main character that kicks off the scene. Write 2-4 paragraphs of immersive roleplay prose. This should feel like the opening of a story — set the scene through the character's actions, dialogue, and inner thoughts.",`,
           `  "background": "Pick a background filename from the available list that best matches the scene, or null if none fit.",`,
           `  "characterIds": ["array of character IDs to include in the scene — use the IDs from available_character_ids"],`,
-          `  "systemPrompt": "A custom system prompt for this specific scene. Include: writing style (e.g. literary, casual, poetic), narration POV, tense (past, present), and what the AI should focus on. Tailor it to the mood and genre of the scene. Choose ONE POV and use it consistently in both this prompt AND the firstMessage: first-person (from character's perspective, using 'I'), second-person (from user's perspective, addressing the user as 'you'), or third-person limited (from user's or character's perspective, using 'he/she/they'). 3-6 sentences.",`,
+          `  "systemPrompt": "A custom system prompt for this specific scene. Include: writing style (e.g. literary, casual, poetic), narration POV, tense (past, present, future), and what the AI should focus on. Tailor it to the mood and genre of the scene. Use the user's selected POV and tense when provided; otherwise choose ONE POV and use it consistently in both this prompt AND the firstMessage: first-person (from character's perspective, using 'I'), second-person (from user's perspective, addressing the user as 'you'), or third-person limited (from user's or character's perspective, using 'he/she/they'). 3-6 sentences.",`,
           `  "rating": "sfw" or "nsfw" — based on whether the scene's themes require mature content`,
           `  "relationshipHistory": "A concise 2-4 sentence summary of who the characters are to each other and their shared history so far — their dynamic, rapport, tensions, and key events. This gives the scene writer awareness of the relationship context.",`,
           `  "participationGuide": "A short (1-3 sentence), fun, second-person note telling the USER how to play this scene. Examples: 'This is freeform — do whatever feels right!', 'You will face tough choices. Think carefully before you act.', 'Try to keep your cool — one wrong word could set them off.', 'Explore the environment. There are secrets to find.' Be creative and match the scene tone."`,
@@ -790,6 +831,9 @@ export async function sceneRoutes(app: FastifyInstance) {
           `- The "background" must be an EXACT filename from the available backgrounds list (case-sensitive, including extension). If no background fits, set it to null. Do NOT invent or modify filenames.`,
           `- The "firstMessage" should be written in character, not as a narrator. Make it engaging.`,
           `- The "systemPrompt" defines HOW the roleplay is written. Be specific about style.`,
+          promptPreferences
+            ? `- The user's selected POV and tense are mandatory. Use them consistently in both "systemPrompt" and "firstMessage".`
+            : "",
           `- The POV chosen in "systemPrompt" MUST match the POV used in "firstMessage". Do not say "third-person limited" in the prompt and then write "firstMessage" in second-person.`,
           `- Do NOT use asterisks or markdown formatting in any field. Write plain prose.`,
           `- Only return the JSON object, no other text.`,

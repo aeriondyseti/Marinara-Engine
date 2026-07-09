@@ -108,6 +108,7 @@ import {
   normalizeSpriteExpressionLabel,
   normalizeRpgStatPools,
   syncRpgHpFromPools,
+  type AboutMeSourceConfig,
   type CharacterCardVersion,
   type CharacterData,
   type ConversationCallCharacterVideoClipKind,
@@ -1046,7 +1047,12 @@ export function CharacterEditor() {
               <CharacterCardTab formData={formData} updateField={updateField} updateExtension={updateExtension} />
             )}
             {activeTab === "convo" && (
-              <ConvoTab formData={formData} updateExtension={updateExtension} kind="character" />
+              <ConvoTab
+                formData={formData}
+                updateExtension={updateExtension}
+                kind="character"
+                characterId={characterId ?? undefined}
+              />
             )}
             {activeTab === "advanced" && (
               <AdvancedTab
@@ -1254,18 +1260,29 @@ function ConvoTab({
   formData,
   updateExtension,
   kind,
+  characterId,
 }: {
   formData: CharacterData;
   updateExtension: (key: string, value: unknown) => void;
   kind: "character" | "persona";
+  characterId?: string;
 }) {
   const ext = formData.extensions;
   return (
+    // Key by the edited character so all transient state (revert snapshot, open
+    // panels, connection choice) resets on switch — the editor reuses this instance.
     <ConvoProfileFields
+      key={characterId ?? "new-character"}
       kind={kind}
+      entityKey={characterId ?? "new-character"}
       baseName={formData.name}
       displayName={(ext.convoDisplayName as string) ?? ""}
       onDisplayNameChange={(v) => updateExtension("convoDisplayName", v)}
+      displayNameInCard={ext.convoDisplayNameInCard === true}
+      onDisplayNameInCardChange={(v) => updateExtension("convoDisplayNameInCard", v)}
+      characterId={characterId}
+      sources={ext.aboutMeSources as AboutMeSourceConfig | undefined}
+      onSourcesChange={(v) => updateExtension("aboutMeSources", v)}
       aboutMe={(ext.aboutMe as string) ?? ""}
       onAboutMeChange={(v) => updateExtension("aboutMe", v)}
       behavior={ext.convoBehavior as ConvoBehaviorConfig | undefined}
@@ -1818,7 +1835,7 @@ function DialogueTab({
           rows={6}
           title="First Message"
           className="w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--secondary)] p-4 text-sm leading-relaxed outline-none placeholder:text-[var(--muted-foreground)]/40 focus:border-[var(--primary)]/40 focus:ring-1 focus:ring-[var(--primary)]/20"
-          placeholder="What does the character say when they first meet someone? Use *asterisks* for actions…"
+          placeholder="What is the character's first message when a new chat starts?"
         />
       </div>
 

@@ -10,6 +10,7 @@ import { formatAgentFailuresToast, toAgentFailure, type AgentFailure } from "../
 import { chatBackgroundMetadataToUrl } from "../lib/backgrounds";
 import { formatGenerationParameterError } from "../lib/generation-parameter-errors";
 import { requestChatScrollToBottom } from "../lib/chat-scroll-events";
+import { startSceneWithPromptPreferences } from "../lib/scene-generation";
 import { agentKeys } from "./use-agents";
 import { discardPendingGameStatePatch } from "./use-game-state-patcher";
 import { turnGameKeys } from "./turn-game-keys";
@@ -2233,6 +2234,36 @@ export function useGenerate() {
                   .getState()
                   .setChatBackground(`/api/backgrounds/file/${encodeURIComponent(sceneData.background)}`);
               }
+              break;
+            }
+
+            case "scene_requested": {
+              const sceneData = event.data as {
+                originChatId?: string;
+                prompt?: string;
+                background?: string | null;
+                plan?: string | null;
+                initiatorCharId?: string | null;
+                initiatorCharName?: string | null;
+              };
+              const sceneOriginChatId = sceneData.originChatId || params.chatId;
+              if (!isChatSurfaceVisible(sceneOriginChatId)) {
+                break;
+              }
+              void startSceneWithPromptPreferences({
+                chatId: sceneOriginChatId,
+                prompt: sceneData.prompt ?? "",
+                background: sceneData.background ?? null,
+                planHint: sceneData.plan ?? null,
+                initiatorCharId: sceneData.initiatorCharId ?? null,
+                initiatorCharName: sceneData.initiatorCharName ?? "Character",
+                connectionId: params.connectionId,
+                onCreated: () => {
+                  qc.invalidateQueries({ queryKey: chatKeys.all });
+                },
+              }).catch((error) => {
+                console.warn("[scene] Failed to handle requested scene:", error);
+              });
               break;
             }
 

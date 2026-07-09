@@ -10,6 +10,7 @@ import {
   type ImageStyleProfileSettings,
   type LorebookCategory,
   type QuoteFormat,
+  type ScenePromptPreferences,
 } from "@marinara-engine/shared";
 import { isCssGradient, RAINBOW_GRADIENT_PRESET } from "../lib/css-colors";
 import { announceChatFloatingUiDismiss } from "../lib/chat-floating-ui-events";
@@ -159,6 +160,11 @@ const DEFAULT_SUMMARY_POPOVER_SETTINGS: SummaryPopoverSettings = {
   rangeEnd: null,
   hideSummarisedMessages: false,
   collapseHiddenMessages: false,
+};
+const DEFAULT_SCENE_PROMPT_PREFERENCES: ScenePromptPreferences = {
+  pov: "third_person",
+  tense: "present",
+  extraInstructions: "",
 };
 
 function normalizeUserActivity(activity: string): string {
@@ -310,6 +316,21 @@ function normalizeSummaryPopoverSettings(value: unknown): SummaryPopoverSettings
     hideSummarisedMessages: raw.hideSummarisedMessages === true,
     collapseHiddenMessages: raw.collapseHiddenMessages === true,
   };
+}
+
+export function normalizeScenePromptPreferences(value: unknown): ScenePromptPreferences {
+  const raw = typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+  const pov =
+    raw.pov === "first_person" || raw.pov === "second_person" || raw.pov === "third_person"
+      ? raw.pov
+      : DEFAULT_SCENE_PROMPT_PREFERENCES.pov;
+  const tense =
+    raw.tense === "past" || raw.tense === "present" || raw.tense === "future"
+      ? raw.tense
+      : DEFAULT_SCENE_PROMPT_PREFERENCES.tense;
+  const extraInstructions =
+    typeof raw.extraInstructions === "string" ? raw.extraInstructions.trim().slice(0, 2000) : "";
+  return { pov, tense, extraInstructions };
 }
 
 export function normalizeConversationMessageStyle(value: unknown): ConversationMessageStyle {
@@ -599,6 +620,8 @@ interface UIState {
   editMessageOnDoubleClick: boolean;
   /** Persisted controls shown in the Chat Summary popover settings window. */
   summaryPopoverSettings: SummaryPopoverSettings;
+  /** Last-used preferences for generating character/user-initiated roleplay scenes. */
+  scenePromptPreferences: ScenePromptPreferences;
 
   // ── Text Appearance ──
   /** Color for narrator text in RP mode (empty = default amber) */
@@ -864,6 +887,7 @@ interface UIState {
   setEditLastMessageOnArrowUp: (v: boolean) => void;
   setEditMessageOnDoubleClick: (v: boolean) => void;
   setSummaryPopoverSettings: (settings: Partial<SummaryPopoverSettings>) => void;
+  setScenePromptPreferences: (preferences: ScenePromptPreferences) => void;
   setNarrationFontColor: (v: string) => void;
   setNarrationOpacity: (v: number) => void;
   setChatFontColor: (v: string) => void;
@@ -1064,6 +1088,7 @@ export function pickSyncedSettings(state: UIState) {
     editLastMessageOnArrowUp: state.editLastMessageOnArrowUp,
     editMessageOnDoubleClick: state.editMessageOnDoubleClick,
     summaryPopoverSettings: state.summaryPopoverSettings,
+    scenePromptPreferences: state.scenePromptPreferences,
     narrationFontColor: state.narrationFontColor,
     narrationOpacity: state.narrationOpacity,
     chatFontColor: state.chatFontColor,
@@ -1240,6 +1265,7 @@ export const useUIStore = create<UIState>()(
       editLastMessageOnArrowUp: true,
       editMessageOnDoubleClick: true,
       summaryPopoverSettings: DEFAULT_SUMMARY_POPOVER_SETTINGS,
+      scenePromptPreferences: DEFAULT_SCENE_PROMPT_PREFERENCES,
       narrationFontColor: "",
       narrationOpacity: 80,
       chatFontColor: "",
@@ -1815,6 +1841,8 @@ export const useUIStore = create<UIState>()(
             ...settings,
           }),
         })),
+      setScenePromptPreferences: (preferences) =>
+        set({ scenePromptPreferences: normalizeScenePromptPreferences(preferences) }),
       setNarrationFontColor: (v) => set({ narrationFontColor: v }),
       setNarrationOpacity: (v) => set({ narrationOpacity: Math.max(0, Math.min(100, v)) }),
       setChatFontColor: (v) => set({ chatFontColor: v }),
@@ -1979,7 +2007,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: "marinara-engine-ui",
-      version: 69,
+      version: 70,
       // Debounce localStorage writes to avoid sync I/O on every state change
       storage: createJSONStorage(() => {
         let timer: ReturnType<typeof setTimeout> | null = null;
@@ -2360,6 +2388,8 @@ export const useUIStore = create<UIState>()(
           persisted.ttsLineVolume = 50;
         }
         persisted.ttsLineVolume = Math.max(0, Math.min(100, Math.round(persisted.ttsLineVolume)));
+        // v69 -> v70: remember scene prompt setup choices.
+        persisted.scenePromptPreferences = normalizeScenePromptPreferences(persisted.scenePromptPreferences);
         // v42 -> v44: reconcile parallel v43 UI preference additions.
         if (version <= 43 && persisted.youtubePlayerEnabled === undefined) {
           persisted.youtubePlayerEnabled = true;
@@ -2609,6 +2639,7 @@ export const useUIStore = create<UIState>()(
         editLastMessageOnArrowUp: state.editLastMessageOnArrowUp,
         editMessageOnDoubleClick: state.editMessageOnDoubleClick,
         summaryPopoverSettings: state.summaryPopoverSettings,
+        scenePromptPreferences: state.scenePromptPreferences,
         narrationFontColor: state.narrationFontColor,
         narrationOpacity: state.narrationOpacity,
         chatFontColor: state.chatFontColor,

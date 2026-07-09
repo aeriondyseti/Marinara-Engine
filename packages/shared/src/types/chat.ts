@@ -133,6 +133,15 @@ export interface ChatSummaryPromptTemplate {
   prompt: string;
 }
 
+/** Server app-setting key for Roleplay Chat Summary prompt templates shared across all roleplays. */
+export const CHAT_SUMMARY_PROMPT_SETTINGS_KEY = "chat-summary-prompts";
+
+/** Global Roleplay Chat Summary prompt template settings. */
+export interface ChatSummaryPromptSettings {
+  templates: ChatSummaryPromptTemplate[];
+  activeTemplateId: string | null;
+}
+
 /** Rolling summary entry category. Extensible beyond rolling summaries later. */
 export type ChatSummaryEntryKind = "rolling";
 

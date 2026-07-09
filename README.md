@@ -173,7 +173,7 @@ Export individual chats or bulk transcript zips as JSONL or plain text. Fully lo
 | ---------------------------------------------------- | --------------------------------------------------------------- |
 | [docs/INSTALLATION.md](docs/INSTALLATION.md)         | Installation guide index (all platforms)                        |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md)       | Environment variables and `.env` reference                      |
-| [docs/CONVERSATION.md](docs/CONVERSATION.md)         | Conversation Mode setup, DMs, groups, calls, selfies, and table games |
+| [docs/CONVERSATION.md](docs/CONVERSATION.md)         | Conversation Mode setup, DMs, groups, profiles (display name, about me, behavior), calls, selfies, and table games |
 | [docs/ROLEPLAY.md](docs/ROLEPLAY.md)                 | Roleplay Mode setup, sprites, HUD, agents, and connected chats  |
 | [docs/GAME_MODE.md](docs/GAME_MODE.md)               | Game Mode setup, world-gen, party play, storyboards, and troubleshooting |
 | [docs/GENERATION_PARAMETERS.md](docs/GENERATION_PARAMETERS.md) | Sampler and output-parameter reference across providers         |

@@ -9,11 +9,11 @@ import {
   createChatSchema,
   createMessageSchema,
   appendChatSummaryEntryToMetadata,
+  CHAT_SUMMARY_PROMPT_SETTINGS_KEY,
   compileChatSummaryEntries,
   createChatSummaryEntry,
   DEFAULT_CONVERSATION_PROMPT,
   DEFAULT_GAME_SYSTEM_PROMPT,
-  DEFAULT_CHAT_SUMMARY_PROMPT,
   markAutonomousUnreadSchema,
   nameToXmlTag,
   normalizeChatSummaryEntries,
@@ -40,6 +40,7 @@ import type {
   RPGStatsConfig,
 } from "@marinara-engine/shared";
 import { createChatsStorage } from "../services/storage/chats.storage.js";
+import { createAppSettingsStorage } from "../services/storage/app-settings.storage.js";
 import { createCharactersStorage } from "../services/storage/characters.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { createLorebooksStorage } from "../services/storage/lorebooks.storage.js";
@@ -90,7 +91,10 @@ import { sanitizeGameNpcAvatarUrls } from "../services/game/npc-avatar-utils.js"
 import { buildCommittedTrackerContextBlock } from "../services/generation/committed-tracker-context.js";
 import { parseLorebookWriteApprovalText } from "./generate/agent-write-approval.js";
 import { persistLorebookKeeperUpdates } from "./generate/lorebook-keeper-utils.js";
-import { clampRoleplaySummaryMaxTokens } from "../services/generation/roleplay-summary-runtime.js";
+import {
+  clampRoleplaySummaryMaxTokens,
+  resolveChatSummaryPrompt,
+} from "../services/generation/roleplay-summary-runtime.js";
 
 type TrackerWrapFormat = "xml" | "markdown" | "none";
 type EntryStateOverrides = Record<string, { ephemeral?: number | null; enabled?: boolean }>;
@@ -402,6 +406,7 @@ function resolveEntryStateOverrides(value: unknown): EntryStateOverrides | undef
 
 export async function chatsRoutes(app: FastifyInstance) {
   const storage = createChatsStorage(app.db);
+  const appSettings = createAppSettingsStorage(app.db);
 
   const cleanupEmptyRoleplayDmChats = async () => {
     const allChats = await storage.list();
@@ -3383,21 +3388,12 @@ export async function chatsRoutes(app: FastifyInstance) {
         : typeof chatMeta.activeSummaryPromptTemplateId === "string" && chatMeta.activeSummaryPromptTemplateId.trim()
           ? chatMeta.activeSummaryPromptTemplateId.trim()
           : null;
-    const summaryPromptTemplates = Array.isArray(chatMeta.summaryPromptTemplates)
-      ? (chatMeta.summaryPromptTemplates as Array<Record<string, unknown>>)
-      : [];
-    const selectedSummaryPrompt = requestedPromptTemplateId
-      ? summaryPromptTemplates.find(
-          (template) =>
-            template.id === requestedPromptTemplateId &&
-            typeof template.prompt === "string" &&
-            template.prompt.trim().length > 0,
-        )
-      : null;
-    const summaryPrompt =
-      typeof selectedSummaryPrompt?.prompt === "string"
-        ? selectedSummaryPrompt.prompt.trim()
-        : DEFAULT_CHAT_SUMMARY_PROMPT;
+    const globalSummaryPromptSettings = await appSettings.get(CHAT_SUMMARY_PROMPT_SETTINGS_KEY);
+    const summaryPrompt = resolveChatSummaryPrompt({
+      requestedTemplateId: requestedPromptTemplateId,
+      chatMetadata: chatMeta,
+      globalSettingsValue: globalSummaryPromptSettings,
+    });
 
     const messages: Array<{ role: "system" | "user"; content: string }> = [
       { role: "system", content: summaryPrompt },

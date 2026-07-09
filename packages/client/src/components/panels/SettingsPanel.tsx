@@ -1313,7 +1313,7 @@ const TRACKER_PANEL_CARD_OPTIONS: Record<TrackerDataPanelSection, { label: strin
 };
 
 const QUOTE_FORMAT_OPTIONS: Array<{ id: QuoteFormat; label: string; sample: string }> = [
-  { id: "straight", label: "Straight", sample: '"Hello", it\'s me.' },
+  { id: "straight", label: "Straight", sample: '"Hello," it\'s me.' },
   { id: "typographic", label: "Typographic", sample: "\u201cHello,\u201d it\u2019s me." },
 ];
 

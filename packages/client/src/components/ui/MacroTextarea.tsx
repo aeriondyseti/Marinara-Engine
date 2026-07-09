@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
 import { createPortal } from "react-dom";
 import { BookOpen, Maximize2, X } from "lucide-react";
 import { SUPPORTED_MACROS } from "@marinara-engine/shared";
@@ -280,6 +280,8 @@ export interface MacroTextareaProps {
   showMacroReference?: boolean;
   showExpand?: boolean;
   spellCheck?: boolean;
+  /** Optional ref to the underlying textarea (e.g. to insert emoji at the caret). */
+  textareaRef?: Ref<HTMLTextAreaElement>;
 }
 
 export function MacroTextarea({
@@ -302,6 +304,7 @@ export function MacroTextarea({
   showMacroReference = true,
   showExpand = true,
   spellCheck = true,
+  textareaRef,
 }: MacroTextareaProps) {
   const [expanded, setExpanded] = useState(false);
   const [showMacroRef, setShowMacroRef] = useState(false);
@@ -346,6 +349,7 @@ export function MacroTextarea({
     <>
       <div className={cn("relative", wrapperClassName)}>
         <textarea
+          ref={textareaRef}
           value={value}
           onChange={handleChange}
           onBlur={onBlur}

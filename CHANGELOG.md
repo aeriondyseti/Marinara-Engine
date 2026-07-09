@@ -4,6 +4,22 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ## [Unreleased]
 
+### Added
+
+- Added a configurable source picker (⚙️) for the Conversation "about me" AI-write, in both the character-card editor and the in-chat profile popout: choose which of the card fields (description, personality, scenario, backstory, appearance), the Convo behavior directive, the character's lorebook entries (with per-entry selection in the card editor), and recent chat context feed the draft. Defaults to personality only.
+- Added a Revert control to the about-me editor (card editor and in-chat popout) to undo a manual or AI-write change, and an emoji picker in the about-me editor.
+- Added an optional per-character toggle to declare a character's Convo display name on its card in the prompt, so the model can map the display name to the right card in group chats.
+- The Convo display name is now shown as the sender label above messages in Conversation (read live, so renames reflect immediately), not only in the prompt and the profile popout.
+
+### Fixed
+
+- Fixed the chat-specific about-me override being lost on reload or refetch — the popout read chat metadata without parsing it, so the override reset to the card default and, on save, could drop other characters' overrides.
+- Fixed the about-me AI-write failing on "thinking" models (e.g. Gemini 3.x) that spent the entire output budget on reasoning and returned no content; the output ceiling was raised and reasoning effort lowered.
+- Fixed the about-me source picker listing only "linked" lorebooks — a character whose lorebook is embedded now sees and can select its entries.
+- Fixed the Conversation participant-profiles block labeling the persona as "the user," which nudged some models toward sycophancy; the persona is now presented as just another participant.
+- Fixed the about-me profile popout on mobile (now a full-height sheet so the keyboard and emoji picker no longer overlap the field) and its overflow on desktop when the source panel is opened.
+- Fixed help tooltips stacking — opening one now closes any other.
+
 ## [2.1.2]
 
 ### Added
@@ -16,6 +32,8 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Added Conversation prompt relocation macros for auto-inserted context: `{{context}}`/`{{status}}`, `{{commands}}`, `{{reactRules}}`, `{{memories}}`, and `{{lorebook}}`.
 - Added a TTS cache export control in Text to Speech settings so generated cached voice clips can be downloaded from IndexedDB.
 - Added a Roleplay Chat Summary maximum output size setting under Summary Connection, defaulting to 4096 tokens for manual and automatic summaries.
+- Added a connected-chat shortcut to Game mode so connected Conversation and Game chats can switch back and forth like Conversation/Roleplay links.
+- Added a scene prompt setup dialog for user- and character-initiated scenes, remembering POV, tense, and optional prompt wishes for the next scene generation.
 
 ### Changed
 
@@ -23,6 +41,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Android `versionName` is `2.1.2` with `versionCode 31`.
 - Reworked Settings with search-first navigation, compact pinned controls, fixed top-level categories, and finer section shortcuts for faster navigation.
 - Updated the default Illustrator prompt rules so generated image prompts carry available character builds, clothing/outfits, and appearance details instead of relying on the image model to infer them.
+- Changed custom Roleplay Chat Summary prompts to apply globally across roleplay chats instead of only the currently open chat.
 
 ### Fixed
 
@@ -41,6 +60,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Fixed the recovery/error page so **Internal Server Error** uses the configured chat chrome text color instead of a hard-coded pink.
 - Fixed Conversation Calls on Chromium browsers by allowing same-origin microphone, camera, and screen-capture access in the server permissions policy instead of blocking the browser permission prompt.
 - Fixed the Roleplay setup wizard's **Use Settings Presets** shortcut so system "joined the chat" notices no longer block seeding the selected character's first message (#3392).
+- Fixed Conversation-mode prompt assembly so the user's visible status and activity are always included in context unless the persona is set to Invisible, even when a relocated context macro is configured but not present after prompt resolution.
 
 ## [2.1.1]
 
@@ -83,6 +103,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Made the Connections panel's unfiled/root drop area more forgiving so desktop users, including Windows users, can reliably drag connections out of folders without hitting a tiny target.
 - Fixed native lorebook import so nested folders keep their parent/child hierarchy instead of being flattened to the top level (#3347).
 - Fixed the character Lorebook tab so an embedded lorebook can be removed from the card: added a **Remove from card** action (including for cards with no linked copy), clarified that the row delete only unlinks the standalone while the embedded copy stays, and renamed **Edit Linked Lorebook** to **Edit Embedded Lorebook** (#3359).
+- Fixed a growing pause after each response completes in long chats: removed two O(n²) passes over the whole message history in the post-generation path (a per-message cachedPrompt eviction scan and the swipe-count lookup), so completing a response no longer takes tens of seconds in very large chats (#3402).
 
 ## [2.1.0]
 

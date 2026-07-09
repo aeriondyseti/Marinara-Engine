@@ -126,8 +126,9 @@ export function buildConversationProfileBlocks(args: {
     for (const p of participants) {
       const about = resolveMacros(p.aboutMe ?? "").trim();
       if (!about) continue; // authentic: some participants simply have no bio
-      const who = p.isPersona ? `${p.displayName} (the user you're talking to)` : p.displayName;
-      lines.push(`- ${who}: ${about}`);
+      // List the persona like any other participant — never tag it as "the user".
+      // Framing the persona as the user nudges some models toward sycophancy.
+      lines.push(`- ${p.displayName}: ${about}`);
     }
     if (lines.length > 0) {
       aboutMeBlock =
@@ -143,8 +144,9 @@ export function buildConversationProfileBlocks(args: {
 
   const label = (p: ConversationProfileParticipant, text: string): string => {
     if (!isGroup) return text;
-    const who = p.isPersona ? `about the user (${p.displayName})` : `for ${p.displayName}`;
-    return `Instructions ${who}:\n${text}`;
+    // Label the persona's directive the same as any character's — don't single it
+    // out as "the user" (that framing pushes some models toward sycophancy).
+    return `Instructions for ${p.displayName}:\n${text}`;
   };
 
   for (const p of participants) {

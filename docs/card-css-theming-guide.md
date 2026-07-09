@@ -129,7 +129,7 @@ The chat DOM is the same skeleton in roleplay and conversation. These are the el
 | `[data-card-css] .mari-message-name`      | The character's display **name**                                                                               |
 | `[data-card-css] .mari-message-meta`      | The header row holding the name + timestamp                                                                    |
 | `[data-card-css] .mari-message-timestamp` | The timestamp                                                                                                  |
-| `[data-card-css] .mari-message-avatar`    | The avatar column; `.mari-message-avatar > div` is the avatar **circle** (override `border-radius` to reshape) |
+| `[data-card-css] .mari-message-avatar`    | The avatar column; `.mari-message-avatar button` is the clipped **avatar** (a `<div>` when it isn't clickable) — reshape/ring it. Roleplay nests it under an extra glow-wrapper `div`. |
 | `[data-card-css] .mari-message-narrator`  | Narrator messages (roleplay)                                                                                   |
 | `[data-card-css] .mari-message-user`      | User messages — `.mari-message-assistant` for character messages                                               |
 | `[data-card-css] p`, `… span`             | Paragraphs and inline spans inside the text                                                                    |
@@ -177,12 +177,22 @@ While a character generates a reply, conversation mode in the Linear layout show
 
 ### Avatar
 
-The avatar is a circle by default — reshape and ring it with pure CSS:
+The avatar is a circle by default — reshape and ring it with pure CSS. The
+examples below target the clickable avatar **button**. If the avatar is rendered
+non-clickable in a surface, use the same idea on the `.mari-message-avatar > div`
+fallback hook for that specific layout. In **roleplay** the button sits inside an
+extra glow-wrapper `div`, so flatten that wrapper if you want only your own ring:
 
 ```css
-[data-card-css] .mari-message-avatar > div {
+[data-card-css] .mari-message-avatar button {
   border-radius: 6px; /* 0 = sharp corners, 50% = back to a circle */
   box-shadow: 0 0 0 2px #ff66cc;
+}
+/* roleplay only: drop the app's glow wrapper so just your ring shows */
+@chat-mode roleplay {
+  [data-card-css] .mari-message-avatar > div {
+    box-shadow: none;
+  }
 }
 ```
 
@@ -296,88 +306,182 @@ Build with `[data-card-css] .mari-message-…` selectors and your card works cor
 
 ## Showcase: "Eldritch Grimoire" — the full extent
 
-A deliberately extravagant card that uses nearly every hook: an animated glowing bubble, a runic corner sigil, a glowing uppercase name, themed serif text, a reshaped/ringed avatar, and an eerie typing indicator. Paste it whole, set the mode to **Exclusive** (or **Chat**), and watch.
+A deliberately extravagant card that touches **every documented hook, in every mode**: glowing rune-caps names, themed serif text, a reshaped/ringed avatar, timestamp small-caps, an edge sigil on the row, an animated roleplay bubble with a corner rune, styled narration, a conversation bubble + eerie typing indicator, the whole avatar-click **profile popout**, and the game surface. Paste it whole into Creator Notes, enable card CSS in **Chat Settings -> Card CSS**, and it themes messages across Roleplay/Conversation, the popout in Conversation, and the surface in Game.
+
+Sections are split by `@chat-mode` so each mode gets exactly the hooks it has. Everything is sanitizer-safe (no external `url()`, no `!important`, no theme tokens, `position: relative`/`absolute` only).
 
 ```html
 <style>
-  /* ── animated arcane glow for the bubble ── */
+  /* ═══════════════ shared keyframe ═══════════════ */
   @keyframes grimoire-pulse {
     0%,
     100% {
-      box-shadow:
-        0 0 12px rgba(168, 85, 247, 0.35),
-        inset 0 0 18px rgba(80, 0, 60, 0.5);
+      box-shadow: 0 0 12px rgba(168, 85, 247, 0.35), inset 0 0 18px rgba(80, 0, 60, 0.5);
     }
     50% {
-      box-shadow:
-        0 0 24px rgba(220, 38, 120, 0.55),
-        inset 0 0 26px rgba(120, 0, 80, 0.6);
+      box-shadow: 0 0 24px rgba(220, 38, 120, 0.55), inset 0 0 26px rgba(120, 0, 80, 0.6);
     }
   }
 
-  /* ── the visible message bubble ── */
-  [data-card-css] .mari-message-bubble {
-    background: linear-gradient(135deg, #1a0a24 0%, #2d0a2e 55%, #3a0a1e 100%);
-    border: 1px solid rgba(220, 38, 120, 0.45);
-    border-radius: 4px 16px 16px 16px;
-    animation: grimoire-pulse 4s ease-in-out infinite;
-    position: relative;
-    overflow: hidden;
-  }
+  /* ═══════════════ EVERYWHERE (all modes) ═══════════════ */
+  /* These descendant hooks only match where message rows exist, so they're inert
+     in Game and safe to leave unwrapped. */
 
-  /* a faint rune in the corner, drawn with a pseudo-element */
-  [data-card-css] .mari-message-bubble::before {
-    content: "✦";
-    position: absolute;
-    top: 1px;
-    right: 7px;
-    font-size: 0.7rem;
-    color: rgba(220, 38, 120, 0.55);
-    text-shadow: 0 0 6px rgba(220, 38, 120, 0.9);
+  /* the character's name — glowing crimson rune-caps */
+  [data-card-css] .mari-message-name {
+    color: #ff5c8a;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-size: 0.82rem;
+    text-shadow: 0 0 8px rgba(255, 92, 138, 0.7), 0 0 16px rgba(168, 85, 247, 0.45);
   }
-
-  /* ── glowing serif message text ── */
+  /* header row + timestamp */
+  [data-card-css] .mari-message-meta {
+    align-items: baseline;
+  }
+  [data-card-css] .mari-message-timestamp {
+    color: rgba(243, 215, 255, 0.5);
+    font-variant: small-caps;
+  }
+  /* reshape + ring + saturate the clipped clickable avatar. If a surface renders
+     a non-clickable avatar, target `.mari-message-avatar > div` for that layout.
+     Roleplay nests the button under a glow wrapper, which the roleplay block
+     below flattens so only this ring shows. */
+  [data-card-css] .mari-message-avatar button {
+    border-radius: 7px;
+    box-shadow: 0 0 0 2px rgba(220, 38, 120, 0.6), 0 0 14px rgba(168, 85, 247, 0.5);
+    filter: saturate(1.2) contrast(1.05);
+  }
+  /* glowing serif message text */
   [data-card-css] .mari-message-content {
     color: #f3d7ff;
     text-shadow: 0 0 2px rgba(168, 85, 247, 0.4);
     font-family: "Iowan Old Style", Georgia, "Times New Roman", serif;
   }
 
-  /* ── the character's name — glowing crimson rune-caps ── */
-  [data-card-css] .mari-message-name {
-    color: #ff5c8a;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    font-size: 0.82rem;
-    text-shadow:
-      0 0 8px rgba(255, 92, 138, 0.7),
-      0 0 16px rgba(168, 85, 247, 0.45);
+  /* ═══════════════ ROLEPLAY ═══════════════ */
+  @chat-mode roleplay {
+    /* the row itself — an arcane left edge on the first message of a run
+       (`[data-grouped]` = continuations from the same character) */
+    [data-card-css]:not([data-grouped]) {
+      border-left: 2px solid rgba(220, 38, 120, 0.35);
+    }
+    [data-card-css][data-grouped] {
+      border-left: 2px solid transparent;
+    }
+    /* roleplay wraps the clipped avatar button in its own glow layer — flatten it
+       so only the eldritch ring (above) hugs the picture */
+    [data-card-css] .mari-message-avatar > div {
+      box-shadow: none;
+    }
+    /* the visible bubble + a corner sigil */
+    [data-card-css] .mari-message-bubble {
+      background: linear-gradient(135deg, #1a0a24 0%, #2d0a2e 55%, #3a0a1e 100%);
+      border: 1px solid rgba(220, 38, 120, 0.45);
+      border-radius: 4px 16px 16px 16px;
+      animation: grimoire-pulse 4s ease-in-out infinite;
+      position: relative;
+      overflow: hidden;
+    }
+    [data-card-css] .mari-message-bubble::before {
+      content: "✦";
+      position: absolute;
+      top: 1px;
+      right: 7px;
+      font-size: 0.7rem;
+      color: rgba(220, 38, 120, 0.55);
+      text-shadow: 0 0 6px rgba(220, 38, 120, 0.9);
+    }
+    /* narration */
+    [data-card-css] .mari-message-narrator {
+      color: #c9a8ff;
+      font-style: italic;
+      opacity: 0.9;
+    }
   }
 
-  /* ── reshape + ring the avatar ── */
-  [data-card-css] .mari-message-avatar > div {
-    border-radius: 7px;
-    box-shadow:
-      0 0 0 2px rgba(220, 38, 120, 0.6),
-      0 0 14px rgba(168, 85, 247, 0.5);
-    filter: saturate(1.2) contrast(1.05);
+  /* ═══════════════ CONVERSATION ═══════════════ */
+  @chat-mode conversation {
+    /* the Bubbles-layout bubble (in the Linear layout there is no bubble — the
+       EVERYWHERE row hooks above carry the theme instead) */
+    [data-card-css] .mari-message-bubble {
+      background: rgba(26, 10, 36, 0.92);
+      border: 1px solid rgba(220, 38, 120, 0.4);
+      border-radius: 1rem;
+    }
+    /* "(name) is typing…" (Linear layout) */
+    [data-card-css] .mari-typing-text {
+      color: #ff5c8a;
+      font-style: italic;
+      letter-spacing: 0.05em;
+      text-shadow: 0 0 8px rgba(255, 92, 138, 0.6);
+    }
+    [data-card-css] .mari-typing-dots span {
+      background: #ff5c8a;
+      box-shadow: 0 0 6px rgba(255, 92, 138, 0.85);
+    }
+
+    /* the avatar-click PROFILE POPOUT — every hook (the popout card is the scope
+       element, so target it with no space; its children as descendants) */
+    [data-card-css].mari-about-me-popout {
+      background: radial-gradient(120% 120% at 50% 0%, #241a3a 0%, #12081c 72%);
+      border: 1px solid rgba(220, 38, 120, 0.45);
+      border-radius: 1.25rem;
+    }
+    [data-card-css] .mari-about-me-banner {
+      background: linear-gradient(90deg, #a855f7, #dc2678);
+    }
+    [data-card-css] .mari-about-me-avatar > div {
+      border-radius: 0.9rem;
+      box-shadow: 0 0 0 2px #dc2678, 0 0 14px rgba(168, 85, 247, 0.5);
+    }
+    [data-card-css] .mari-about-me-status {
+      box-shadow: 0 0 8px rgba(255, 92, 138, 0.9);
+    }
+    [data-card-css] .mari-about-me-name {
+      color: #ffd7ef;
+      text-shadow: 0 0 10px rgba(220, 38, 120, 0.6);
+    }
+    [data-card-css] .mari-about-me-handle {
+      color: rgba(201, 168, 255, 0.8);
+    }
+    [data-card-css] .mari-about-me-presence {
+      color: rgba(201, 168, 255, 0.7);
+    }
+    [data-card-css] .mari-about-me-box {
+      background: rgba(168, 85, 247, 0.08);
+      border: 1px solid rgba(220, 38, 120, 0.3);
+      border-radius: 0.75rem;
+    }
+    [data-card-css] .mari-about-me-label {
+      color: #dc2678;
+      letter-spacing: 0.14em;
+    }
+    [data-card-css] .mari-about-me-badge {
+      background: rgba(220, 38, 120, 0.18);
+      color: #ffd7ef;
+    }
+    [data-card-css] .mari-about-me-text {
+      color: #f3d7ff;
+      font-family: "Iowan Old Style", Georgia, serif;
+    }
   }
 
-  /* ── eerie typing indicator (conversation, Linear layout) ── */
-  [data-card-css] .mari-typing-text {
-    color: #ff5c8a;
-    font-style: italic;
-    letter-spacing: 0.05em;
-    text-shadow: 0 0 8px rgba(255, 92, 138, 0.6);
-  }
-  [data-card-css] .mari-typing-dots span {
-    background: #ff5c8a;
-    box-shadow: 0 0 6px rgba(255, 92, 138, 0.85);
+  /* ═══════════════ GAME (set the mode to Chat) ═══════════════ */
+  @chat-mode game {
+    /* Game has its own layout with no message bubbles — in Chat scope `[data-card-css]`
+       is the whole game surface, so theme the area broadly (the bubble/name/avatar
+       hooks above don't exist here). */
+    [data-card-css] {
+      background-image: radial-gradient(120% 80% at 50% 0%, rgba(58, 10, 46, 0.5), transparent 70%);
+    }
   }
 </style>
 ```
 
-Everything in it is sanitizer-safe (no external `url()`, no `!important`, no theme tokens, `position: relative`/`absolute` only). Swap the colors and the `content` glyph to make it your own.
+> **User vs. character rows:** in **Exclusive** scope `[data-card-css]` is a character's own message (also `.mari-message-assistant`). To theme **your** rows too, use **Chat** scope, where `[data-card-css]` is the whole area and `[data-card-css] .mari-message-user` / `… .mari-message-assistant` select each side.
+
+Swap the colors, the `content` glyph, and the fonts to make it your own.
 
 ---
 
@@ -392,7 +496,7 @@ A prompt template if you'd rather not hand-write CSS:
 > **Technical constraints:**
 >
 > - Use `[data-card-css]` for the message row (works in both "Exclusive" and "Chat" modes); use normal class selectors for things inside it.
-> - `[data-card-css] .mari-message-bubble` = the visible bubble (background / border / corners / shadow); `[data-card-css] .mari-message-content` = the text; `[data-card-css] .mari-message-name` = the display name; `[data-card-css] .mari-message-avatar > div` = the avatar circle.
+> - `[data-card-css] .mari-message-bubble` = the visible bubble (background / border / corners / shadow); `[data-card-css] .mari-message-content` = the text; `[data-card-css] .mari-message-name` = the display name; `[data-card-css] .mari-message-avatar button` = the clickable avatar (non-clickable fallback: `.mari-message-avatar > div`; in roleplay the button sits under an extra glow-wrapper `div`).
 > - Style the typing indicator via `[data-card-css] .mari-typing-text` and `[data-card-css] .mari-typing-dots span`.
 > - Conversation only: the avatar-click "about me" popout is themable via `[data-card-css].mari-about-me-popout` (the card), `… .mari-about-me-banner`, `… .mari-about-me-avatar > div`, `… .mari-about-me-name`, `… .mari-about-me-box`, and `… .mari-about-me-text`. Wrap these in `@chat-mode conversation { … }`.
 > - Wrap roleplay-only CSS in `@chat-mode roleplay { … }`, conversation-only in `@chat-mode conversation { … }`; CSS outside applies everywhere.

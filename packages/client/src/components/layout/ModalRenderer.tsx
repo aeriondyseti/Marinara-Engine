@@ -4,7 +4,7 @@
 import { lazy, Suspense } from "react";
 import { useUIStore } from "../../stores/ui.store";
 import type { AgentData } from "../modals/EditAgentModal";
-import type { LorebookCategory, LorebookScope } from "@marinara-engine/shared";
+import type { LorebookCategory, LorebookScope, ScenePromptPreferences } from "@marinara-engine/shared";
 
 const CreateCharacterModal = lazy(() =>
   import("../modals/CreateCharacterModal").then((module) => ({ default: module.CreateCharacterModal })),
@@ -53,6 +53,11 @@ const DocsViewerModal = lazy(() =>
 );
 const AboutMeViewerModal = lazy(() =>
   import("../modals/AboutMeViewerModal").then((module) => ({ default: module.AboutMeViewerModal })),
+);
+const ScenePromptPreferencesModal = lazy(() =>
+  import("../modals/ScenePromptPreferencesModal").then((module) => ({
+    default: module.ScenePromptPreferencesModal,
+  })),
 );
 
 export function ModalRenderer() {
@@ -142,6 +147,18 @@ export function ModalRenderer() {
           nameColor={(modal?.props?.nameColor as string | null) ?? null}
           status={(modal?.props?.status as "online" | "idle" | "dnd" | "offline" | null) ?? null}
           activity={(modal?.props?.activity as string | null) ?? null}
+        />
+      );
+      break;
+    case "scene-prompt-preferences":
+      content = (
+        <ScenePromptPreferencesModal
+          open
+          onClose={closeModal}
+          initialPreferences={modal?.props?.initialPreferences as ScenePromptPreferences}
+          sourceLabel={(modal?.props?.sourceLabel as string | null) ?? null}
+          onSubmit={modal?.props?.onSubmit as (preferences: ScenePromptPreferences) => void}
+          onCancel={modal?.props?.onCancel as (() => void) | undefined}
         />
       );
       break;

@@ -43,6 +43,17 @@ Character macros resolve against the current character in single-character chats
 | `{{charSysInfo}}` | Current character system prompt. |
 | `{{charPostHistory}}` | Current character post-history instructions. |
 
+## Conversation-mode fields
+
+These resolve **only in Conversation mode** — they are empty string in Roleplay, Visual Novel, and Game, even when placed in a shared card, persona, or lorebook surface. They read the [Conversation profile fields](CONVERSATION.md#conversation-profiles-display-name-about-me-and-behavior) (display name, about me, behavior).
+
+| Macro | Resolves to |
+| --- | --- |
+| `{{convo_display}}` | Responding character's Convo display name (falls back to the card name). |
+| `{{char_about}}` | Responding character's effective about me (per-chat override, else the card default). |
+| `{{persona_about}}` | Your persona's effective about me (per-chat override, else the persona default). |
+| `{{convo_behavior}}` | Responding character's Convo behavior directive — placed here when its insertion strategy is "Only where `{{convo_behavior}}` is placed". |
+
 ## Context
 
 | Macro | Resolves to |

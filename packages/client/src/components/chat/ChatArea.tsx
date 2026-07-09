@@ -345,6 +345,7 @@ function toCharacterMapValue(char: CharacterRow): CharacterMapValue {
     const extensions = data.extensions && typeof data.extensions === "object" ? data.extensions : {};
     return {
       name: data.name ?? "Unknown",
+      convoDisplayName: extensions.convoDisplayName || undefined,
       phoneticName: extensions.phoneticName || undefined,
       description: data.description ?? "",
       personality: data.personality ?? "",
@@ -374,6 +375,7 @@ function toCharacterMapValue(char: CharacterRow): CharacterMapValue {
 function areCharacterMapValuesEqual(a: CharacterMapValue, b: CharacterMapValue): boolean {
   return (
     a.name === b.name &&
+    a.convoDisplayName === b.convoDisplayName &&
     a.phoneticName === b.phoneticName &&
     a.description === b.description &&
     a.personality === b.personality &&
@@ -804,6 +806,7 @@ export function ChatArea() {
         if (typeof snapshot.name !== "string") continue;
         map.set(id, {
           name: snapshot.name,
+          convoDisplayName: snapshot.convoDisplayName,
           description: snapshot.description ?? "",
           personality: snapshot.personality ?? "",
           backstory: snapshot.backstory ?? "",
@@ -926,6 +929,7 @@ export function ChatArea() {
     return {
       id: persona.id,
       name: persona.name,
+      convoDisplayName: persona.convoDisplayName || undefined,
       phoneticName: persona.phoneticName || undefined,
       description: persona.description ?? "",
       personality: persona.personality || undefined,
@@ -2746,8 +2750,10 @@ export function ChatArea() {
             characters={gameCharacters}
             personaInfo={personaInfo}
             chatBackground={chatBackground}
+            connectedChatName={connectedChatName}
             onOpenSettings={handleOpenSettingsPanel}
             onCloseSettings={handleCloseSettingsPanel}
+            onSwitchChat={chat.connectedChatId ? () => setActiveChatId(chat.connectedChatId!) : undefined}
             onDeleteMessage={handleDelete}
             multiSelectMode={multiSelectMode}
             selectedMessageIds={selectedMessageIds}
