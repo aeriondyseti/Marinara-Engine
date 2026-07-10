@@ -39,7 +39,7 @@ import { createChatsStorage } from "../services/storage/chats.storage.js";
 import { createConnectionsStorage } from "../services/storage/connections.storage.js";
 import { createGalleryStorage } from "../services/storage/gallery.storage.js";
 import { createCharacterGalleryStorage } from "../services/storage/character-gallery.storage.js";
-import { createNoodleStorage } from "../services/storage/noodle.storage.js";
+import { createNoodleStorage, parseNoodleAvatarCrop } from "../services/storage/noodle.storage.js";
 import { createPromptOverridesStorage } from "../services/storage/prompt-overrides.storage.js";
 import { createLLMProvider } from "../services/llm/provider-registry.js";
 import { generateImage, saveImageToDisk } from "../services/image/image-generation.js";
@@ -87,6 +87,10 @@ function readProfessorMariReferenceImages(): string[] {
       return [];
     }
   });
+}
+
+function characterAvatarCrop(row: { data: unknown }) {
+  return parseNoodleAvatarCrop(parseRecord(parseRecord(row.data).extensions).avatarCrop);
 }
 
 function parseRecord(value: unknown): Record<string, unknown> {
@@ -382,6 +386,7 @@ async function ensureProfessorMariAccount(
     entityId: PROFESSOR_MARI_ID,
     displayName: row ? characterNameFromRow(row) : "Professor Mari",
     avatarUrl: row?.avatarPath ?? "/sprites/mari/Mari_profile.png",
+    avatarCrop: row ? characterAvatarCrop(row) : null,
     bio: PROFESSOR_MARI_NOODLE_BIO,
     invited: true,
   });
@@ -418,6 +423,7 @@ async function ensureSelectedGroupCharacterAccounts(
       entityId: row.id,
       displayName: characterNameFromRow(row),
       avatarUrl: row.avatarPath ?? null,
+      avatarCrop: characterAvatarCrop(row),
       bio: String(parseRecord(row.data).description ?? ""),
     });
   }
@@ -437,6 +443,7 @@ async function ensurePersonaAccounts(
       entityId: persona.id,
       displayName: persona.convoDisplayName || persona.name || "User",
       avatarUrl: persona.avatarPath ?? null,
+      avatarCrop: parseNoodleAvatarCrop(persona.avatarCrop),
       bio: persona.aboutMe || persona.description || "",
       invited: true,
     });
@@ -476,6 +483,7 @@ async function resolvePersonaAccount(
     entityId: persona.id,
     displayName: persona.convoDisplayName || persona.name || "User",
     avatarUrl: persona.avatarPath ?? null,
+    avatarCrop: parseNoodleAvatarCrop(persona.avatarCrop),
     bio: persona.aboutMe || persona.description || "",
     invited: true,
   });
@@ -1108,6 +1116,7 @@ export async function noodleRoutes(app: FastifyInstance) {
       entityId: row.id,
       displayName: name,
       avatarUrl: row.avatarPath ?? null,
+      avatarCrop: characterAvatarCrop(row),
       bio: String(parseRecord(row.data).description ?? ""),
       invited: true,
     });
@@ -1127,6 +1136,7 @@ export async function noodleRoutes(app: FastifyInstance) {
           entityId: row.id,
           displayName: characterNameFromRow(row),
           avatarUrl: row.avatarPath ?? null,
+          avatarCrop: characterAvatarCrop(row),
           bio: String(parseRecord(row.data).description ?? ""),
           invited: true,
         }),

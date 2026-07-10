@@ -62,9 +62,11 @@ import {
   type NoodleRefreshSchedulerStatus,
   type NoodleSettingsUpdateInput,
 } from "@marinara-engine/shared";
-import { cn } from "../../lib/utils";
+import { cn, getAvatarCropStyle, parseAvatarCropJson, type AvatarCropValue } from "../../lib/utils";
+import { renderInlineWithCustomEmojis } from "../../lib/custom-emoji-render";
 import { useActivePersona, useCharacterGroups, useCharacters, usePersonas } from "../../hooks/use-characters";
 import { useConnections } from "../../hooks/use-connections";
+import { useNoodleCustomEmojiMap } from "../../hooks/use-noodle-custom-emojis";
 import { useUploadGlobalGalleryImages } from "../../hooks/use-global-gallery";
 import type { ChatImage } from "../../hooks/use-gallery";
 import { HelpTooltip } from "../ui/HelpTooltip";
@@ -291,6 +293,16 @@ function characterName(character: RawCharacter) {
   return readString(data.name).trim() || "Character";
 }
 
+function rawCharacterAvatarCrop(character: RawCharacter): AvatarCropValue | null {
+  const raw = parseRecord(parseRecord(character.data).extensions).avatarCrop;
+  if (typeof raw === "string") return parseAvatarCropJson(raw);
+  try {
+    return raw ? parseAvatarCropJson(JSON.stringify(raw)) : null;
+  } catch {
+    return null;
+  }
+}
+
 function characterGroupName(group: RawCharacterGroup) {
   return readString(group.name).trim() || "Character folder";
 }
@@ -366,20 +378,25 @@ function Avatar({
   account,
   size = "md",
 }: {
-  account: Pick<NoodleAccount, "displayName" | "avatarUrl">;
+  account: Pick<NoodleAccount, "displayName" | "avatarUrl"> & { avatarCrop?: AvatarCropValue | null };
   size?: "sm" | "md" | "lg";
 }) {
   const dimension = size === "sm" ? "h-8 w-8" : size === "lg" ? "h-24 w-24" : "h-11 w-11";
   if (account.avatarUrl) {
     return (
-      <img
-        src={account.avatarUrl}
-        alt=""
+      <div
         className={cn(
           dimension,
-          "aspect-square flex-none rounded-full border border-[var(--noodle-blue)]/30 object-cover",
+          "relative aspect-square flex-none overflow-hidden rounded-full border border-[var(--noodle-blue)]/30",
         )}
-      />
+      >
+        <img
+          src={account.avatarUrl}
+          alt=""
+          className="h-full w-full object-cover"
+          style={getAvatarCropStyle(account.avatarCrop)}
+        />
+      </div>
     );
   }
   return (
@@ -391,6 +408,24 @@ function Avatar({
     >
       {initials(account.displayName)}
     </div>
+  );
+}
+
+function NoodleCustomEmojiText({
+  text,
+  emojiMap,
+  keyPrefix,
+}: {
+  text: string;
+  emojiMap: Map<string, string>;
+  keyPrefix: string;
+}) {
+  return (
+    <>
+      {renderInlineWithCustomEmojis(text, keyPrefix, emojiMap, (segment, key) => [
+        <Fragment key={key}>{segment}</Fragment>,
+      ])}
+    </>
   );
 }
 
@@ -992,6 +1027,7 @@ export function NoodleView() {
     () => (viewedProfileAccountId ? (accountById.get(viewedProfileAccountId) ?? personaAccount) : personaAccount),
     [accountById, personaAccount, viewedProfileAccountId],
   );
+  const noodleCustomEmojiMap = useNoodleCustomEmojiMap(viewedProfileAccount);
   const viewingOwnProfile = Boolean(personaAccount && viewedProfileAccount?.id === personaAccount.id);
 
   useEffect(() => {
@@ -1335,9 +1371,14 @@ export function NoodleView() {
   const profileAvatarPreview = viewingOwnProfile
     ? profileAvatarUrl.trim() || null
     : (viewedProfileAccount?.avatarUrl ?? null);
+  const profileAvatarCropPreview =
+    viewedProfileAccount && profileAvatarPreview === viewedProfileAccount.avatarUrl
+      ? viewedProfileAccount.avatarCrop
+      : null;
   const profilePreviewAccount = {
     displayName: profileDisplayName,
     avatarUrl: profileAvatarPreview,
+    avatarCrop: profileAvatarCropPreview,
   };
   const profileBannerPreview = viewingOwnProfile
     ? profileBannerUrl.trim()
@@ -2497,7 +2538,11 @@ export function NoodleView() {
                     className="flex items-center gap-2 border-b border-[var(--marinara-chat-chrome-panel-border)] p-2 last:border-b-0"
                   >
                     <Avatar
-                      account={{ displayName: name, avatarUrl: readString(character.avatarPath) || null }}
+                      account={{
+                        displayName: name,
+                        avatarUrl: readString(character.avatarPath) || null,
+                        avatarCrop: rawCharacterAvatarCrop(character),
+                      }}
                       size="sm"
                     />
                     <div className="min-w-0 flex-1">
@@ -3155,7 +3200,7 @@ export function NoodleView() {
               className="h-fit rounded-full text-left transition-opacity enabled:hover:opacity-80 disabled:cursor-default"
               title={authorAccount ? `View @${authorAccount.handle}` : undefined}
             >
-              <Avatar account={{ displayName: author.displayName, avatarUrl: author.avatarUrl }} />
+              <Avatar account={author} />
             </button>
           ) : (
             <AtSign size={28} className="text-[var(--noodle-blue)]" />
@@ -3362,13 +3407,7 @@ export function NoodleView() {
                           className="h-8 w-8 shrink-0 rounded-full text-left transition-opacity enabled:hover:opacity-80 disabled:cursor-default"
                           title={actorAccount ? `View @${actorAccount.handle}` : undefined}
                         >
-                          <Avatar
-                            account={{
-                              displayName: actor?.displayName ?? "Noodle User",
-                              avatarUrl: actor?.avatarUrl ?? null,
-                            }}
-                            size="sm"
-                          />
+                          <Avatar account={actor ?? { displayName: "Noodle User", avatarUrl: null }} size="sm" />
                         </button>
                         <div className="min-w-0 bg-transparent">
                           <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
@@ -3592,7 +3631,7 @@ export function NoodleView() {
             className="rounded-full transition-opacity enabled:hover:opacity-80 disabled:cursor-default"
             title={item.actorAccount ? `View @${item.actorAccount.handle}` : undefined}
           >
-            <Avatar account={{ displayName: actor.displayName, avatarUrl: actor.avatarUrl }} />
+            <Avatar account={actor} />
           </button>
         ) : (
           <Heart size={28} className="text-[var(--noodle-blue)]" />
@@ -3631,7 +3670,7 @@ export function NoodleView() {
             className="rounded-full transition-opacity enabled:hover:opacity-80 disabled:cursor-default"
             title={item.actorAccount ? `View @${item.actorAccount.handle}` : undefined}
           >
-            <Avatar account={{ displayName: actor.displayName, avatarUrl: actor.avatarUrl }} />
+            <Avatar account={actor} />
           </button>
         ) : (
           <MessageCircle size={28} className="text-[var(--noodle-blue)]" />
@@ -3849,7 +3888,7 @@ export function NoodleView() {
                   onClick={() => openProfile(character.account)}
                   className="flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left transition-colors hover:text-[var(--noodle-blue)]"
                 >
-                  <Avatar account={{ displayName: character.name, avatarUrl: character.avatarUrl }} size="sm" />
+                  <Avatar account={character.account} size="sm" />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-semibold">{character.name}</span>
                     <span className="block truncate text-xs text-[var(--muted-foreground)]">@{character.handle}</span>
@@ -3911,7 +3950,7 @@ export function NoodleView() {
                     onClick={() => openProfile(character.account)}
                     className="flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left transition-colors hover:text-[var(--noodle-blue)]"
                   >
-                    <Avatar account={{ displayName: character.name, avatarUrl: character.avatarUrl }} size="sm" />
+                    <Avatar account={character.account} size="sm" />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-semibold">{character.name}</span>
                       <span className="block truncate text-xs text-[var(--muted-foreground)]">@{character.handle}</span>
@@ -4740,7 +4779,13 @@ export function NoodleView() {
                         <h3 className="text-xl font-bold leading-tight">{profilePreviewAccount.displayName}</h3>
                         <p className="text-sm text-[var(--muted-foreground)]">@{profileDisplayHandle || "noodle"}</p>
                         {profileBioPreview && (
-                          <p className="mt-3 whitespace-pre-wrap text-sm leading-6">{profileBioPreview}</p>
+                          <p className="mt-3 whitespace-pre-wrap text-sm leading-6">
+                            <NoodleCustomEmojiText
+                              text={profileBioPreview}
+                              emojiMap={noodleCustomEmojiMap}
+                              keyPrefix={`noodle-profile-bio-${viewedProfileAccount?.id ?? "preview"}`}
+                            />
+                          </p>
                         )}
                         {profileLocationPreview && (
                           <p className="mt-3 flex items-center gap-1.5 text-sm text-[var(--muted-foreground)]">

@@ -1,6 +1,7 @@
 // ──────────────────────────────────────────────
 // Noodle Fake Social Media Types
 // ──────────────────────────────────────────────
+import type { LegacyPersonaAvatarCrop, PersonaAvatarCrop } from "./persona.js";
 
 export type NoodleAccountKind = "persona" | "character" | "random_user";
 export type NoodleInteractionType = "like" | "repost" | "reply" | "vote";
@@ -9,6 +10,7 @@ export type NoodleTheme = "system" | "light" | "dark";
 export type NoodleCarryoverMode = "off" | "conversation" | "roleplay" | "game" | "all";
 export type NoodleCarryoverTarget = "conversation" | "roleplay" | "game";
 export type NoodleParticipantSelectionMode = "all" | "random_range" | "exact";
+export type NoodleAvatarCrop = PersonaAvatarCrop | LegacyPersonaAvatarCrop;
 
 export interface NoodlePollOption {
   id: string;
@@ -54,6 +56,7 @@ export interface NoodleAccount {
   displayName: string;
   bio: string;
   avatarUrl: string | null;
+  avatarCrop: NoodleAvatarCrop | null;
   invited: boolean;
   settings: Record<string, unknown>;
   createdAt: string;
@@ -67,6 +70,7 @@ export interface NoodleAuthorSnapshot {
   handle: string;
   displayName: string;
   avatarUrl: string | null;
+  avatarCrop: NoodleAvatarCrop | null;
 }
 
 export interface NoodlePost {

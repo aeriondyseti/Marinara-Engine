@@ -77,6 +77,16 @@ export interface ResolveMacroOptions {
    * "names" delays only {{char}}/{{charName}}; "all" also delays character field macros.
    */
   deferCharacterMacros?: "names" | "all";
+  /**
+   * Opt-in hook to defer a {{#if}} block whose condition references an operand
+   * whose value isn't known during macro resolution (e.g. conversation
+   * relocation macros the route fills in afterward). When the predicate returns
+   * true for a condition operand, the block is encoded as a deferred token
+   * instead of being evaluated; the caller decodes it later against the real
+   * value (see DEFERRED_RELOCATION_CONDITIONAL_TOKEN_RE + selectConditionalPayloadBranch).
+   * The engine stays mode-agnostic — it never hardcodes which operands defer.
+   */
+  deferConditionalOperand?: (operand: string) => boolean;
   /** Internal guard for recursive character/persona field macro expansion. */
   fieldResolutionDepth?: number;
   /** Stable seed used to resolve random/dice macros consistently for one message. */
@@ -113,6 +123,15 @@ const DEFERRED_CHARACTER_MACRO_TOKEN_PREFIX = "\x1eMARINARA_DEFERRED_CHARACTER_"
 const DEFERRED_CHARACTER_CONDITIONAL_TOKEN_PREFIX = "\x1eMARINARA_DEFERRED_CHARACTER_IF:";
 const DEFERRED_CHARACTER_CONDITIONAL_TOKEN_RE = new RegExp(
   `${DEFERRED_CHARACTER_CONDITIONAL_TOKEN_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^\\x1f]+)\\x1f`,
+  "g",
+);
+// Placeholder for a {{#if}} block whose condition depends on a caller-deferred
+// operand (e.g. a conversation relocation macro whose value is injected later).
+// The prefix deliberately does NOT contain "DEFERRED_CHARACTER_", so the
+// per-character decode and hasDeferredCharacterMacros never touch it.
+const DEFERRED_RELOCATION_CONDITIONAL_TOKEN_PREFIX = "\x1eMARINARA_DEFERRED_RELOCATION_IF:";
+export const DEFERRED_RELOCATION_CONDITIONAL_TOKEN_RE = new RegExp(
+  `${DEFERRED_RELOCATION_CONDITIONAL_TOKEN_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^\\x1f]+)\\x1f`,
   "g",
 );
 const MACRO_COMMENT_PATTERN = /\{\{\/\/[^}]*\}\}/g;
@@ -229,6 +248,11 @@ export function hasDeferredCharacterMacros(template: string): boolean {
     template.includes(DEFERRED_CHARACTER_MACRO_TOKEN_PREFIX) ||
     template.includes(DEFERRED_CHARACTER_CONDITIONAL_TOKEN_PREFIX)
   );
+}
+
+/** True if any deferred relocation conditional token is still unresolved. */
+export function hasDeferredRelocationConditionals(template: string): boolean {
+  return template.includes(DEFERRED_RELOCATION_CONDITIONAL_TOKEN_PREFIX);
 }
 
 export const SUPPORTED_MACROS: readonly SupportedMacroDefinition[] = [
@@ -481,7 +505,7 @@ export function resolveDeferredCharacterMacros(
   return result;
 }
 
-function parseDeferredConditionalPayload(encoded: string): DeferredConditionalPayload | null {
+export function parseDeferredConditionalPayload(encoded: string): DeferredConditionalPayload | null {
   try {
     const parsed = JSON.parse(decodeURIComponent(encoded)) as Partial<DeferredConditionalPayload>;
     const branches = (parsed as Partial<ConditionalChainPayload>).branches;
@@ -623,8 +647,11 @@ function replaceBalancedMacros(
   return result;
 }
 
-function encodeDeferredConditional(payload: DeferredConditionalPayload): string {
-  return `${DEFERRED_CHARACTER_CONDITIONAL_TOKEN_PREFIX}${encodeURIComponent(JSON.stringify(payload))}\x1f`;
+function encodeDeferredConditional(
+  payload: DeferredConditionalPayload,
+  prefix: string = DEFERRED_CHARACTER_CONDITIONAL_TOKEN_PREFIX,
+): string {
+  return `${prefix}${encodeURIComponent(JSON.stringify(payload))}\x1f`;
 }
 
 function quoteKind(value?: string): "single" | "double" | null {
@@ -940,7 +967,41 @@ function branchDependsOnCharacter(branches: ConditionalBranchPayload[]): boolean
   return branches.some((branch) => branch.condition !== null && conditionDependsOnCharacter(branch.condition));
 }
 
-function selectConditionalPayloadBranch(
+function conditionDependsOnDeferredOperand(condition: string, predicate: (operand: string) => boolean): boolean {
+  const parsed = parseConditionExpression(condition);
+  return predicate(parsed.left) || (parsed.right ? predicate(parsed.right) : false);
+}
+
+function branchDependsOnDeferredOperand(
+  branches: ConditionalBranchPayload[],
+  predicate: (operand: string) => boolean,
+): boolean {
+  return branches.some(
+    (branch) => branch.condition !== null && conditionDependsOnDeferredOperand(branch.condition, predicate),
+  );
+}
+
+/**
+ * Bake the standalone-block whitespace trim into a deferred block's branch
+ * contents so the later-filled value collapses onto the surrounding lines the
+ * same way an evaluated block would (leading newline after {{#if}}/{{else}}
+ * dropped; the {{/if}} line's indent dropped). Best-effort for else chains.
+ */
+function trimDeferredStandaloneBranches(
+  branches: ConditionalBranchPayload[],
+  openStandalone: boolean,
+  closeStandalone: boolean,
+): ConditionalBranchPayload[] {
+  if (!openStandalone && !closeStandalone) return branches;
+  return branches.map((branch, index) => {
+    let content = branch.content;
+    if (openStandalone && index === 0) content = content.replace(/^[ \t]*\n/, "");
+    if (closeStandalone && index === branches.length - 1) content = content.replace(/\n[ \t]*$/, "\n");
+    return { condition: branch.condition, content };
+  });
+}
+
+export function selectConditionalPayloadBranch(
   payload: DeferredConditionalPayload,
   ctx: MacroContext,
   options: ResolveMacroOptions,
@@ -1025,27 +1086,44 @@ function resolveConditionalBlocks(input: string, ctx: MacroContext, options: Res
     // Resolve the pre-tag text first so its side effects (e.g. {{setvar}}) are
     // applied before the condition is evaluated — preserves original ordering.
     const resolvedPreTag = resolveVariableOperationMacros(preTag, ctx, options);
-    if (options.deferCharacterMacros && branchDependsOnCharacter(branches)) {
+
+    // Standalone-block whitespace control (Jinja trim_blocks / lstrip_blocks):
+    // when the {{#if}} and/or {{/if}} tag occupies its own line, collapse that
+    // tag line so a block — whether removed, rendered, or deferred — never
+    // leaves a stray blank line (#3435). Judged from the raw layout; each side
+    // is decided independently, so inline tags stay exactly as authored.
+    const openLineStart = /(^|\n)[ \t]*$/.test(preTag);
+    const openLineEnd = /^[ \t]*\n/.test(input.slice(contentStart));
+    const openStandalone = openLineStart && openLineEnd;
+    const closeLineIndentStart = input.lastIndexOf("\n", blockEnd.endStart - 1) + 1;
+    const closeLineStart = /^[ \t]*$/.test(input.slice(closeLineIndentStart, blockEnd.endStart));
+    const closeTrailing = input.slice(blockEnd.endEnd).match(/^[ \t]*\n/);
+    const closeStandalone = closeLineStart && closeTrailing !== null;
+
+    const deferCharacter = Boolean(options.deferCharacterMacros) && branchDependsOnCharacter(branches);
+    const deferRelocation =
+      !deferCharacter &&
+      options.deferConditionalOperand !== undefined &&
+      branchDependsOnDeferredOperand(branches, options.deferConditionalOperand);
+
+    if (deferCharacter) {
+      // Per-character deferral keeps its original (untrimmed) behavior.
       result += resolvedPreTag;
       result += encodeDeferredConditional({ branches });
       index = blockEnd.endEnd;
+    } else if (deferRelocation) {
+      // The operand's value isn't known during macro resolution; encode the
+      // block — with the standalone trim baked into the stored branches — for
+      // the caller to evaluate later against the real value.
+      result += openStandalone ? resolvedPreTag.replace(/[ \t]*$/, "") : resolvedPreTag;
+      result += encodeDeferredConditional(
+        { branches: trimDeferredStandaloneBranches(branches, openStandalone, closeStandalone) },
+        DEFERRED_RELOCATION_CONDITIONAL_TOKEN_PREFIX,
+      );
+      index = closeStandalone && closeTrailing ? blockEnd.endEnd + closeTrailing[0].length : blockEnd.endEnd;
     } else {
       const selected = selectConditionalPayloadBranch({ branches }, ctx, options);
       const resolvedBlock = resolveConditionalBlocks(selected, ctx, options);
-      // Standalone-block whitespace control (Jinja trim_blocks / lstrip_blocks):
-      // when the {{#if}} and/or {{/if}} tag occupies its own line, collapse that
-      // tag line so a block — whether removed or rendered — never leaves a stray
-      // blank line (#3435). Standalone-ness is judged from the raw layout, so an
-      // empty (removed) block is handled the same as a rendered one. Each side is
-      // decided independently, so inline tags stay exactly as authored.
-      const openLineStart = /(^|\n)[ \t]*$/.test(preTag);
-      const openLineEnd = /^[ \t]*\n/.test(input.slice(contentStart));
-      const openStandalone = openLineStart && openLineEnd;
-      const closeLineIndentStart = input.lastIndexOf("\n", blockEnd.endStart - 1) + 1;
-      const closeLineStart = /^[ \t]*$/.test(input.slice(closeLineIndentStart, blockEnd.endStart));
-      const closeTrailing = input.slice(blockEnd.endEnd).match(/^[ \t]*\n/);
-      const closeStandalone = closeLineStart && closeTrailing !== null;
-
       let emittedPre = resolvedPreTag;
       let emittedBlock = resolvedBlock;
       let nextIndex = blockEnd.endEnd;

@@ -197,7 +197,9 @@ export const ConversationMessage = memo(function ConversationMessage({
   const isConversationStart = extra.isConversationStart === true;
   const isHiddenFromAI = extra.hiddenFromAI === true;
   const conversationCallEvent =
-    extra.conversationCallEvent && typeof extra.conversationCallEvent === "object" && !Array.isArray(extra.conversationCallEvent)
+    extra.conversationCallEvent &&
+    typeof extra.conversationCallEvent === "object" &&
+    !Array.isArray(extra.conversationCallEvent)
       ? (extra.conversationCallEvent as Record<string, unknown>)
       : null;
   const generationReplay = hasGenerationReplayDetails(extra.generationReplay) ? extra.generationReplay : null;
@@ -327,16 +329,14 @@ export const ConversationMessage = memo(function ConversationMessage({
   const renderedContentParts = useMemo(() => {
     if (!contentParts?.length) return null;
     const count = Math.max(1, Math.min(visiblePartCount ?? contentParts.length, contentParts.length));
-    return contentParts
-      .slice(0, count)
-      .map((part, partIndex) =>
-        formatTextQuotes(
-          resolveMessageMacros(part, macroContext, {
-            randomSeed: `${message.id}:${message.activeSwipeIndex ?? 0}:${partIndex}`,
-          }),
-          quoteFormat,
-        ),
-      );
+    return contentParts.slice(0, count).map((part, partIndex) =>
+      formatTextQuotes(
+        resolveMessageMacros(part, macroContext, {
+          randomSeed: `${message.id}:${message.activeSwipeIndex ?? 0}:${partIndex}`,
+        }),
+        quoteFormat,
+      ),
+    );
   }, [contentParts, macroContext, message.activeSwipeIndex, message.id, quoteFormat, visiblePartCount]);
 
   // ── Attachment removal ──
@@ -696,6 +696,7 @@ export const ConversationMessage = memo(function ConversationMessage({
             height: anchor.height,
           },
           avatarUrl,
+          avatarCrop: isUser ? personaAvatarCrop : (resolvedCharacterInfo?.avatarCrop ?? null),
           displayName: headerDisplayName,
           nameColor: nameColor ?? null,
           status: aboutMeTarget.kind === "character" ? (resolvedCharacterInfo?.conversationStatus ?? null) : null,
@@ -891,7 +892,12 @@ export const ConversationMessage = memo(function ConversationMessage({
         status === "ended" && duration
           ? `${duration}${timestamp ? ` - ${timestamp}` : ""}`
           : timestamp || message.content;
-      const Icon = status === "ended" || status === "declined" || status === "missed" ? PhoneOff : status === "ringing" ? PhoneIncoming : Phone;
+      const Icon =
+        status === "ended" || status === "declined" || status === "missed"
+          ? PhoneOff
+          : status === "ringing"
+            ? PhoneIncoming
+            : Phone;
       const iconClass =
         status === "ended" || status === "declined" || status === "missed"
           ? "text-[var(--muted-foreground)]"

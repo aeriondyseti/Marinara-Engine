@@ -8,6 +8,7 @@ import {
   readNoodlePollFromMetadata,
   type NoodleAccount,
   type NoodleAccountKind,
+  type NoodleAvatarCrop,
   type NoodleAuthorSnapshot,
   type NoodleBootstrap,
   type NoodleCreateInteractionInput,
@@ -66,6 +67,40 @@ function parseRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }
 
+export function parseNoodleAvatarCrop(value: unknown): NoodleAvatarCrop | null {
+  let parsed = value;
+  if (typeof parsed === "string") {
+    if (!parsed.trim()) return null;
+    try {
+      parsed = JSON.parse(parsed);
+    } catch {
+      return null;
+    }
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const crop = parsed as Record<string, unknown>;
+  const finite = (entry: unknown): entry is number => typeof entry === "number" && Number.isFinite(entry);
+  if (
+    finite(crop.srcX) &&
+    finite(crop.srcY) &&
+    finite(crop.srcWidth) &&
+    finite(crop.srcHeight) &&
+    crop.srcWidth > 0 &&
+    crop.srcHeight > 0
+  ) {
+    return { srcX: crop.srcX, srcY: crop.srcY, srcWidth: crop.srcWidth, srcHeight: crop.srcHeight };
+  }
+  if (finite(crop.zoom) && finite(crop.offsetX) && finite(crop.offsetY) && crop.zoom > 0) {
+    return {
+      zoom: crop.zoom,
+      offsetX: crop.offsetX,
+      offsetY: crop.offsetY,
+      ...(crop.fullImage === true ? { fullImage: true } : {}),
+    };
+  }
+  return null;
+}
+
 function parseStringArray(value: unknown): string[] {
   if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string" && item.length > 0);
   if (typeof value !== "string") return [];
@@ -95,6 +130,7 @@ function parseAuthorSnapshot(value: unknown): NoodleAuthorSnapshot | null {
     handle,
     displayName,
     avatarUrl: typeof parsed.avatarUrl === "string" && parsed.avatarUrl ? parsed.avatarUrl : null,
+    avatarCrop: parseNoodleAvatarCrop(parsed.avatarCrop),
   };
 }
 
@@ -165,6 +201,7 @@ function normalizeSettings(raw: unknown): NoodleSettings {
 }
 
 function mapAccount(row: AccountRow): NoodleAccount {
+  const settings = parseRecord(row.settings);
   return {
     id: row.id,
     kind: normalizeAccountKind(row.kind),
@@ -173,8 +210,9 @@ function mapAccount(row: AccountRow): NoodleAccount {
     displayName: row.displayName,
     bio: row.bio ?? "",
     avatarUrl: row.avatarUrl ?? null,
+    avatarCrop: parseNoodleAvatarCrop(settings.avatarCrop),
     invited: normalizeBool(row.invited),
-    settings: parseRecord(row.settings),
+    settings,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -188,6 +226,7 @@ function snapshotForAccount(account: NoodleAccount): NoodleAuthorSnapshot {
     handle: account.handle,
     displayName: account.displayName,
     avatarUrl: account.avatarUrl,
+    avatarCrop: account.avatarCrop,
   };
 }
 
@@ -327,6 +366,7 @@ export function createNoodleStorage(db: DB) {
       entityId: string;
       displayName: string;
       avatarUrl?: string | null;
+      avatarCrop?: NoodleAvatarCrop | null;
       bio?: string | null;
       invited?: boolean;
     }): Promise<NoodleAccount> {
@@ -336,6 +376,9 @@ export function createNoodleStorage(db: DB) {
         if (!existing.displayName.trim()) updates.displayName = input.displayName || existing.handle;
         if (!existing.bio.trim() && input.bio) updates.bio = input.bio;
         if (!existing.avatarUrl && input.avatarUrl) updates.avatarUrl = input.avatarUrl;
+        if (input.avatarCrop !== undefined) {
+          updates.settings = JSON.stringify({ ...existing.settings, avatarCrop: input.avatarCrop });
+        }
         if (input.invited !== undefined) updates.invited = String(input.invited);
         await db.update(noodleAccounts).set(updates).where(eq(noodleAccounts.id, existing.id));
         return (await this.getAccountById(existing.id)) ?? existing;
@@ -353,7 +396,7 @@ export function createNoodleStorage(db: DB) {
         bio: input.bio?.trim() ?? "",
         avatarUrl: input.avatarUrl ?? null,
         invited: String(input.invited ?? input.kind === "persona"),
-        settings: "{}",
+        settings: JSON.stringify(input.avatarCrop !== undefined ? { avatarCrop: input.avatarCrop } : {}),
         createdAt: timestamp,
         updatedAt: timestamp,
       });

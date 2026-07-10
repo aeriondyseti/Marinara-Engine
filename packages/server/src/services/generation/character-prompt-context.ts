@@ -7,7 +7,7 @@ import {
   type RPGStatsConfig,
 } from "@marinara-engine/shared";
 import { wrapContent } from "../prompt/format-engine.js";
-import { sanitizePromptLeaf } from "../prompt/prompt-escaping.js";
+import { sanitizeExampleDialoguePromptLeaf, sanitizePromptLeaf } from "../prompt/prompt-escaping.js";
 import { cardPromptText } from "./generation-text-utils.js";
 
 export type CharacterPromptInfo = {
@@ -158,7 +158,16 @@ export function buildCharacterMacroProfilesById(charInfo: CharacterPromptInfo[])
 function wrapFieldEntries(fields: Array<{ label: string; value: string }>, format: WrapFormat): string[] {
   return fields
     .filter(({ value }) => value.trim().length > 0)
-    .map(({ label, value }) => wrapContent(sanitizePromptLeaf(value, format), label, format, 2));
+    .map(({ label, value }) =>
+      wrapContent(
+        label === "example_dialogue"
+          ? sanitizeExampleDialoguePromptLeaf(value, format)
+          : sanitizePromptLeaf(value, format),
+        label,
+        format,
+        2,
+      ),
+    );
 }
 
 function hasNamedProfileBlock(content: string, name: string): boolean {
