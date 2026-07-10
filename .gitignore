@@ -38,6 +38,8 @@ Thumbs.db
 
 # User data — uploaded avatars, backgrounds, sprites, and runtime files
 data/
+# The in-app documentation category folder is not user data
+!docs/data/
 packages/server/data/
 
 # Logs
