@@ -12,6 +12,7 @@ import {
   resolveDeferredCharacterMacros,
   hasDeferredCharacterMacros,
   hasDeferredRelocationConditionals,
+  collectDeferredRelocationConditionOperands,
   DEFERRED_RELOCATION_CONDITIONAL_TOKEN_RE,
   parseDeferredConditionalPayload,
   selectConditionalPayloadBranch,
@@ -492,40 +493,40 @@ function conversationContextMacroPattern(key: ConversationContextMacroKey): RegE
   return new RegExp(`\\{\\{\\s*(?:${aliases.join("|")})\\s*\\}\\}`, "gi");
 }
 
-// Matches a relocation alias used as a BARE {{#if}}/{{else if}} operand, e.g.
-// `{{#if memories != ""}}` (the braced `{{#if {{memories}}}}` form is already
-// caught by conversationContextMacroPattern). Used so a header-only conditional
-// block still triggers the underlying retrieval (#3448).
-function conversationContextMacroConditionPattern(key: ConversationContextMacroKey): RegExp {
-  const aliases = CONVERSATION_CONTEXT_MACRO_ALIASES[key].map((alias) => alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  return new RegExp(`\\{\\{\\s*(?:#if|else\\s+if)\\b[^}]*\\b(?:${aliases.join("|")})\\b[^}]*\\}\\}`, "gi");
-}
-
-// Lowercased relocation aliases, for the deferConditionalOperand predicate.
-const RELOCATION_CONDITION_OPERANDS: ReadonlySet<string> = new Set(
-  CONVERSATION_RELOCATION_MACRO_KEYS.flatMap((key) => CONVERSATION_CONTEXT_MACRO_ALIASES[key]).map((alias) =>
-    alias.toLowerCase(),
-  ),
-);
-
-// True when a {{#if}} operand references a relocation macro (bare `memories` or
-// braced `{{memories}}`). A quoted literal like `"memories"` is NOT a reference.
-function isRelocationConditionOperand(operand: string): boolean {
+// Maps a {{#if}} operand (bare `memories` or braced `{{memories}}`) back to its
+// relocation key, or null. A quoted literal (`"memories"`) or a dotted/prefixed
+// operand (`user.status`) is NOT a reference; About-me fields are excluded (they
+// are engine-resolved convo fields, not route-filled). Drives BOTH the defer
+// predicate and the token-based slot detection so the two can never disagree —
+// which a loose {{#if}}-body regex could not guarantee (#3449).
+function relocationKeyForOperand(operand: string): ConversationRelocationMacroKey | null {
   const normalized = operand
     .trim()
     .replace(/^\{\{\s*|\s*\}\}$/g, "")
     .replace(/^@/, "")
     .trim()
     .toLowerCase();
-  return RELOCATION_CONDITION_OPERANDS.has(normalized);
+  if (!normalized) return null;
+  for (const key of CONVERSATION_RELOCATION_MACRO_KEYS) {
+    if (CONVERSATION_CONTEXT_MACRO_ALIASES[key].some((alias) => alias.toLowerCase() === normalized)) return key;
+  }
+  return null;
 }
 
+function isRelocationConditionOperand(operand: string): boolean {
+  return relocationKeyForOperand(operand) !== null;
+}
+
+// Bare-placeholder detection only. Conditional references are OR'd in afterward
+// from the ACTUAL deferred tokens (collectDeferredRelocationConditionOperands +
+// relocationKeyForOperand), so slot detection stays in lock-step with the defer
+// decision — the previous loose regex over `{{#if …}}` bodies over-matched a
+// relocation word inside a quoted literal / dotted operand and dropped the
+// underlying retrieval (#3449).
 function resolveConversationContextMacroSlots(template: string): ConversationContextMacroSlots {
   const slots: ConversationContextMacroSlots = { ...EMPTY_CONVERSATION_CONTEXT_MACRO_SLOTS };
   for (const key of Object.keys(CONVERSATION_CONTEXT_MACRO_ALIASES) as ConversationContextMacroKey[]) {
-    slots[key] =
-      conversationContextMacroPattern(key).test(template) ||
-      (key !== "aboutMe" && conversationContextMacroConditionPattern(key).test(template));
+    slots[key] = conversationContextMacroPattern(key).test(template);
   }
   return slots;
 }
@@ -1939,6 +1940,14 @@ export async function generateRoutes(app: FastifyInstance) {
             // filled in later; the decode pass below evaluates them (#3448).
             { deferConditionalOperand: isRelocationConditionOperand },
           );
+          // Mark each relocation macro a deferred conditional actually references
+          // as "used" so its retrieval runs and its value is captured for the
+          // decode. Reads the real tokens (not a regex), so it agrees exactly
+          // with what was deferred above — no over/under-match (#3449).
+          for (const operand of collectDeferredRelocationConditionOperands(renderedConversationPrompt)) {
+            const key = relocationKeyForOperand(operand);
+            if (key) conversationContextMacroSlots[key] = true;
+          }
           const conversationInstructionParts = [unwrapConversationInstructions(renderedConversationPrompt)];
 
           if (isGroup && earlyGroupMode !== "individual") {
@@ -2098,10 +2107,15 @@ export async function generateRoutes(app: FastifyInstance) {
               ? [{ role: "user" as const, content: convoProfileBlocks.behaviorPostHistoryBlock }]
               : []),
           ];
-          const conversationContextInserted = conversationContextMacroSlots.context
-            ? replaceConversationContextMacro(finalMessages, "context", contextBlock)
-            : false;
-          if (!conversationContextInserted) {
+          if (conversationContextMacroSlots.context) {
+            // The preset references {{context}} — as a literal placeholder or a
+            // deferred {{#if context}} conditional. Rendering is owned by the
+            // in-place replace or the later decode pass; don't ALSO push the tail
+            // fallback, which would double-inject the context block (#3449). (A
+            // deferred token has no literal to replace, so the replace() return
+            // is not a reliable "inserted" signal — key on the slot instead.)
+            replaceConversationContextMacro(finalMessages, "context", contextBlock);
+          } else {
             finalMessages.push({ role: "user" as const, content: contextBlock });
           }
           if (conversationContextMacroSlots.reactRules) {

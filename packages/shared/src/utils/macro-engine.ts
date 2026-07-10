@@ -255,6 +255,32 @@ export function hasDeferredRelocationConditionals(template: string): boolean {
   return template.includes(DEFERRED_RELOCATION_CONDITIONAL_TOKEN_PREFIX);
 }
 
+/**
+ * Extract the condition operands (left/right of each branch) from every deferred
+ * relocation conditional token in `text`. Lets the caller decide which of its
+ * slots the deferred blocks actually reference using the SAME parse the deferral
+ * used — so slot detection can never disagree with the defer decision (#3449).
+ */
+export function collectDeferredRelocationConditionOperands(text: string): string[] {
+  if (!text.includes(DEFERRED_RELOCATION_CONDITIONAL_TOKEN_PREFIX)) return [];
+  const operands: string[] = [];
+  for (const match of text.matchAll(DEFERRED_RELOCATION_CONDITIONAL_TOKEN_RE)) {
+    const payload = parseDeferredConditionalPayload(match[1]!);
+    if (!payload) continue;
+    const chainBranches = (payload as ConditionalChainPayload).branches;
+    const branches = Array.isArray(chainBranches)
+      ? chainBranches
+      : [{ condition: (payload as ConditionalBlockPayload).condition, content: "" }];
+    for (const branch of branches) {
+      if (branch.condition === null) continue;
+      const parsed = parseConditionExpression(branch.condition);
+      operands.push(parsed.left);
+      if (parsed.right !== undefined) operands.push(parsed.right);
+    }
+  }
+  return operands;
+}
+
 export const SUPPORTED_MACROS: readonly SupportedMacroDefinition[] = [
   { category: "Identity", syntax: "{{user}}", description: "Current user or persona name" },
   { category: "Identity", syntax: "{{userName}}", description: "Alias for {{user}}" },
@@ -984,8 +1010,13 @@ function branchDependsOnDeferredOperand(
 /**
  * Bake the standalone-block whitespace trim into a deferred block's branch
  * contents so the later-filled value collapses onto the surrounding lines the
- * same way an evaluated block would (leading newline after {{#if}}/{{else}}
- * dropped; the {{/if}} line's indent dropped). Best-effort for else chains.
+ * same way an evaluated block would. Each branch's content starts right after
+ * its governing tag ({{#if}}/{{else}}/{{else if}}), so under a standalone
+ * opening the leading newline of WHICHEVER branch is later selected must be
+ * dropped — matching the evaluate-now path, which strips the selected branch's
+ * leading newline regardless of which one it is (#3449). The trailing {{/if}}
+ * indent trim applies only to the last branch (only its line's standalone-ness
+ * was measured).
  */
 function trimDeferredStandaloneBranches(
   branches: ConditionalBranchPayload[],
@@ -995,7 +1026,7 @@ function trimDeferredStandaloneBranches(
   if (!openStandalone && !closeStandalone) return branches;
   return branches.map((branch, index) => {
     let content = branch.content;
-    if (openStandalone && index === 0) content = content.replace(/^[ \t]*\n/, "");
+    if (openStandalone) content = content.replace(/^[ \t]*\n/, "");
     if (closeStandalone && index === branches.length - 1) content = content.replace(/\n[ \t]*$/, "\n");
     return { condition: branch.condition, content };
   });
