@@ -175,6 +175,13 @@ export async function appendConversationCustomAssetAdvertisements(args: {
   characterGallery: Required<Pick<GalleryAssetStore, "listByCharacterId">>;
   connections: ReturnType<typeof createConnectionsStorage>;
   conversationCustomEmojiUrlByName: Map<string, string>;
+  /**
+   * When set, the preset contains a {{replyRules}} macro: render the emoji/sticker
+   * reply advertisements at that macro instead of appending them automatically
+   * (parity with {{reactRules}}). Receives the combined block (empty string when
+   * there are no advertisements, so the macro token is still stripped). #3438
+   */
+  replyRulesMacroPlacement?: (content: string) => void;
 }): Promise<void> {
   if (args.chatMode !== "conversation") return;
 
@@ -264,9 +271,13 @@ export async function appendConversationCustomAssetAdvertisements(args: {
 
   const assetQuery = latestHistoryUserContent(args.finalMessages) || args.currentUserInputContent() || "";
 
+  // Built below, then either placed at a {{replyRules}} macro (parity with
+  // {{reactRules}}) or appended to the first system message (#3438).
+  let emojiAdvertisement: string | null = null;
+  let stickerAdvertisement: string | null = null;
+
   if (sharedEmojiNames.length > 0 || ownEmojisByChar.size > 0) {
     const emojiPrefs = normalizeCustomEmojiSelection(args.chatMeta.customEmojiSelection);
-    let emojiAdvertisement: string | null = null;
     let toolSelectionHandled = false;
 
     if (
@@ -311,13 +322,10 @@ export async function appendConversationCustomAssetAdvertisements(args: {
         emojiPrefs.maxCount,
       );
     }
-
-    if (emojiAdvertisement) appendToFirstSystemMessage(args.finalMessages, emojiAdvertisement);
   }
 
   if (sharedStickerNames.length > 0 || ownStickersByChar.size > 0) {
     const stickerPrefs = normalizeCustomEmojiSelection(args.chatMeta.customEmojiSelection);
-    let stickerAdvertisement: string | null = null;
     let toolSelectionHandled = false;
 
     if (
@@ -365,7 +373,17 @@ export async function appendConversationCustomAssetAdvertisements(args: {
         stickerPrefs.maxCount,
       );
     }
+  }
 
+  // When the preset places a {{replyRules}} macro, render the emoji/sticker reply
+  // advertisements there (suppressing the automatic append) — mirroring how
+  // {{reactRules}} relocates the react-rules block (#3438). Otherwise keep the
+  // historical behavior: append each advertisement to the first system message,
+  // emoji then sticker.
+  if (args.replyRulesMacroPlacement) {
+    args.replyRulesMacroPlacement([emojiAdvertisement, stickerAdvertisement].filter(Boolean).join("\n\n"));
+  } else {
+    if (emojiAdvertisement) appendToFirstSystemMessage(args.finalMessages, emojiAdvertisement);
     if (stickerAdvertisement) appendToFirstSystemMessage(args.finalMessages, stickerAdvertisement);
   }
 }
