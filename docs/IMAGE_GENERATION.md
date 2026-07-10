@@ -53,6 +53,12 @@ Select the built-in **NovelAI Keyframes** storyboard prompt for compact ASCII Da
 
 When **Expose image prompts before sending** is enabled in **Settings -> Generations -> Image Generation**, Marinara shows the final compiled positive prompt and, when available, the final compiled negative prompt before generation. Editing either field changes exactly what is sent for that request; reviewed prompts are not compiled a second time after confirmation.
 
+## Noodle post images
+
+Noodle can generate images for model-authored social posts with its own image connection, daily limit, avatar-reference controls, character descriptions, and optional Gallery attachments. Its registered prompt override is **Noodle Post Image** (`noodle.imagePost`) under **Settings -> Generations -> Image Generation Prompt Overrides**. Noodle's local **Prompt instructions** setting is passed into that override before the result goes through the normal style-profile compiler.
+
+See [Noodle](NOODLE.md#image-generation) for setup and the [Noodle prompt source map](NOODLE.md#prompt-source-map-for-maintainers) for the implementation entry points.
+
 ## Scene videos
 
 Scene videos are configured separately from still-image generation. They use **Video Generation** connections, animate existing Gallery illustrations, and save MP4 files in their own media store. See [Scene Video Generation](SCENE_VIDEO_GENERATION.md) for setup, Gallery controls, provider defaults, and editable prompt templates.

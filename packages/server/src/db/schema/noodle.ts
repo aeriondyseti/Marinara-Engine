@@ -38,16 +38,21 @@ export const noodleInteractions = sqliteTable(
   {
     id: text("id").primaryKey(),
     postId: text("post_id").notNull(),
+    parentInteractionId: text("parent_interaction_id"),
     actorAccountId: text("actor_account_id").notNull(),
     type: text("type").notNull(),
     content: text("content"),
+    imageUrl: text("image_url"),
     actorSnapshot: text("actor_snapshot").notNull().default("{}"),
     createdAt: text("created_at").notNull(),
   },
   (table) => ({
-    noodleToggleInteractionUnique: uniqueIndex("uniq_noodle_toggle_interactions")
+    noodleRootToggleInteractionUnique: uniqueIndex("uniq_noodle_root_toggle_interactions")
       .on(table.postId, table.actorAccountId, table.type)
-      .where(sql`type IN ('like', 'repost')`),
+      .where(sql`type IN ('like', 'repost') AND parent_interaction_id IS NULL`),
+    noodleReplyLikeUnique: uniqueIndex("uniq_noodle_reply_like")
+      .on(table.postId, table.actorAccountId, table.type, table.parentInteractionId)
+      .where(sql`type = 'like' AND parent_interaction_id IS NOT NULL`),
   }),
 );
 

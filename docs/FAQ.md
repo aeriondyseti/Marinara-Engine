@@ -2,6 +2,18 @@
 
 ---
 
+<details>
+<summary><strong>How do I set up Noodle?</strong></summary>
+<br>
+
+Open the **Noodle** tab, go to its **Settings**, invite characters or character folders, choose a text-generation connection, and select **Refresh now**. You can then configure automatic refresh times, image generation, random users, and carryover between Noodle and Conversation, Roleplay, or Game chats.
+
+See the [Noodle guide](NOODLE.md) for mobile navigation, mentions, polls, replies, generated images, automatic scheduling, chat context, troubleshooting, and the maintainer prompt source map.
+
+</details>
+
+---
+
 <a id="how-do-i-access-marinara-engine-from-my-phone-or-another-device"></a>
 
 <details>

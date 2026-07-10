@@ -3,12 +3,22 @@
 // ──────────────────────────────────────────────
 
 export type NoodleAccountKind = "persona" | "character" | "random_user";
-export type NoodleInteractionType = "like" | "repost" | "reply";
+export type NoodleInteractionType = "like" | "repost" | "reply" | "vote";
 export type NoodlePostSource = "manual" | "generated";
 export type NoodleTheme = "system" | "light" | "dark";
 export type NoodleCarryoverMode = "off" | "conversation" | "roleplay" | "game" | "all";
 export type NoodleCarryoverTarget = "conversation" | "roleplay" | "game";
 export type NoodleParticipantSelectionMode = "all" | "random_range" | "exact";
+
+export interface NoodlePollOption {
+  id: string;
+  label: string;
+}
+
+export interface NoodlePoll {
+  question: string;
+  options: NoodlePollOption[];
+}
 
 export interface NoodleSettings {
   refreshesPerDay: number;
@@ -77,9 +87,11 @@ export interface NoodlePost {
 export interface NoodleInteraction {
   id: string;
   postId: string;
+  parentInteractionId: string | null;
   actorAccountId: string;
   type: NoodleInteractionType;
   content: string | null;
+  imageUrl: string | null;
   actorSnapshot: NoodleAuthorSnapshot | null;
   createdAt: string;
 }
@@ -104,8 +116,28 @@ export interface NoodleRefreshRun {
   updatedAt: string;
 }
 
+export type NoodleRefreshSchedulerState = "disabled" | "scheduled" | "due" | "retrying" | "completed";
+
+export interface NoodleRefreshSchedulerStatus {
+  state: NoodleRefreshSchedulerState;
+  scheduleDate: string;
+  timezone: string;
+  refreshesPerDay: number;
+  scheduledTimes: string[];
+  completedTimes: string[];
+  completedSlots: number;
+  successfulRefreshes: number;
+  skippedSlots: number;
+  nextRefreshAt: string | null;
+  nextAttemptAt: string | null;
+  lastAutomaticRefreshAt: string | null;
+  lastAttemptAt: string | null;
+  lastError: string | null;
+}
+
 export interface NoodleBootstrap {
   settings: NoodleSettings;
+  scheduler: NoodleRefreshSchedulerStatus;
   accounts: NoodleAccount[];
   posts: NoodlePost[];
   interactions: NoodleInteraction[];

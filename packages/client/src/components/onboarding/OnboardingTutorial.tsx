@@ -32,6 +32,8 @@ interface TourStep {
   chatMode?: ChatModeShortcut;
   /** Open the chat sidebar without changing its mode */
   openSidebar?: boolean;
+  /** Open the Noodle social timeline while this step is active */
+  openNoodle?: boolean;
   /** Optional settings tab to show when the Settings panel is open */
   settingsTab?: string;
   /** Professor Mari sprite to display */
@@ -143,6 +145,14 @@ const STEPS: TourStep[] = [
     sprite: { src: "/sprites/mari/Mari_point_middle_left.png" },
   },
   {
+    target: "noodle-tab",
+    title: "Noodle",
+    body: "Noodle is a fake social media website where you can see invited characters of your choice interacting with each other, posting about their lives, sharing photos, and discussing your latest chats! You can participate too: like and follow them, and share your hot noodles with them. The timeline can update automatically if you choose. To set it up, head to Settings inside the Noodle tab first.",
+    side: "bottom",
+    openNoodle: true,
+    sprite: { src: "/sprites/mari/Mari_point_up_left.png", flip: true },
+  },
+  {
     target: "panel-settings",
     title: "Migrating from SillyTavern?",
     body: "If you have characters, chats, or presets from SillyTavern, open Settings and use the Import tab. I can bring those files in so you do not have to rebuild your library by hand.",
@@ -216,7 +226,7 @@ function isPanelTourTarget(target: string | null): boolean {
 }
 
 function isTopbarTourTarget(target: string | null): boolean {
-  return target === "sidebar-toggle" || isPanelTourTarget(target);
+  return target === "sidebar-toggle" || target === "noodle-tab" || isPanelTourTarget(target);
 }
 
 function isChatModeTourTarget(target: string | null): boolean {
@@ -495,6 +505,8 @@ function OnboardingTutorialInner() {
   const setSettingsTab = useUIStore((s) => s.setSettingsTab);
   const setSidebarOpen = useUIStore((s) => s.setSidebarOpen);
   const requestChatModeShortcut = useUIStore((s) => s.requestChatModeShortcut);
+  const openNoodle = useUIStore((s) => s.openNoodle);
+  const closeNoodle = useUIStore((s) => s.closeNoodle);
   const trackAchievement = useTrackAchievement();
 
   const [step, setStep] = useState(0);
@@ -514,26 +526,45 @@ function OnboardingTutorialInner() {
 
   // ── Side-effects when step changes ──
   useEffect(() => {
+    if (currentStep.openNoodle) {
+      closeRightPanel();
+      setSidebarOpen(false);
+      openNoodle();
+      return;
+    }
+
     if (currentStep.chatMode) {
+      closeNoodle();
       closeRightPanel();
       requestChatModeShortcut(currentStep.chatMode);
       return;
     }
 
     if (currentStep.openSidebar) {
+      closeNoodle();
       closeRightPanel();
       setSidebarOpen(true);
       return;
     }
 
     if (currentStep.openPanel) {
+      closeNoodle();
       setSidebarOpen(false);
       openRightPanel(currentStep.openPanel);
       if (currentStep.settingsTab) {
         setSettingsTab(currentStep.settingsTab);
       }
     }
-  }, [closeRightPanel, currentStep, openRightPanel, requestChatModeShortcut, setSettingsTab, setSidebarOpen]);
+  }, [
+    closeNoodle,
+    closeRightPanel,
+    currentStep,
+    openNoodle,
+    openRightPanel,
+    requestChatModeShortcut,
+    setSettingsTab,
+    setSidebarOpen,
+  ]);
 
   // Track the target element position (handles resize/scroll)
   const lastRectRef = useRef<Rect | null>(null);

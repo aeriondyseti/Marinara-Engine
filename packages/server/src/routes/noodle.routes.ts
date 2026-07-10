@@ -2,8 +2,12 @@
 // Routes: Noodle Fake Social Media
 // ──────────────────────────────────────────────
 import type { FastifyInstance } from "fastify";
-import { basename } from "path";
+import { existsSync, readFileSync } from "fs";
+import { basename, dirname, resolve } from "path";
+import { fileURLToPath } from "url";
 import {
+  createNoodlePoll,
+  extractNoodleMentionHandles,
   noodleAccountUpdateSchema,
   noodleBulkInviteSchema,
   noodleCreateInteractionSchema,
@@ -13,9 +17,11 @@ import {
   noodleInviteSchema,
   noodlePostUpdateSchema,
   noodleRemoveInteractionSchema,
+  noodleRescheduleRefreshSchema,
   noodleRefreshSchema,
   noodleSettingsUpdateSchema,
   PROFESSOR_MARI_ID,
+  readNoodlePollFromMetadata,
   type APIProvider,
   type NoodleAccount,
   type NoodleBootstrap,
@@ -42,6 +48,35 @@ import { resolveIllustratorCharacterReferences } from "./generate/illustrator-re
 import { resolveBaseUrl } from "./generate/generate-route-utils.js";
 import { logger, logDebugOverride } from "../lib/logger.js";
 import { clampGenerationMaxOutputTokens } from "../services/generation/output-token-limits.js";
+import {
+  noodleRefreshSchedulerStatus,
+  rescheduleNoodleRefreshTime,
+} from "../services/noodle/noodle-refresh-schedule.js";
+import {
+  noodlePastMemoryCutoff,
+  noodlePastMemorySampleSize,
+  noodleTimelineFeatureInstructions,
+  sampleNoodlePastMemories,
+} from "../services/noodle/noodle-prompt.js";
+
+const NOODLE_ROUTE_DIR = dirname(fileURLToPath(import.meta.url));
+const CLIENT_PUBLIC_DIR = resolve(NOODLE_ROUTE_DIR, "../../../client/public");
+const PROFESSOR_MARI_REFERENCE_ASSETS = [
+  "sprites/mari/Mari_profile.png",
+  "sprites/mari/chibi-professor-mari.png",
+] as const;
+
+function readProfessorMariReferenceImages(): string[] {
+  return PROFESSOR_MARI_REFERENCE_ASSETS.flatMap((relativePath) => {
+    const filePath = resolve(CLIENT_PUBLIC_DIR, relativePath);
+    if (!existsSync(filePath)) return [];
+    try {
+      return [readFileSync(filePath).toString("base64")];
+    } catch {
+      return [];
+    }
+  });
+}
 
 function parseRecord(value: unknown): Record<string, unknown> {
   if (!value) return {};
@@ -78,7 +113,7 @@ function getErrorMessage(error: unknown): string {
 }
 
 const NOODLE_ADULT_PLATFORM_POLICY =
-  "Noodle only accepts confirmed adult accounts and personas. Every participant on Noodle is 18+; minors are not allowed on the platform. BSFW/NSFW content is allowed, anything goes, and adult in-character drama, flirtation, gossip, and explicit references may appear when they fit the accounts involved.";
+  "Noodle only accepts confirmed adult accounts and personas. Every participant on Noodle is 18+; minors are not allowed on the platform. NSFW content is allowed, anything goes, and adult in-character drama, flirtation, gossip, and explicit references may appear when they fit the accounts involved.";
 
 function dayStartIso(offsetDays = 0) {
   const d = new Date();
@@ -166,6 +201,21 @@ function readBoolSetting(settings: Record<string, unknown>, key: string) {
 
 function isProfileGenerated(account: NoodleAccount) {
   return readBoolSetting(account.settings, "profileGenerated");
+}
+
+function mentionedCharacterAccounts(accounts: NoodleAccount[], content: string): NoodleAccount[] {
+  const mentionedHandles = new Set(extractNoodleMentionHandles(content));
+  if (mentionedHandles.size === 0) return [];
+  return accounts.filter(
+    (account) => account.kind === "character" && mentionedHandles.has(account.handle.toLowerCase()),
+  );
+}
+
+function mentionedAccountMetadata(accounts: NoodleAccount[]) {
+  return {
+    mentionedAccountIds: accounts.map((account) => account.id),
+    mentionedEntityIds: accounts.map((account) => account.entityId),
+  };
 }
 
 function generatedProfileSettings(settings: Record<string, unknown>, location: string, bannerUrl: string | null) {
@@ -363,14 +413,33 @@ async function ensureSelectedGroupCharacterAccounts(
   return selectedCharacterIds;
 }
 
-function formatTimelineForPrompt(posts: NoodlePost[]) {
-  if (posts.length === 0) return "No Noodle posts yet today.";
+function formatTimelineForPrompt(
+  posts: NoodlePost[],
+  interactions: Array<{ postId: string; type: string; content: string | null }>,
+  options: { emptyMessage?: string; includeTimestamp?: boolean } = {},
+) {
+  if (posts.length === 0) return options.emptyMessage ?? "No Noodle posts yet today.";
   return posts
     .slice()
     .reverse()
     .map((post) => {
       const author = post.authorSnapshot?.displayName ?? post.authorAccountId;
-      return `- ${post.id} by ${author}: ${post.content}${post.imagePrompt ? ` [image prompt: ${post.imagePrompt}]` : ""}`;
+      const poll = readNoodlePollFromMetadata(post.metadata);
+      const pollSummary = poll
+        ? ` [poll: ${poll.question}; ${poll.options
+            .map((option, index) => {
+              const votes = interactions.filter(
+                (interaction) =>
+                  interaction.postId === post.id && interaction.type === "vote" && interaction.content === option.id,
+              ).length;
+              return `option ${index}: ${option.label} (${votes} vote${votes === 1 ? "" : "s"})`;
+            })
+            .join("; ")}]`
+        : "";
+      const timestamp = options.includeTimestamp ? ` at ${post.createdAt}` : "";
+      return `- ${post.id} by ${author}${timestamp}: ${post.content}${pollSummary}${
+        post.imagePrompt ? ` [image prompt: ${post.imagePrompt}]` : ""
+      }`;
     })
     .join("\n");
 }
@@ -551,8 +620,13 @@ async function buildRefreshPrompt(input: {
   const characterRows = await Promise.all(selectedCharacterIds.map((id) => input.characters.getById(id)));
   const personaRow = input.personaAccount ? await input.characters.getPersona(input.personaAccount.entityId) : null;
   const todayPosts = await input.noodle.listPosts({ since: dayStartIso(), limit: 100 });
-  const [chatContext] = await Promise.all([
+  const pastMemorySampleSize = noodlePastMemorySampleSize();
+  const olderPosts = pastMemorySampleSize > 0 ? await input.noodle.listPostsBefore(noodlePastMemoryCutoff()) : [];
+  const recalledPosts = sampleNoodlePastMemories(olderPosts, pastMemorySampleSize);
+  const [chatContext, todayInteractions, recalledInteractions] = await Promise.all([
     buildOptedInChatContext(input.chats, input.characters, selectedCharacterIds),
+    input.noodle.listInteractions(todayPosts.map((post) => post.id)),
+    input.noodle.listInteractions(recalledPosts.map((post) => post.id)),
   ]);
 
   const characterContext = characterRows
@@ -578,14 +652,13 @@ async function buildRefreshPrompt(input: {
   const system = [
     "You write a fake social media timeline for Marinara Engine's in-app parody site called Noodle.",
     NOODLE_ADULT_PLATFORM_POLICY,
-    "Characters should act in character but like people posting online: funny, messy, indirect, petty, affectionate, dramatic, or casual as fits them.",
-    "Random user accounts are not characters. Treat them as ordinary fictional Noodle profiles that may follow, like, reply, repost, gossip, or casually join public drama.",
-    "Structured actions are limited to posts, follows, likes, reposts, and replies.",
-    "Use only the active accounts listed by entityId. Do not invent accounts.",
-    "Fresh interactions may target existing recent posts or posts you create in this response.",
-    "When image generation is enabled, imagePrompt should be a concrete visual idea for the attached image: either a character-focused image of the author/their scene/selfie, or an in-character meme they would plausibly post.",
-    "When gallery attachments are enabled, set attachGalleryImage to true only when the post naturally fits an existing gallery or chat image.",
-    "Return JSON only. No prose outside the JSON object.",
+    "- Characters should act in character but like people posting online: funny, messy, indirect, petty, affectionate, dramatic, vulgar, or casual as fits them.",
+    "- Random user accounts are not characters. Treat them as ordinary fictional Noodle profiles that may follow, like, reply, repost, gossip, or casually join public drama.",
+    "- Structured actions are limited to posts, polls, follows, likes, reposts, replies, and poll votes.",
+    "- Generated interactions may target existing posts included in this prompt or posts you create in this response.",
+    "- An exact @handle in post or reply text tags that active account. Preserve the @handle exactly when mentioning someone.",
+    ...noodleTimelineFeatureInstructions(input.settings),
+    "- Return JSON only. No prose outside the JSON object.",
   ].join("\n");
 
   const context = [
@@ -606,7 +679,18 @@ async function buildRefreshPrompt(input: {
     chatContext,
     "",
     "# Today's Existing Noodle Timeline",
-    formatTimelineForPrompt(todayPosts),
+    formatTimelineForPrompt(todayPosts, todayInteractions),
+    ...(recalledPosts.length > 0
+      ? [
+          "",
+          "# Randomly Recalled Older Noodle Activity",
+          "These posts are more than 48 hours old and are optional long-term memories. Active accounts may naturally remember, revisit, like, repost, reply to, or build on them, but do not force a reference.",
+          formatTimelineForPrompt(recalledPosts, recalledInteractions, {
+            emptyMessage: "No older Noodle activity was recalled.",
+            includeTimestamp: true,
+          }),
+        ]
+      : []),
     "",
     "# Quotas",
     `posts: at most ${input.settings.maxGeneratedPostsPerRefresh}`,
@@ -631,6 +715,7 @@ async function buildRefreshPrompt(input: {
             tempId: "local id used only inside this response",
             authorEntityId: "exact entityId from Active Noodle Accounts",
             content: "post text",
+            poll: { question: "optional poll question", options: ["first answer", "second answer"] },
             imagePrompt: "optional image prompt or null",
             attachGalleryImage: false,
           },
@@ -640,8 +725,9 @@ async function buildRefreshPrompt(input: {
             actorEntityId: "exact entityId from Active Noodle Accounts",
             targetTempId: "tempId from posts, if targeting a newly created post",
             targetPostId: "existing post id, if targeting an existing post",
-            type: "like | repost | reply",
+            type: "like | repost | reply | vote",
             content: "required for reply, optional/null otherwise",
+            pollOptionIndex: 1,
           },
         ],
         follows: [
@@ -669,6 +755,7 @@ async function buildRefreshPrompt(input: {
       { role: "user" as const, content: outputFormat },
     ] satisfies ChatMessage[],
     promptForLog: `${system}\n\n${context}\n\n${outputFormat}`,
+    recalledPostIds: recalledPosts.map((post) => post.id),
   };
 }
 
@@ -778,6 +865,7 @@ async function generateMissingNoodleProfiles(input: {
 function interactionDigestVerb(type: NoodleInteractionType) {
   if (type === "reply") return "replied on";
   if (type === "repost") return "reposted";
+  if (type === "vote") return "voted in";
   return "liked";
 }
 
@@ -839,8 +927,13 @@ async function generateNoodlePostImage(input: {
       if (input.settings.imageGenerationIncludeDescriptions && referenceResolution.appearanceBlock) {
         characterDescription = referenceResolution.appearanceBlock;
       }
-      if (input.settings.imageGenerationUseAvatarReferences && referenceResolution.referenceImages.length > 0) {
-        referenceImages = referenceResolution.referenceImages;
+      if (input.settings.imageGenerationUseAvatarReferences) {
+        const builtInMariReferences =
+          input.account.entityId === PROFESSOR_MARI_ID ? readProfessorMariReferenceImages() : [];
+        const combinedReferences = [...builtInMariReferences, ...referenceResolution.referenceImages];
+        if (combinedReferences.length > 0) {
+          referenceImages = Array.from(new Set(combinedReferences)).slice(0, 6);
+        }
       }
     }
   }
@@ -923,6 +1016,7 @@ export async function noodleRoutes(app: FastifyInstance) {
   const gallery = createGalleryStorage(app.db);
   const characterGallery = createCharacterGalleryStorage(app.db);
   const promptOverrides = createPromptOverridesStorage(app.db);
+  let refreshInFlight = false;
 
   app.get("/", async () => {
     return bootstrapVisibleNoodle(noodle, characters);
@@ -932,6 +1026,21 @@ export async function noodleRoutes(app: FastifyInstance) {
     const parsed = noodleSettingsUpdateSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
     return noodle.updateSettings(parsed.data);
+  });
+
+  app.put("/refresh-schedule", async (req, reply) => {
+    const parsed = noodleRescheduleRefreshSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
+    if (refreshInFlight) return reply.code(409).send({ error: "Wait for the current Noodle refresh to finish." });
+    const at = new Date();
+    const schedule = await noodle.ensureRefreshSchedule(at);
+    try {
+      const rescheduled = rescheduleNoodleRefreshTime(schedule, parsed.data.scheduledTime, parsed.data.time, at);
+      await noodle.saveRefreshSchedule(rescheduled);
+      return noodleRefreshSchedulerStatus(rescheduled, at);
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : "Could not reschedule refresh." });
+    }
   });
 
   app.put("/accounts/:id", async (req, reply) => {
@@ -996,6 +1105,8 @@ export async function noodleRoutes(app: FastifyInstance) {
       account = await resolvePersonaAccount(noodle, characters, parsed.data.authorEntityId);
     }
     if (!account) return reply.code(404).send({ error: "Noodle account not found" });
+    const mentionedAccounts = mentionedCharacterAccounts(await noodle.listAccounts(), parsed.data.content);
+    const poll = parsed.data.poll ? createNoodlePoll(parsed.data.poll) : null;
     const post = await noodle.createPost({
       authorAccountId: account.id,
       content: parsed.data.content,
@@ -1004,22 +1115,38 @@ export async function noodleRoutes(app: FastifyInstance) {
       parentPostId: parsed.data.parentPostId ?? null,
       quotePostId: parsed.data.quotePostId ?? null,
       source: "manual",
+      metadata: { ...mentionedAccountMetadata(mentionedAccounts), ...(poll ? { poll } : {}) },
     });
     if (!post) return reply.code(404).send({ error: "Noodle author not found" });
-    await noodle.createDigest({
-      accountIds: [account.id],
+    const digest = await noodle.createDigest({
+      accountIds: [account.id, ...mentionedAccounts.map((mentionedAccount) => mentionedAccount.id)],
       content: `${account.displayName} posted on Noodle: ${post.content}`,
       sourcePostId: post.id,
     });
-    return post;
+    return (await noodle.updatePostMedia(post.id, { metadata: { activityDigestId: digest.id } })) ?? post;
   });
 
   app.patch("/posts/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
     const parsed = noodlePostUpdateSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() });
-    const post = await noodle.updatePost(id, parsed.data);
+    let post = await noodle.updatePost(id, parsed.data);
     if (!post) return reply.code(404).send({ error: "Noodle post not found" });
+    if (parsed.data.content !== undefined) {
+      const mentionedAccounts = mentionedCharacterAccounts(await noodle.listAccounts(), post.content);
+      post =
+        (await noodle.updatePostMedia(post.id, {
+          metadata: mentionedAccountMetadata(mentionedAccounts),
+        })) ?? post;
+      const digestId = post.metadata.activityDigestId;
+      const author = await noodle.getAccountById(post.authorAccountId);
+      if (typeof digestId === "string" && digestId && author) {
+        await noodle.updateDigest(digestId, {
+          accountIds: [author.id, ...mentionedAccounts.map((mentionedAccount) => mentionedAccount.id)],
+          content: `${author.displayName} posted on Noodle: ${post.content}`,
+        });
+      }
+    }
     return post;
   });
 
@@ -1044,19 +1171,40 @@ export async function noodleRoutes(app: FastifyInstance) {
       actor = await resolvePersonaAccount(noodle, characters, parsed.data.actorEntityId);
     }
     if (!actor) return reply.code(404).send({ error: "Noodle actor not found" });
+    const post = await noodle.getPostById(id);
+    if (!post) return reply.code(404).send({ error: "Noodle post not found" });
+    if (parsed.data.type === "vote") {
+      const poll = readNoodlePollFromMetadata(post.metadata);
+      if (!poll || !poll.options.some((option) => option.id === parsed.data.content?.trim())) {
+        return reply.code(400).send({ error: "Choose a valid option from this poll." });
+      }
+    }
     const interaction = await noodle.createInteraction(id, {
       actorAccountId: actor.id,
       type: parsed.data.type,
       content: parsed.data.content ?? null,
+      imageUrl: parsed.data.imageUrl ?? null,
+      parentInteractionId: parsed.data.parentInteractionId ?? null,
     });
-    if (!interaction) return reply.code(404).send({ error: "Noodle post not found" });
-    const post = await noodle.getPostById(id);
-    if (post && parsed.data.type !== "like") {
+    if (!interaction) return reply.code(400).send({ error: "Could not add that Noodle interaction." });
+    if (parsed.data.type !== "like") {
+      const directReplyTarget = parsed.data.parentInteractionId
+        ? (await noodle.listInteractions([id])).find((item) => item.id === parsed.data.parentInteractionId)
+        : null;
+      const poll = readNoodlePollFromMetadata(post.metadata);
+      const selectedPollOption =
+        parsed.data.type === "vote"
+          ? poll?.options.find((option) => option.id === interaction.content)?.label
+          : undefined;
+      const interactionSummary =
+        parsed.data.type === "vote" && poll && selectedPollOption
+          ? `${poll.question}: ${selectedPollOption}`
+          : interaction.content || (interaction.imageUrl ? "shared an image" : post.content);
       await noodle.createDigest({
-        accountIds: Array.from(new Set([actor.id, post.authorAccountId])),
-        content: `${actor.displayName} ${interactionDigestVerb(parsed.data.type)} a Noodle post: ${
-          interaction.content || post.content
-        }`,
+        accountIds: Array.from(
+          new Set([actor.id, post.authorAccountId, directReplyTarget?.actorAccountId].filter(Boolean) as string[]),
+        ),
+        content: `${actor.displayName} ${interactionDigestVerb(parsed.data.type)} a Noodle post: ${interactionSummary}`,
         sourcePostId: post.id,
       });
     }
@@ -1075,6 +1223,7 @@ export async function noodleRoutes(app: FastifyInstance) {
     const interaction = await noodle.deleteInteraction(id, {
       actorAccountId: actor.id,
       type: parsed.data.type,
+      parentInteractionId: parsed.data.parentInteractionId ?? null,
     });
     if (!interaction) return reply.code(404).send({ error: "Noodle interaction not found" });
     return interaction;
@@ -1096,6 +1245,10 @@ export async function noodleRoutes(app: FastifyInstance) {
     if (settings.enableImagePrompts && !imageConnection) {
       return reply.code(400).send({ error: "Select a Noodle image generation connection first." });
     }
+    if (refreshInFlight) {
+      return reply.code(409).send({ error: "A Noodle timeline refresh is already running." });
+    }
+    refreshInFlight = true;
 
     const debugMode = parsed.data.debugMode === true;
     let run: Awaited<ReturnType<typeof noodle.createRefreshRun>> | null = null;
@@ -1148,7 +1301,7 @@ export async function noodleRoutes(app: FastifyInstance) {
       }
 
       const activeAccounts = [...selectedParticipants, ...(personaAccount ? [personaAccount] : [])];
-      const { messages, promptForLog } = await buildRefreshPrompt({
+      const { messages, promptForLog, recalledPostIds } = await buildRefreshPrompt({
         noodle,
         characters,
         chats,
@@ -1186,7 +1339,7 @@ export async function noodleRoutes(app: FastifyInstance) {
         activeAccounts.map((account) => [account.id, { ...account.settings }] as const),
       );
       const freshPosts = await noodle.listPosts({ since: sinceHoursIso(48), limit: 200 });
-      const freshPostIds = new Set(freshPosts.map((post) => post.id));
+      const allowedExistingPostIds = new Set([...freshPosts.map((post) => post.id), ...recalledPostIds]);
       const todayPosts = await noodle.listPosts({ since: dayStartIso(), limit: 200 });
       let remainingImagePrompts = settings.enableImagePrompts
         ? Math.max(0, settings.maxImagePromptsPerDay - todayPosts.filter((post) => !!post.imagePrompt).length)
@@ -1237,29 +1390,38 @@ export async function noodleRoutes(app: FastifyInstance) {
             logger.warn(err, "[noodle] Failed to attach gallery image for %s", account.displayName);
           }
         }
+        const mentionedAccounts = mentionedCharacterAccounts(activeAccounts, generatedPost.content);
+        const poll = generatedPost.poll ? createNoodlePoll(generatedPost.poll) : null;
         const post = await noodle.createPost({
           authorAccountId: account.id,
           content: generatedPost.content,
           imagePrompt,
           imageUrl,
           source: "generated",
-          metadata: { runId, ...mediaMetadata },
+          metadata: {
+            runId,
+            ...mediaMetadata,
+            ...mentionedAccountMetadata(mentionedAccounts),
+            ...(poll ? { poll } : {}),
+          },
         });
         if (!post) continue;
         createdPostIds.push(post.id);
         if (generatedPost.tempId) tempIdToPostId.set(generatedPost.tempId, post.id);
-        await noodle.createDigest({
-          accountIds: [account.id],
+        const digest = await noodle.createDigest({
+          accountIds: [account.id, ...mentionedAccounts.map((mentionedAccount) => mentionedAccount.id)],
           content: `${account.displayName} posted on Noodle: ${post.content}`,
           sourceRunId: runId,
           sourcePostId: post.id,
         });
+        await noodle.updatePostMedia(post.id, { metadata: { activityDigestId: digest.id } });
       }
 
       const quotas: Record<NoodleInteractionType, number> = {
         like: settings.maxLikesPerRefresh,
         repost: settings.maxRepostsPerRefresh,
         reply: settings.maxRepliesPerRefresh,
+        vote: settings.maxLikesPerRefresh,
       };
       for (const generatedInteraction of generated.interactions) {
         if (quotas[generatedInteraction.type] <= 0) continue;
@@ -1267,21 +1429,32 @@ export async function noodleRoutes(app: FastifyInstance) {
         if (!actor) continue;
         const targetPostId =
           generatedInteraction.targetPostId ?? tempIdToPostId.get(generatedInteraction.targetTempId ?? "");
-        if (!targetPostId || (!freshPostIds.has(targetPostId) && !createdPostIds.includes(targetPostId))) continue;
+        if (!targetPostId || (!allowedExistingPostIds.has(targetPostId) && !createdPostIds.includes(targetPostId))) {
+          continue;
+        }
+        const targetPost = await noodle.getPostById(targetPostId);
+        if (!targetPost) continue;
+        const poll = readNoodlePollFromMetadata(targetPost.metadata);
+        const selectedPollOption =
+          generatedInteraction.type === "vote" ? poll?.options[generatedInteraction.pollOptionIndex ?? -1] : undefined;
+        if (generatedInteraction.type === "vote" && !selectedPollOption) continue;
         const interaction = await noodle.createInteraction(targetPostId, {
           actorAccountId: actor.id,
           type: generatedInteraction.type,
-          content: generatedInteraction.content ?? null,
+          content: selectedPollOption?.id ?? generatedInteraction.content ?? null,
         });
         if (!interaction) continue;
         quotas[generatedInteraction.type] -= 1;
         if (generatedInteraction.type !== "like") {
-          const targetPost = await noodle.getPostById(targetPostId);
+          const interactionSummary =
+            generatedInteraction.type === "vote" && poll && selectedPollOption
+              ? `${poll.question}: ${selectedPollOption.label}`
+              : interaction.content || targetPost.content;
           await noodle.createDigest({
-            accountIds: Array.from(new Set([actor.id, targetPost?.authorAccountId ?? ""])).filter(Boolean),
-            content: `${actor.displayName} ${interactionDigestVerb(generatedInteraction.type)} a Noodle post: ${
-              interaction.content || targetPost?.content || ""
-            }`,
+            accountIds: Array.from(new Set([actor.id, targetPost.authorAccountId])).filter(Boolean),
+            content: `${actor.displayName} ${interactionDigestVerb(
+              generatedInteraction.type,
+            )} a Noodle post: ${interactionSummary}`,
             sourceRunId: runId,
             sourcePostId: targetPostId,
           });
@@ -1327,6 +1500,8 @@ export async function noodleRoutes(app: FastifyInstance) {
       logger.error(error, "[noodle] Timeline refresh failed");
       if (run) await noodle.finishRefreshRun(run.id, { status: "failed", error: getErrorMessage(error) });
       return reply.code(500).send({ error: getErrorMessage(error) });
+    } finally {
+      refreshInFlight = false;
     }
   });
 }

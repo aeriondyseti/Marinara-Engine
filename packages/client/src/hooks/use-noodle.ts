@@ -14,6 +14,8 @@ import type {
   NoodlePost,
   NoodlePostUpdateInput,
   NoodleRemoveInteractionInput,
+  NoodleRescheduleRefreshInput,
+  NoodleRefreshSchedulerStatus,
   NoodleSettings,
   NoodleSettingsUpdateInput,
 } from "@marinara-engine/shared";
@@ -29,6 +31,8 @@ export function useNoodle(enabled = true) {
     queryFn: () => api.get<NoodleBootstrap>("/noodle"),
     enabled,
     staleTime: 10_000,
+    refetchInterval: enabled ? 30_000 : false,
+    refetchIntervalInBackground: false,
   });
 }
 
@@ -42,6 +46,20 @@ export function useUpdateNoodleSettings() {
       );
       qc.invalidateQueries({ queryKey: noodleKeys.bootstrap() });
     },
+  });
+}
+
+export function useRescheduleNoodleRefresh() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: NoodleRescheduleRefreshInput) =>
+      api.put<NoodleRefreshSchedulerStatus>("/noodle/refresh-schedule", input),
+    onSuccess: (scheduler) => {
+      qc.setQueryData<NoodleBootstrap | undefined>(noodleKeys.bootstrap(), (current) =>
+        current ? { ...current, scheduler } : current,
+      );
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: noodleKeys.bootstrap() }),
   });
 }
 
@@ -156,7 +174,18 @@ export function useCreateNoodleInteraction() {
       actorKind: NoodleAccountKind;
       actorEntityId: string;
     }) => api.post<NoodleInteraction>(`/noodle/posts/${postId}/interactions`, input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: noodleKeys.bootstrap() }),
+    onSuccess: (interaction) => {
+      qc.setQueryData<NoodleBootstrap | undefined>(noodleKeys.bootstrap(), (current) =>
+        current
+          ? {
+              ...current,
+              interactions: current.interactions.some((item) => item.id === interaction.id)
+                ? current.interactions.map((item) => (item.id === interaction.id ? interaction : item))
+                : [...current.interactions, interaction],
+            }
+          : current,
+      );
+    },
   });
 }
 
@@ -176,6 +205,7 @@ export function useRemoveNoodleInteraction() {
         actorEntityId: input.actorEntityId,
         type: input.type,
       });
+      if (input.parentInteractionId) params.set("parentInteractionId", input.parentInteractionId);
       return api.delete<NoodleInteraction>(`/noodle/posts/${encodeURIComponent(postId)}/interactions?${params}`);
     },
     onSuccess: (interaction) => {
@@ -187,7 +217,6 @@ export function useRemoveNoodleInteraction() {
             }
           : current,
       );
-      qc.invalidateQueries({ queryKey: noodleKeys.bootstrap() });
     },
   });
 }

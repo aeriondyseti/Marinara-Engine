@@ -183,10 +183,6 @@ function isProfessorMariDesktopViewport() {
   return typeof window !== "undefined" && window.matchMedia("(min-width: 640px)").matches;
 }
 
-function shouldExpandHomeFaqByDefault() {
-  return isProfessorMariDesktopViewport();
-}
-
 function getProfessorMariFileExtension(fileName: string): string {
   const match = fileName.toLowerCase().match(/\.([a-z0-9]+)$/);
   return match?.[1] ?? "";
@@ -1871,7 +1867,6 @@ export function HomeProfessorMariChat({
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [sending, setSending] = useState(false);
   const [connectionMenuOpen, setConnectionMenuOpen] = useState(false);
-  const [faqExpanded, setFaqExpanded] = useState(shouldExpandHomeFaqByDefault);
   const [faqOpenItemId, setFaqOpenItemId] = useState<string | null>(null);
   const [internalChatWindowOpen, setInternalChatWindowOpen] = useState(
     () => floatingMode && isProfessorMariDesktopViewport(),
@@ -3111,7 +3106,7 @@ export function HomeProfessorMariChat({
     <>
       <section
         className={cn(
-          "home-professor-mari-chat mt-10 w-full max-w-5xl border border-[var(--border)] bg-[var(--card)]/85 shadow-lg shadow-black/10 sm:mt-0",
+          "home-professor-mari-chat mt-8 w-full max-w-5xl border border-[var(--border)] bg-[var(--card)]/85 shadow-lg shadow-black/10 md:mt-0",
           attachedFooter ? "rounded-t-xl rounded-b-none" : "rounded-xl",
           (desktopChatWindowOpen || launchHidden) && "hidden",
           mobileFocusMode && "hidden",
@@ -3119,19 +3114,29 @@ export function HomeProfessorMariChat({
         data-paused={pageActive ? "false" : "true"}
       >
         <div className="grid gap-2.5 p-2 sm:p-2.5 md:grid-cols-2">
-          <div className="order-2 min-w-0 rounded-lg border border-[var(--border)]/70 bg-[var(--secondary)]/25 p-2.5 md:order-1 md:min-h-[24rem]">
+          <div
+            className="order-2 min-w-0 rounded-lg border border-[var(--border)]/70 bg-[var(--secondary)]/25 p-2.5 md:order-1 md:flex md:h-[24rem] md:min-h-0 md:flex-col"
+            data-component="HomeProfessorMariChat.FaqPanel"
+          >
             <HomeFaq
               compact
-              expanded={faqExpanded}
-              onExpandedChange={setFaqExpanded}
+              mobileModal
+              expanded
+              className="md:min-h-0 md:flex-1"
               openItemId={faqOpenItemId}
               onOpenItemIdChange={setFaqOpenItemId}
             />
           </div>
 
-          <div className="relative order-1 flex min-w-0 flex-col items-center gap-2 rounded-lg border border-[var(--border)]/70 bg-[var(--secondary)]/25 p-2.5 text-center sm:p-3 md:order-2 md:min-h-[24rem] md:justify-between md:gap-2.5">
+          <div
+            className="relative order-1 flex min-w-0 flex-col items-center gap-2 rounded-lg border border-[var(--border)]/70 bg-[var(--secondary)]/25 p-2.5 text-center sm:p-3 md:order-2 md:h-[24rem] md:min-h-0 md:justify-between"
+            data-component="HomeProfessorMariChat.MariPanel"
+          >
             <div className="flex w-full flex-col items-center gap-2">
-              <div className="w-full max-w-[10.5rem] [--mari-professor-sprite-bottom:5%] sm:max-w-[12rem] lg:max-w-[14rem] xl:max-w-[15rem]">
+              <div
+                className="relative z-[1] mt-7 w-full max-w-[10.5rem] [--mari-professor-sprite-bottom:5%] sm:max-w-[12rem] md:mt-0 md:max-w-[10rem] lg:max-w-[11rem] xl:max-w-[12rem]"
+                data-component="HomeProfessorMariChat.Scene"
+              >
                 <ProfessorMariPixelScene active={isBusy || mariPhase !== null} />
               </div>
               <div className="w-full min-w-0">
@@ -3141,7 +3146,10 @@ export function HomeProfessorMariChat({
                 </div>
               </div>
             </div>
-            <div className="hidden min-h-0 w-full flex-1 flex-col justify-center gap-1.5 overflow-hidden px-1 text-center text-[0.625rem] leading-snug text-[var(--muted-foreground)] sm:flex sm:text-[0.6875rem] lg:text-xs">
+            <div
+              className="hidden min-h-0 w-full flex-1 flex-col justify-center gap-1 px-1 text-center text-[0.6875rem] leading-[1.35] text-[var(--muted-foreground)] md:flex"
+              data-component="HomeProfessorMariChat.Welcome"
+            >
               {MARI_WELCOME.split("\n\n").map((paragraph, index) => (
                 <p key={paragraph} className={cn(index === 0 && "font-semibold text-[var(--foreground)]")}>
                   {paragraph}

@@ -1,10 +1,11 @@
 // ──────────────────────────────────────────────
 // Storage: Noodle Fake Social Media
 // ──────────────────────────────────────────────
-import { and, desc, eq, gt, inArray } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, lt } from "drizzle-orm";
 import {
   DEFAULT_NOODLE_SETTINGS,
   noodleSettingsSchema,
+  readNoodlePollFromMetadata,
   type NoodleAccount,
   type NoodleAccountKind,
   type NoodleAuthorSnapshot,
@@ -34,8 +35,16 @@ import {
 } from "../../db/schema/index.js";
 import { newId, now } from "../../utils/id-generator.js";
 import { createAppSettingsStorage } from "./app-settings.storage.js";
+import {
+  clearNoodleRefreshFailure,
+  noodleRefreshSchedulerStatus,
+  parsePersistedNoodleRefreshSchedule,
+  reconcileNoodleRefreshSchedule,
+  type PersistedNoodleRefreshSchedule,
+} from "../noodle/noodle-refresh-schedule.js";
 
 const NOODLE_SETTINGS_KEY = "noodle.settings";
+const NOODLE_REFRESH_SCHEDULE_KEY = "noodle.refresh-schedule";
 const NOODLE_CARRYOVER_TARGETS: NoodleCarryoverTarget[] = ["conversation", "roleplay", "game"];
 
 type AccountRow = typeof noodleAccounts.$inferSelect;
@@ -203,12 +212,14 @@ function mapInteraction(row: InteractionRow): NoodleInteraction {
   return {
     id: row.id,
     postId: row.postId,
+    parentInteractionId: row.parentInteractionId ?? null,
     actorAccountId: row.actorAccountId,
     type:
-      row.type === "repost" || row.type === "reply" || row.type === "like"
+      row.type === "repost" || row.type === "reply" || row.type === "like" || row.type === "vote"
         ? (row.type as NoodleInteractionType)
         : "like",
     content: row.content ?? null,
+    imageUrl: row.imageUrl ?? null,
     actorSnapshot: parseAuthorSnapshot(row.actorSnapshot),
     createdAt: row.createdAt,
   };
@@ -251,7 +262,37 @@ export function createNoodleStorage(db: DB) {
       const current = await this.getSettings();
       const next = normalizeSettings({ ...current, ...input });
       await settingsStore.set(NOODLE_SETTINGS_KEY, JSON.stringify(next));
+      const currentSchedule = await this.getRefreshSchedule();
+      const reconciled = reconcileNoodleRefreshSchedule(currentSchedule, next.refreshesPerDay, new Date());
+      await this.saveRefreshSchedule(clearNoodleRefreshFailure(reconciled));
       return next;
+    },
+
+    async getRefreshSchedule(): Promise<PersistedNoodleRefreshSchedule | null> {
+      const raw = await settingsStore.get(NOODLE_REFRESH_SCHEDULE_KEY);
+      if (!raw) return null;
+      try {
+        return parsePersistedNoodleRefreshSchedule(JSON.parse(raw));
+      } catch {
+        return null;
+      }
+    },
+
+    async saveRefreshSchedule(schedule: PersistedNoodleRefreshSchedule): Promise<void> {
+      await settingsStore.set(NOODLE_REFRESH_SCHEDULE_KEY, JSON.stringify(schedule));
+    },
+
+    async ensureRefreshSchedule(
+      at = new Date(),
+      settingsOverride?: NoodleSettings,
+    ): Promise<PersistedNoodleRefreshSchedule> {
+      const settings = settingsOverride ?? (await this.getSettings());
+      const current = await this.getRefreshSchedule();
+      const reconciled = reconcileNoodleRefreshSchedule(current, settings.refreshesPerDay, at);
+      if (!current || JSON.stringify(current) !== JSON.stringify(reconciled)) {
+        await this.saveRefreshSchedule(reconciled);
+      }
+      return reconciled;
     },
 
     async listAccounts(): Promise<NoodleAccount[]> {
@@ -353,6 +394,15 @@ export function createNoodleStorage(db: DB) {
             .orderBy(desc(noodlePosts.createdAt))
             .limit(limit)
         : await db.select().from(noodlePosts).orderBy(desc(noodlePosts.createdAt)).limit(limit);
+      return rows.map(mapPost);
+    },
+
+    async listPostsBefore(before: string): Promise<NoodlePost[]> {
+      const rows = await db
+        .select()
+        .from(noodlePosts)
+        .where(lt(noodlePosts.createdAt, before))
+        .orderBy(desc(noodlePosts.createdAt));
       return rows.map(mapPost);
     },
 
@@ -461,6 +511,46 @@ export function createNoodleStorage(db: DB) {
       const [post, actor] = await Promise.all([this.getPostById(postId), this.getAccountById(input.actorAccountId)]);
       if (!post || !actor) return null;
 
+      const parentInteractionId = input.parentInteractionId ?? null;
+      if (parentInteractionId) {
+        const parentRows = await db
+          .select()
+          .from(noodleInteractions)
+          .where(eq(noodleInteractions.id, parentInteractionId));
+        const parent = parentRows[0];
+        if (!parent || parent.postId !== postId || parent.type !== "reply") return null;
+      }
+
+      if (input.type === "vote") {
+        if (parentInteractionId) return null;
+        const poll = readNoodlePollFromMetadata(post.metadata);
+        const optionId = input.content?.trim() ?? "";
+        if (!poll || !poll.options.some((option) => option.id === optionId)) return null;
+        const existingVotes = await db
+          .select()
+          .from(noodleInteractions)
+          .where(
+            and(
+              eq(noodleInteractions.postId, postId),
+              eq(noodleInteractions.actorAccountId, input.actorAccountId),
+              eq(noodleInteractions.type, "vote"),
+              isNull(noodleInteractions.parentInteractionId),
+            ),
+          );
+        const existingVote = existingVotes[0];
+        if (existingVote) {
+          await db
+            .update(noodleInteractions)
+            .set({
+              content: optionId,
+              actorSnapshot: JSON.stringify(snapshotForAccount(actor)),
+            })
+            .where(eq(noodleInteractions.id, existingVote.id));
+          const updated = await db.select().from(noodleInteractions).where(eq(noodleInteractions.id, existingVote.id));
+          return updated[0] ? mapInteraction(updated[0]) : null;
+        }
+      }
+
       const readExistingToggleInteraction = async () => {
         if (!isToggleInteractionType(input.type)) return null;
         const existing = await db
@@ -471,6 +561,9 @@ export function createNoodleStorage(db: DB) {
               eq(noodleInteractions.postId, postId),
               eq(noodleInteractions.actorAccountId, input.actorAccountId),
               eq(noodleInteractions.type, input.type),
+              parentInteractionId
+                ? eq(noodleInteractions.parentInteractionId, parentInteractionId)
+                : isNull(noodleInteractions.parentInteractionId),
             ),
           );
         return existing[0] ? mapInteraction(existing[0]) : null;
@@ -484,9 +577,11 @@ export function createNoodleStorage(db: DB) {
         await db.insert(noodleInteractions).values({
           id,
           postId,
+          parentInteractionId,
           actorAccountId: input.actorAccountId,
           type: input.type,
           content: input.content?.trim() || null,
+          imageUrl: input.imageUrl?.trim() || null,
           actorSnapshot: JSON.stringify(snapshotForAccount(actor)),
           createdAt: now(),
         });
@@ -513,6 +608,9 @@ export function createNoodleStorage(db: DB) {
             eq(noodleInteractions.postId, postId),
             eq(noodleInteractions.actorAccountId, input.actorAccountId),
             eq(noodleInteractions.type, input.type),
+            input.parentInteractionId
+              ? eq(noodleInteractions.parentInteractionId, input.parentInteractionId)
+              : isNull(noodleInteractions.parentInteractionId),
           ),
         );
       const existing = rows[0];
@@ -539,6 +637,22 @@ export function createNoodleStorage(db: DB) {
       });
       const rows = await db.select().from(noodleActivityDigests).where(eq(noodleActivityDigests.id, id));
       return mapDigest(rows[0]!);
+    },
+
+    async updateDigest(
+      id: string,
+      input: { accountIds: string[]; content: string },
+    ): Promise<NoodleDigestEntry | null> {
+      const uniqueAccountIds = Array.from(new Set(input.accountIds.filter(Boolean)));
+      await db
+        .update(noodleActivityDigests)
+        .set({
+          accountIds: JSON.stringify(uniqueAccountIds),
+          content: input.content.trim().slice(0, 1200),
+        })
+        .where(eq(noodleActivityDigests.id, id));
+      const rows = await db.select().from(noodleActivityDigests).where(eq(noodleActivityDigests.id, id));
+      return rows[0] ? mapDigest(rows[0]) : null;
     },
 
     async listDigests(options: { limit?: number; since?: string } = {}): Promise<NoodleDigestEntry[]> {
@@ -590,8 +704,14 @@ export function createNoodleStorage(db: DB) {
 
     async bootstrap(): Promise<NoodleBootstrap> {
       const posts = await this.listPosts({ limit: 160 });
+      const settings = await this.getSettings();
+      const scheduler = noodleRefreshSchedulerStatus(
+        await this.ensureRefreshSchedule(new Date(), settings),
+        new Date(),
+      );
       return {
-        settings: await this.getSettings(),
+        settings,
+        scheduler,
         accounts: await this.listAccounts(),
         posts,
         interactions: await this.listInteractions(posts.map((post) => post.id)),

@@ -75,7 +75,10 @@ export function RecentChats() {
   }, [characterSummaries]);
 
   return (
-    <div className="mari-chrome-token-scope flex w-full max-w-md flex-col items-center gap-1.5">
+    <div
+      className="mari-chrome-token-scope flex w-full max-w-md flex-col items-center gap-1.5"
+      data-component="RecentChats"
+    >
       {recentChats.length === 0 ? (
         <p className="rounded-lg border border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-panel-bg)] px-3 py-1.5 text-xs text-[var(--marinara-chat-chrome-panel-muted)]">
           No chats yet

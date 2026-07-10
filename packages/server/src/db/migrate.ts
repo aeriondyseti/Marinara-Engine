@@ -183,9 +183,11 @@ const CREATE_TABLES: string[] = [
   `CREATE TABLE IF NOT EXISTS noodle_interactions (
     id TEXT PRIMARY KEY NOT NULL,
     post_id TEXT NOT NULL,
+    parent_interaction_id TEXT,
     actor_account_id TEXT NOT NULL,
     type TEXT NOT NULL,
     content TEXT,
+    image_url TEXT,
     actor_snapshot TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL
   )`,
@@ -1194,6 +1196,16 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
     column: "anchor_kind",
     definition: "TEXT NOT NULL DEFAULT ''",
   },
+  {
+    table: "noodle_interactions",
+    column: "parent_interaction_id",
+    definition: "TEXT",
+  },
+  {
+    table: "noodle_interactions",
+    column: "image_url",
+    definition: "TEXT",
+  },
 ];
 
 /**
@@ -1381,9 +1393,15 @@ export async function runMigrations(db: DB) {
   await db.run(
     sql.raw(`CREATE INDEX IF NOT EXISTS idx_noodle_interactions_post ON noodle_interactions(post_id, created_at ASC)`),
   );
+  await db.run(sql.raw(`DROP INDEX IF EXISTS uniq_noodle_toggle_interactions`));
   await db.run(
     sql.raw(
-      `CREATE UNIQUE INDEX IF NOT EXISTS uniq_noodle_toggle_interactions ON noodle_interactions(post_id, actor_account_id, type) WHERE type IN ('like', 'repost')`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS uniq_noodle_root_toggle_interactions ON noodle_interactions(post_id, actor_account_id, type) WHERE type IN ('like', 'repost') AND parent_interaction_id IS NULL`,
+    ),
+  );
+  await db.run(
+    sql.raw(
+      `CREATE UNIQUE INDEX IF NOT EXISTS uniq_noodle_reply_like ON noodle_interactions(post_id, actor_account_id, type, parent_interaction_id) WHERE type = 'like' AND parent_interaction_id IS NOT NULL`,
     ),
   );
   await db.run(

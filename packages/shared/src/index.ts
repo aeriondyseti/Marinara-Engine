@@ -114,3 +114,5 @@ export * from "./utils/text-matching.js";
 export * from "./utils/speaker-segments.js";
 export * from "./utils/sprite-labels.js";
 export * from "./utils/conversation-presence.js";
+export * from "./utils/noodle-mentions.js";
+export * from "./utils/noodle-polls.js";

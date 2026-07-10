@@ -2272,6 +2272,11 @@ body {
   overflow: hidden;
 }
 
+.home-viewport-fit-content {
+  transform: scale(var(--mari-home-fit-scale, 1));
+  transform-origin: top center;
+}
+
 :root:not([data-visual-theme]) .mari-home-starfield {
   display: block;
 }

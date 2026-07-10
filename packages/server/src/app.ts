@@ -39,6 +39,7 @@ import {
 import { corsDelegate } from "./config/cors-config.js";
 import { sidecarProcessService } from "./services/sidecar/sidecar-process.service.js";
 import { startServerAutonomousScheduler } from "./services/conversation/server-autonomous-scheduler.service.js";
+import { startNoodleRefreshScheduler } from "./services/noodle/noodle-refresh-scheduler.service.js";
 import { serverExtensionRuntime } from "./services/extensions/server-extension-runtime.js";
 
 const isLite = process.env.MARINARA_LITE === "true" || process.env.MARINARA_LITE === "1";
@@ -152,6 +153,9 @@ export async function buildApp(https?: { cert: Buffer; key: Buffer }) {
 
   // ── Server-side autonomous conversation scheduler ──
   startServerAutonomousScheduler(app);
+
+  // ── Automatic Noodle timeline refresh scheduler ──
+  startNoodleRefreshScheduler(app);
 
   // ── Sidecar bootstrap (background, skipped in lite mode) ──
   if (!isLite) {

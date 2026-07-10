@@ -4,7 +4,7 @@
 import { z } from "zod";
 
 export const noodleAccountKindSchema = z.enum(["persona", "character", "random_user"]);
-export const noodleInteractionTypeSchema = z.enum(["like", "repost", "reply"]);
+export const noodleInteractionTypeSchema = z.enum(["like", "repost", "reply", "vote"]);
 export const noodleParticipantSelectionModeSchema = z.enum(["all", "random_range", "exact"]);
 export const noodleCarryoverModeSchema = z.enum(["off", "conversation", "roleplay", "game", "all"]);
 export const noodleCarryoverTargetSchema = z.enum(["conversation", "roleplay", "game"]);
@@ -95,6 +95,35 @@ export const noodleBulkInviteSchema = z.object({
   characterIds: z.array(z.string().min(1)).min(1).max(5000),
 });
 
+export const noodlePollInputSchema = z
+  .object({
+    question: z.string().trim().min(1).max(240),
+    options: z.array(z.string().trim().min(1).max(120)).min(2).max(4),
+  })
+  .superRefine((poll, ctx) => {
+    const normalized = poll.options.map((option) => option.toLocaleLowerCase());
+    if (new Set(normalized).size !== normalized.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["options"],
+        message: "Poll options must be unique.",
+      });
+    }
+  });
+
+export const noodlePollSchema = z.object({
+  question: z.string().trim().min(1).max(240),
+  options: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(40),
+        label: z.string().trim().min(1).max(120),
+      }),
+    )
+    .min(2)
+    .max(4),
+});
+
 export const noodleCreatePostSchema = z.object({
   authorKind: noodleAccountKindSchema,
   authorEntityId: z.string().min(1),
@@ -103,6 +132,7 @@ export const noodleCreatePostSchema = z.object({
   imagePrompt: z.string().max(2000).nullable().optional(),
   parentPostId: z.string().min(1).nullable().optional(),
   quotePostId: z.string().min(1).nullable().optional(),
+  poll: noodlePollInputSchema.nullable().optional(),
 });
 
 export const noodlePostUpdateSchema = z.object({
@@ -111,23 +141,72 @@ export const noodlePostUpdateSchema = z.object({
   imagePrompt: z.string().max(2000).nullable().optional(),
 });
 
-export const noodleCreateInteractionSchema = z.object({
-  actorKind: noodleAccountKindSchema,
-  actorEntityId: z.string().min(1),
-  type: noodleInteractionTypeSchema,
-  content: z.string().max(2000).nullable().optional(),
-});
+export const noodleCreateInteractionSchema = z
+  .object({
+    actorKind: noodleAccountKindSchema,
+    actorEntityId: z.string().min(1),
+    type: noodleInteractionTypeSchema,
+    content: z.string().max(2000).nullable().optional(),
+    imageUrl: z.string().max(2000).nullable().optional(),
+    parentInteractionId: z.string().min(1).nullable().optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (input.type === "reply" && !input.content?.trim() && !input.imageUrl?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["content"],
+        message: "Replies need text or an image.",
+      });
+    }
+    if (input.type === "repost" && input.parentInteractionId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["parentInteractionId"],
+        message: "Reposts cannot target a reply.",
+      });
+    }
+    if (input.type === "vote" && (!input.content?.trim() || input.parentInteractionId)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["content"],
+        message: "Poll votes require an option and cannot target a reply.",
+      });
+    }
+    if (input.type !== "reply" && input.imageUrl) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["imageUrl"],
+        message: "Only replies can include an image.",
+      });
+    }
+  });
 
-export const noodleRemoveInteractionSchema = z.object({
-  actorKind: noodleAccountKindSchema,
-  actorEntityId: z.string().min(1),
-  type: z.enum(["like", "repost"]),
-});
+export const noodleRemoveInteractionSchema = z
+  .object({
+    actorKind: noodleAccountKindSchema,
+    actorEntityId: z.string().min(1),
+    type: z.enum(["like", "repost"]),
+    parentInteractionId: z.string().min(1).nullable().optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (input.type === "repost" && input.parentInteractionId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["parentInteractionId"],
+        message: "Reposts cannot target a reply.",
+      });
+    }
+  });
 
 export const noodleRefreshSchema = z.object({
   personaId: z.string().min(1).optional(),
   connectionId: z.string().min(1).optional(),
   debugMode: z.boolean().optional(),
+});
+
+export const noodleRescheduleRefreshSchema = z.object({
+  scheduledTime: z.string().datetime(),
+  time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/u, "Use a 24-hour time in HH:mm format."),
 });
 
 export const noodleGeneratedPostSchema = z.object({
@@ -136,15 +215,27 @@ export const noodleGeneratedPostSchema = z.object({
   content: z.string().min(1).max(4000),
   imagePrompt: z.string().max(2000).nullable().optional(),
   attachGalleryImage: z.boolean().optional().default(false),
+  poll: noodlePollInputSchema.nullable().optional(),
 });
 
-export const noodleGeneratedInteractionSchema = z.object({
-  actorEntityId: z.string().min(1),
-  targetTempId: z.string().min(1).optional(),
-  targetPostId: z.string().min(1).optional(),
-  type: noodleInteractionTypeSchema,
-  content: z.string().max(2000).nullable().optional(),
-});
+export const noodleGeneratedInteractionSchema = z
+  .object({
+    actorEntityId: z.string().min(1),
+    targetTempId: z.string().min(1).optional(),
+    targetPostId: z.string().min(1).optional(),
+    type: noodleInteractionTypeSchema,
+    content: z.string().max(2000).nullable().optional(),
+    pollOptionIndex: z.number().int().min(0).max(3).optional(),
+  })
+  .superRefine((interaction, ctx) => {
+    if (interaction.type === "vote" && interaction.pollOptionIndex === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["pollOptionIndex"],
+        message: "Poll votes require a poll option index.",
+      });
+    }
+  });
 
 export const noodleGeneratedFollowSchema = z.object({
   actorEntityId: z.string().min(1),
@@ -180,10 +271,13 @@ export type NoodleSettingsUpdateInput = z.infer<typeof noodleSettingsUpdateSchem
 export type NoodleAccountUpdateInput = z.infer<typeof noodleAccountUpdateSchema>;
 export type NoodleInviteInput = z.infer<typeof noodleInviteSchema>;
 export type NoodleBulkInviteInput = z.infer<typeof noodleBulkInviteSchema>;
+export type NoodlePollInput = z.infer<typeof noodlePollInputSchema>;
+export type NoodlePollData = z.infer<typeof noodlePollSchema>;
 export type NoodleCreatePostInput = z.infer<typeof noodleCreatePostSchema>;
 export type NoodlePostUpdateInput = z.infer<typeof noodlePostUpdateSchema>;
 export type NoodleCreateInteractionInput = z.infer<typeof noodleCreateInteractionSchema>;
 export type NoodleRemoveInteractionInput = z.infer<typeof noodleRemoveInteractionSchema>;
 export type NoodleRefreshInput = z.infer<typeof noodleRefreshSchema>;
+export type NoodleRescheduleRefreshInput = z.infer<typeof noodleRescheduleRefreshSchema>;
 export type NoodleGeneratedRefresh = z.infer<typeof noodleGeneratedRefreshSchema>;
 export type NoodleGeneratedProfiles = z.infer<typeof noodleGeneratedProfilesSchema>;

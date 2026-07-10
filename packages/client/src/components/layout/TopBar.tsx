@@ -290,6 +290,7 @@ export function TopBar() {
               setActiveChatId(null);
               openNoodle();
             }}
+            data-tour="noodle-tab"
             data-topbar-hover-key="noodle"
             className={cn(
               TOPBAR_BUTTON_CLASS,

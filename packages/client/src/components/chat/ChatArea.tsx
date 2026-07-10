@@ -543,6 +543,9 @@ export function ChatArea() {
   const [homeProfessorChatOpen, setHomeProfessorChatOpen] = useState(false);
   const [homeProfessorChatActive, setHomeProfessorChatActive] = useState(false);
   const homeProfessorChatOpenRef = useRef(false);
+  const homeViewportRef = useRef<HTMLDivElement>(null);
+  const homeContentRef = useRef<HTMLDivElement>(null);
+  const [homeFitScale, setHomeFitScale] = useState(1);
   const queryClient = useQueryClient();
   useEffect(() => {
     homeProfessorChatOpenRef.current = homeProfessorChatOpen;
@@ -554,6 +557,61 @@ export function ChatArea() {
   const handleHomeProfessorChatExitComplete = useCallback(() => {
     if (!homeProfessorChatOpenRef.current) setHomeProfessorChatActive(false);
   }, []);
+  useLayoutEffect(() => {
+    if (activeChatId || homeProfessorChatActive) {
+      setHomeFitScale(1);
+      return;
+    }
+
+    const viewport = homeViewportRef.current;
+    const content = homeContentRef.current;
+    if (!viewport || !content) return;
+
+    let frame: number | null = null;
+    let disposed = false;
+    const updateScale = () => {
+      frame = null;
+      if (disposed) return;
+
+      const viewportStyle = getComputedStyle(viewport);
+      const availableHeight =
+        viewport.clientHeight -
+        Number.parseFloat(viewportStyle.paddingTop || "0") -
+        Number.parseFloat(viewportStyle.paddingBottom || "0");
+      const availableWidth =
+        viewport.clientWidth -
+        Number.parseFloat(viewportStyle.paddingLeft || "0") -
+        Number.parseFloat(viewportStyle.paddingRight || "0");
+      const naturalHeight = content.scrollHeight;
+      const naturalWidth = content.scrollWidth;
+
+      if (availableHeight <= 0 || availableWidth <= 0 || naturalHeight <= 0 || naturalWidth <= 0) return;
+
+      const nextScale = Math.min(1, availableHeight / naturalHeight, availableWidth / naturalWidth);
+      const fittedScale = Math.max(0, Math.floor(nextScale * 1000) / 1000);
+      setHomeFitScale((current) => (Math.abs(current - fittedScale) < 0.001 ? current : fittedScale));
+    };
+    const scheduleScaleUpdate = () => {
+      if (disposed) return;
+      if (frame !== null) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(updateScale);
+    };
+
+    const resizeObserver =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => scheduleScaleUpdate());
+    resizeObserver?.observe(viewport);
+    resizeObserver?.observe(content);
+    window.addEventListener("resize", scheduleScaleUpdate);
+    void document.fonts?.ready.then(scheduleScaleUpdate);
+    updateScale();
+
+    return () => {
+      disposed = true;
+      if (frame !== null) cancelAnimationFrame(frame);
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", scheduleScaleUpdate);
+    };
+  }, [activeChatId, homeProfessorChatActive]);
   const trackHomeFooterAchievement = useCallback(
     (event: AchievementEvent) => {
       void trackAchievementEvent(event, { keepalive: true })
@@ -2465,20 +2523,28 @@ export function ChatArea() {
       <>
         <HomeCreditsModal open={creditsOpen} onClose={() => setCreditsOpen(false)} />
         <div
+          ref={homeViewportRef}
           data-component="ChatArea.EmptyState"
           className={cn(
             "mari-app-background-paint mari-chrome-token-scope relative isolate flex flex-1 flex-col items-center",
-            homeProfessorChatActive ? "overflow-hidden p-0 sm:p-3 lg:p-3" : "overflow-y-auto p-1.5 sm:p-3 lg:p-3",
+            homeProfessorChatActive ? "overflow-hidden p-0 sm:p-3 lg:p-3" : "overflow-hidden p-1.5 sm:p-3 lg:p-3",
           )}
         >
           {showEmptyStateEffects && !homeProfessorChatActive && <HomeStarfield />}
           <div
+            ref={homeContentRef}
+            data-component="ChatArea.HomeContent"
             className={cn(
               "relative z-[1] flex w-full flex-col items-center",
               homeProfessorChatActive
                 ? "min-h-0 flex-1 max-w-none gap-0 py-0"
-                : "max-w-5xl gap-1.5 py-0 sm:gap-2 lg:pt-0 lg:pb-2",
+                : "home-viewport-fit-content max-w-5xl shrink-0 gap-1.5 py-0 sm:gap-2 lg:pt-0 lg:pb-2",
             )}
+            style={
+              homeProfessorChatActive
+                ? undefined
+                : ({ "--mari-home-fit-scale": String(homeFitScale) } as CSSProperties)
+            }
           >
             {!homeProfessorChatActive && (
               <>
