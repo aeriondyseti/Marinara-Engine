@@ -102,6 +102,7 @@ import {
   VIDEO_GENERATION_SETTINGS_KEY,
   VIDEO_DEFAULTS_STORAGE_KEY,
   GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_DEFAULT,
   GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MAX,
   GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MIN,
   GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES,
@@ -149,6 +150,7 @@ import type {
   GenerationParameterSendMap,
   GenerationParameters,
   APIProvider,
+  SceneIllustrationCharacterPrompt,
   SceneIllustrationRequest,
   QuestProgress,
   SessionSummary,
@@ -162,7 +164,9 @@ import {
   generateNpcPortrait,
   generateBackground,
   generateSceneIllustration,
+  resolveSceneIllustrationGenerationConcurrency,
   resolveSceneIllustrationReferenceImageLimit,
+  supportsSceneIllustrationStructuredCharacterPrompts,
   readAvatarBase64,
   buildBackgroundProviderPrompt,
   buildNpcPortraitProviderPrompt,
@@ -4464,6 +4468,7 @@ type PlannedStoryboardKeyframe = {
   imagePrompt: string;
   videoPrompt: string;
   characters: string[];
+  characterPrompts: SceneIllustrationCharacterPrompt[];
   continuityNotes: string;
   cameraMotion: string;
   transitionHint: string;
@@ -4844,11 +4849,114 @@ function reconcileStoryboardFrameForRendering(args: {
     imagePrompt: scopedPrompt,
     mangaPanelPrompt: scopedMangaPanelPrompt,
     characters: reconciledCharacters.characters,
+    characterPrompts: sanitizeStoryboardCharacterPrompts(
+      args.frame.characterPrompts,
+      reconciledCharacters.characters,
+    ),
   };
 }
 
 function asStoryboardRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+const MAX_STORYBOARD_CHARACTER_PROMPTS = 6;
+
+function defaultStoryboardCharacterPosition(index: number, total: number): { x: number; y: number } {
+  if (total <= 1) return { x: 0.5, y: 0.5 };
+  if (total <= 3) return { x: (index + 1) / (total + 1), y: 0.5 };
+
+  const columns = 3;
+  const rows = Math.ceil(total / columns);
+  const row = Math.floor(index / columns);
+  const rowStart = row * columns;
+  const rowCount = Math.min(columns, total - rowStart);
+  return {
+    x: (index - rowStart + 1) / (rowCount + 1),
+    y: (row + 1) / (rows + 1),
+  };
+}
+
+function normalizeStoryboardCharacterCoordinate(value: unknown, fallback: number): number {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.round(Math.min(1, Math.max(0, numeric)) * 100) / 100;
+}
+
+function matchStoryboardCharacterPromptName(value: unknown, characters: string[]): string | null {
+  const requested = typeof value === "string" ? normalizeAvatarLookupName(value) : "";
+  if (!requested) return null;
+  return characters.find((name) => normalizeAvatarLookupName(name) === requested) ?? null;
+}
+
+function sanitizeStoryboardCharacterPrompts(
+  value: unknown,
+  characters: string[],
+): SceneIllustrationCharacterPrompt[] {
+  if (!Array.isArray(value) || characters.length === 0) return [];
+  const seen = new Set<string>();
+  const candidates: Array<Omit<SceneIllustrationCharacterPrompt, "position"> & { position?: { x: number; y: number } }> = [];
+
+  for (const rawEntry of value.slice(0, MAX_STORYBOARD_CHARACTER_PROMPTS)) {
+    const entry = asStoryboardRecord(rawEntry);
+    const name = matchStoryboardCharacterPromptName(entry.name, characters);
+    const prompt = compactStoryboardText(entry.prompt, 1400);
+    if (!name || !prompt) continue;
+    const normalizedName = normalizeAvatarLookupName(name);
+    if (seen.has(normalizedName)) continue;
+    seen.add(normalizedName);
+
+    const rawPosition = asStoryboardRecord(entry.position);
+    const hasPosition = rawPosition.x != null || rawPosition.y != null;
+    candidates.push({
+      name,
+      prompt,
+      negativePrompt: compactStoryboardText(entry.negativePrompt, 700) || undefined,
+      position: hasPosition
+        ? {
+            x: normalizeStoryboardCharacterCoordinate(rawPosition.x, 0.5),
+            y: normalizeStoryboardCharacterCoordinate(rawPosition.y, 0.5),
+          }
+        : undefined,
+    });
+  }
+
+  return candidates.map((entry, index) => ({
+    ...entry,
+    position: entry.position ?? defaultStoryboardCharacterPosition(index, candidates.length),
+  }));
+}
+
+function storyboardCharacterPromptIdentity(name: string): string {
+  return name.replace(/[-_]+$/g, "").replace(/\s+/g, " ").trim();
+}
+
+function resolveStoryboardCharacterPromptsForImage(args: {
+  prompts: SceneIllustrationCharacterPrompt[];
+  characters: string[];
+  characterDescriptions: Map<string, string>;
+  includeCharacterAppearance: boolean;
+}): SceneIllustrationCharacterPrompt[] {
+  if (args.characters.length < 2) return [];
+  const promptByName = new Map(
+    args.prompts.map((entry) => [normalizeAvatarLookupName(entry.name), entry] as const),
+  );
+  const selectedCharacters = args.characters.slice(0, MAX_STORYBOARD_CHARACTER_PROMPTS);
+
+  return selectedCharacters.map((name, index) => {
+    const existing = promptByName.get(normalizeAvatarLookupName(name));
+    const identity = storyboardCharacterPromptIdentity(name);
+    const appearance = args.includeCharacterAppearance
+      ? compactStoryboardText(findCharAvatarFuzzy(name, args.characterDescriptions), 320)
+      : "";
+    const basePrompt = existing?.prompt || `character, ${identity}`;
+    return {
+      name,
+      prompt: [basePrompt, appearance ? `appearance: ${appearance}` : ""].filter(Boolean).join(", "),
+      negativePrompt: existing?.negativePrompt,
+      position: existing?.position ?? defaultStoryboardCharacterPosition(index, selectedCharacters.length),
+    };
+  });
 }
 
 function fallbackStoryboardPlan(args: {
@@ -4912,6 +5020,7 @@ function fallbackStoryboardPlan(args: {
         imagePrompt: scopedImagePrompt,
         videoPrompt: "",
         characters: reconciledCharacters.characters,
+        characterPrompts: [],
         continuityNotes: "",
         cameraMotion: "",
         transitionHint: "",
@@ -4980,6 +5089,10 @@ function sanitizeStoryboardPlan(
         reconciledCharacters.characters,
         reconciledCharacters.omittedMentionedCharacters,
       );
+      const characterPrompts = sanitizeStoryboardCharacterPrompts(
+        frame.characterPrompts,
+        reconciledCharacters.characters,
+      );
       return {
         title,
         sectionStartIndex,
@@ -4991,6 +5104,7 @@ function sanitizeStoryboardPlan(
         imagePrompt: scopedImagePrompt,
         videoPrompt: "",
         characters: reconciledCharacters.characters,
+        characterPrompts,
         continuityNotes: "",
         cameraMotion: "",
         transitionHint: "",
@@ -5168,6 +5282,7 @@ async function buildStoryboardIllustratorMessages(args: {
   generateVideos: boolean;
   allowedCharacterNames?: string[];
   maxVisibleCharacters?: number;
+  structuredCharacterPrompts?: boolean;
 }): Promise<{ systemPrompt: string; messages: ChatMessage[] }> {
   const gameContextBlock = buildStoryboardGameContextBlock({
     meta: args.meta,
@@ -5188,12 +5303,26 @@ async function buildStoryboardIllustratorMessages(args: {
     durationSeconds: args.durationSeconds,
     aspectRatio: args.aspectRatio,
   };
-  const systemPrompt = await loadStoryboardIllustratorSystemPrompt({
+  const baseSystemPrompt = await loadStoryboardIllustratorSystemPrompt({
     promptOverridesStorage: args.promptOverridesStorage,
     meta: args.meta,
     generateVideos: args.generateVideos,
     ctx: promptCtx,
   });
+  const structuredCharacterPromptInstructions = args.structuredCharacterPrompts
+    ? [
+        "NovelAI V4/V4.5 native multi-character prompting is enabled for this request.",
+        'Extend every keyframe with "characterPrompts": [ { "name": string, "prompt": string, "negativePrompt": string, "position": { "x": number, "y": number } } ].',
+        "For scenes with two or more named visible characters, include exactly one characterPrompts entry for every name in keyframe.characters, using the exact same spelling.",
+        "Keep keyframe.imagePrompt as the base scene prompt: subject-count tags, shared interaction, camera, composition, environment, lighting, mood, and props. Put character-specific identity, appearance, clothing, expression, pose, and role in that character's prompt.",
+        "Start each character prompt with girl, boy, or other without a number, then add the canonical character tag or visual identity traits.",
+        "For interactions, use NovelAI action roles such as source#hug, target#hug, or mutual#hug in the relevant character prompts when applicable.",
+        "Use negativePrompt to block traits belonging only to the other visible characters. Use an empty string when no character-specific negative is needed.",
+        "position is the character's approximate normalized center: x=0 is left, x=1 is right, y=0 is top, y=1 is bottom. Keep positions consistent with camera composition and character order.",
+        "For zero or one named visible character, return an empty characterPrompts array.",
+      ].join("\n")
+    : "";
+  const systemPrompt = [baseSystemPrompt, structuredCharacterPromptInstructions].filter(Boolean).join("\n\n");
   const promptTask = args.generateVideos
     ? "Create the animation-ready storyboard JSON now."
     : "Create the illustration storyboard JSON now.";
@@ -5218,6 +5347,9 @@ async function buildStoryboardIllustratorMessages(args: {
               ? `Each keyframe may include at most ${args.maxVisibleCharacters} visible named characters; if more are present in the narration, choose the most important for that visual beat and treat the others as off-screen or unnamed background.`
               : "",
             "Keep each keyframe.characters exactly in sync with named visible characters in imagePrompt.",
+            args.structuredCharacterPrompts
+              ? "Also keep each keyframe.characterPrompts exactly in sync with keyframe.characters for multi-character scenes."
+              : "",
           ].join("\n"),
         ].join("\n\n"),
       },
@@ -5718,13 +5850,15 @@ export async function gameRoutes(app: FastifyInstance) {
     const customHudWidgets = sanitizeGameHudWidgets(parsedCreateGameInput.setupConfig.customHudWidgets);
     const gameSystemPrompt = parsedCreateGameInput.setupConfig.gameSystemPrompt?.trim() || null;
     const gameSpecialInstructions = parsedCreateGameInput.setupConfig.gameSpecialInstructions?.trim() || null;
+    const storyboardIllustrationsPreference =
+      parsedCreateGameInput.setupConfig.gameStoryboardAutoIllustrationsEnabled !== false;
     const visualGenerationEnabled =
       parsedCreateGameInput.setupConfig.enableSpriteGeneration === true ||
       parsedCreateGameInput.setupConfig.gameStoryboardAutoIllustrationsEnabled === true ||
       parsedCreateGameInput.setupConfig.gameStoryboardAutoGenerationEnabled === true;
     const storyboardIllustrationsEnabled =
       visualGenerationEnabled &&
-      (parsedCreateGameInput.setupConfig.gameStoryboardAutoIllustrationsEnabled === true ||
+      (storyboardIllustrationsPreference ||
         parsedCreateGameInput.setupConfig.gameStoryboardAutoGenerationEnabled === true);
     const storyboardAnimationsEnabled =
       storyboardIllustrationsEnabled &&
@@ -5733,7 +5867,9 @@ export async function gameRoutes(app: FastifyInstance) {
     const setupConfig: GameSetupConfig = {
       ...parsedCreateGameInput.setupConfig,
       enableSpriteGeneration: visualGenerationEnabled || undefined,
-      gameStoryboardAutoIllustrationsEnabled: storyboardIllustrationsEnabled || undefined,
+      gameStoryboardAutoIllustrationsEnabled: visualGenerationEnabled
+        ? storyboardIllustrationsEnabled
+        : parsedCreateGameInput.setupConfig.gameStoryboardAutoIllustrationsEnabled,
       gameStoryboardAutoGenerationEnabled: storyboardAnimationsEnabled || undefined,
       enableCustomWidgets:
         parsedCreateGameInput.setupConfig.enableCustomWidgets !== false || customHudWidgets.length > 0,
@@ -5823,7 +5959,7 @@ export async function gameRoutes(app: FastifyInstance) {
       enableSpriteGeneration: setupConfig.enableSpriteGeneration || false,
       gameImageConnectionId: setupConfig.imageConnectionId || null,
       gameVideoConnectionId: setupConfig.videoConnectionId || null,
-      gameStoryboardAutoIllustrationsEnabled: setupConfig.gameStoryboardAutoIllustrationsEnabled === true,
+      gameStoryboardAutoIllustrationsEnabled: setupConfig.gameStoryboardAutoIllustrationsEnabled !== false,
       gameStoryboardAutoGenerationEnabled: setupConfig.gameStoryboardAutoGenerationEnabled === true,
       gameLastSceneVideoId: null,
       activeLorebookIds: setupConfig.activeLorebookIds || [],
@@ -10000,9 +10136,6 @@ export async function gameRoutes(app: FastifyInstance) {
       const sceneVideos = createGameSceneVideosStorage(app.db);
       const gallery = createGalleryStorage(app.db);
       const promptOverridesStorage = createPromptOverridesStorage(app.db);
-      const videoSettings = normalizeVideoGenerationUserSettings(
-        await createAppSettingsStorage(app.db).get(VIDEO_GENERATION_SETTINGS_KEY),
-      );
       await recoverStaleGameStoryboards(storyboards, storyboardStaleRenderCutoff(), "storyboard generate");
 
       const chat = await chats.getById(input.chatId);
@@ -10022,7 +10155,7 @@ export async function gameRoutes(app: FastifyInstance) {
       const meta = parseMeta(chat.metadata);
       const storyboardDurationSeconds = normalizeStoryboardDuration(
         input.durationSeconds ?? meta.gameStoryboardAnimationDurationSeconds,
-        videoSettings.sceneVideoDurationSeconds,
+        GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_DEFAULT,
       );
       const storyboardKeyframeCount = normalizeStoryboardKeyframeCount(
         input.keyframeCount,
@@ -10036,12 +10169,22 @@ export async function gameRoutes(app: FastifyInstance) {
       }
       const imgConn = await connections.getWithKey(imgConnId);
       if (!imgConn) return reply.status(404).send({ error: "Image generation connection not found" });
-      const storyboardReferenceImageLimit = resolveSceneIllustrationReferenceImageLimit({
+      const storyboardImageRequestContext = {
         imgSource: (imgConn as any).imageGenerationSource || imgConn.model || "",
         imgModel: imgConn.model || "",
         imgBaseUrl: imgConn.baseUrl || "https://image.pollinations.ai",
         imgService: imgConn.imageService || (imgConn as any).imageGenerationSource || imgConn.model || "",
-      });
+      };
+      const storyboardReferenceImageLimit = resolveSceneIllustrationReferenceImageLimit(storyboardImageRequestContext);
+      const useNovelAiCharacterPrompts = meta.gameStoryboardUseNovelAiCharacterPrompts !== false;
+      const providerSupportsStructuredCharacterPrompts = supportsSceneIllustrationStructuredCharacterPrompts(
+        storyboardImageRequestContext,
+      );
+      const structuredCharacterPrompts =
+        useNovelAiCharacterPrompts && providerSupportsStructuredCharacterPrompts;
+      const storyboardMaxVisibleCharacters = structuredCharacterPrompts
+        ? Math.min(MAX_STORYBOARD_CHARACTER_PROMPTS, storyboardReferenceImageLimit)
+        : storyboardReferenceImageLimit;
 
       const sceneConnId =
         readTrimmedString(meta.gameSceneConnectionId) ||
@@ -10090,9 +10233,16 @@ export async function gameRoutes(app: FastifyInstance) {
         aspectRatio: input.aspectRatio,
         generateVideos: generateStoryboardVideos,
         allowedCharacterNames: storyboardCharacterContext.allowedCharacterNames,
-        maxVisibleCharacters: storyboardReferenceImageLimit,
+        maxVisibleCharacters: storyboardMaxVisibleCharacters,
+        structuredCharacterPrompts,
       });
       if (debugLogsEnabled) {
+        debugLog(
+          "[debug/game/storyboard-illustrator] nativeCharacterPrompts=%s settingEnabled=%s providerSupported=%s",
+          structuredCharacterPrompts,
+          useNovelAiCharacterPrompts,
+          providerSupportsStructuredCharacterPrompts,
+        );
         debugLog(
           "[debug/game/storyboard-illustrator] messages:\n%s",
           JSON.stringify(illustratorMessages.messages, null, 2),
@@ -10109,7 +10259,7 @@ export async function gameRoutes(app: FastifyInstance) {
             conn.model ?? "",
             {
               stream: false,
-              maxTokens: 2200,
+              maxTokens: structuredCharacterPrompts ? 3600 : 2200,
               responseFormat: { type: "json_object" },
               signal: storyboardAbortSignal,
             },
@@ -10129,7 +10279,7 @@ export async function gameRoutes(app: FastifyInstance) {
           durationSeconds: storyboardDurationSeconds,
           aspectRatio: input.aspectRatio,
           allowedCharacterNames: storyboardCharacterContext.allowedCharacterNames,
-          maxVisibleCharacters: storyboardReferenceImageLimit,
+          maxVisibleCharacters: storyboardMaxVisibleCharacters,
         });
       } catch (err) {
         illustratorErrorMessage =
@@ -10144,7 +10294,7 @@ export async function gameRoutes(app: FastifyInstance) {
           durationSeconds: storyboardDurationSeconds,
           aspectRatio: input.aspectRatio,
           allowedCharacterNames: storyboardCharacterContext.allowedCharacterNames,
-          maxVisibleCharacters: storyboardReferenceImageLimit,
+          maxVisibleCharacters: storyboardMaxVisibleCharacters,
         });
       }
 
@@ -10315,18 +10465,27 @@ export async function gameRoutes(app: FastifyInstance) {
           frame: plan.keyframes[frame.index] ?? plan.keyframes[0]!,
           allowedCharacterNames: storyboardCharacterContext.allowedCharacterNames,
           sourceNarration,
-          maxVisibleCharacters: storyboardReferenceImageLimit,
+          maxVisibleCharacters: storyboardMaxVisibleCharacters,
         });
         await storyboards.updateKeyframe(frame.id, {
           imagePrompt: plannedFrame.imagePrompt,
           mangaPanelPrompt: plannedFrame.mangaPanelPrompt,
           characters: JSON.stringify(plannedFrame.characters),
         });
+        const characterPrompts = structuredCharacterPrompts
+          ? resolveStoryboardCharacterPromptsForImage({
+              prompts: plannedFrame.characterPrompts,
+              characters: plannedFrame.characters,
+              characterDescriptions: charDescriptionByName,
+              includeCharacterAppearance,
+            })
+          : [];
         const illustration: SceneIllustrationRequest = {
           title: plannedFrame.title,
           prompt: plannedFrame.imagePrompt || plannedFrame.mangaPanelPrompt || plannedFrame.narrationBeat,
           reason: plannedFrame.narrationBeat || `Storyboard keyframe ${frame.index + 1}`,
           characters: plannedFrame.characters,
+          characterPrompts,
           slug: storyboardSlug(
             `${storyboardRow.id.slice(0, 8)}-${frame.index + 1}-${plannedFrame.title}`,
             `storyboard-${frame.index + 1}`,
@@ -10354,6 +10513,14 @@ export async function gameRoutes(app: FastifyInstance) {
             illustrationAssets.requestedNames.join(", ") || "none",
             formatIllustrationAssetDebug(illustrationAssets),
           );
+          if (characterPrompts.length > 0) {
+            debugLog(
+              "[debug/game/storyboard-image-assets] frame=%d nativeCharacterPrompts=%d prompts:\n%s",
+              frame.index + 1,
+              characterPrompts.length,
+              JSON.stringify(characterPrompts, null, 2),
+            );
+          }
         }
         let sentIllustrationPrompt: string | null = null;
         try {
@@ -10370,6 +10537,7 @@ export async function gameRoutes(app: FastifyInstance) {
             artStyle,
             imagePromptInstructions,
             referenceImages: illustrationAssets.referenceImages,
+            characterPrompts: illustration.characterPrompts,
             imgSource,
             imgModel,
             imgBaseUrl,
@@ -10383,6 +10551,7 @@ export async function gameRoutes(app: FastifyInstance) {
             debugLog: debugLogsEnabled ? debugLog : undefined,
             promptOverridesStorage,
             size: backgroundSize,
+            useDirectScenePrompt: meta.gameStoryboardUseDirectScenePrompt === true,
             preserveFullScenePrompt: true,
             onCompiledPrompt: (compiled) => {
               sentIllustrationPrompt = compiled.prompt;
@@ -10494,9 +10663,18 @@ export async function gameRoutes(app: FastifyInstance) {
           frameResults[index] = await renderStoryboardFrame(frame);
         }
       };
-      const frameWorkerLimit = videoRuntime
+      const requestedFrameWorkerLimit = videoRuntime
         ? GAME_STORYBOARD_VIDEO_FRAME_CONCURRENCY
         : GAME_STORYBOARD_IMAGE_FRAME_CONCURRENCY;
+      const frameWorkerLimit = resolveSceneIllustrationGenerationConcurrency(
+        {
+          imgSource,
+          imgModel,
+          imgBaseUrl,
+          imgService: imgServiceHint,
+        },
+        requestedFrameWorkerLimit,
+      );
       const frameWorkerCount = Math.min(frameWorkerLimit, frameRows.length);
       const initialStoryboard = await serializeGameTurnStoryboard({
         storyboards,

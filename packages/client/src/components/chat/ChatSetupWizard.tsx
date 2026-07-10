@@ -52,6 +52,7 @@ import {
   DEFAULT_AGENT_TOOLS,
   MIN_AGENT_MAX_TOKENS,
   getAgentPromptTemplateOptions,
+  resolveDefaultAgentPromptTemplateId,
   isAgentAvailableInChatMode,
   isAgentConfigDeleted,
   isAgentHiddenFromChatSettingsPicker,
@@ -2175,6 +2176,7 @@ function RoleplaySetupWizard({ chat, onFinish }: ChatSetupWizardProps) {
         activeAgentIds: Array.from(new Set([...readLatestActiveAgentIds(), agent.id])),
         ...buildAgentAddMetadataPatch(agent.id, setup, metadata, {
           allowSecretPlot: supportsNarrativeDirectorSecretPlot,
+          defaultPromptTemplateId: resolveDefaultAgentPromptTemplateId(nextSettings),
         }),
       });
       toast.success(`Added ${agent.name}! You can access its settings in Agents section in Chat Settings!`);

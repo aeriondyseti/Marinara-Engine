@@ -215,11 +215,12 @@ For manual scene videos, generate or upload a Gallery illustration first, then u
 For Game Mode storyboards:
 
 - Manual generation starts from **Gallery -> Create storyboard** and uses the latest completed GM narration.
-- Automatic generation is off by default. Enable **Chat Settings -> Agents -> Storyboards -> Automatic Storyboard Illustrations** if you want each completed GM turn to create keyframe images automatically. Enable **Automatic Storyboard Animations** too if you also want clips.
+- Automatic storyboard illustrations default on when Visual Generation is enabled. Check **Chat Settings -> Agents -> Storyboards -> Automatic Storyboard Illustrations** if a chat does not create keyframe images. Enable **Automatic Storyboard Animations** too if you also want clips.
+- Official NovelAI V4/V4.5 storyboards default to native per-character captions. If a custom prompt works better with every character tag combined, turn off **Chat Settings -> Agents -> Storyboards -> Use NovelAI Character Prompts**.
 - Keyframe images need the Game Mode image-generation connection. Keyframe clips also need **Automatic Storyboard Animations** plus a Video Generation connection, selected in the Game setup wizard, in **Chat Settings -> Agents -> Scene Videos**, or marked as the default video connection in Settings.
 - If the floating viewer was closed, reopen it from the storyboard card in the Gallery.
 
-Storyboards start keyframe media generation concurrently after the prompts are ready, so provider rate limits can surface as partial storyboards. Increase `IMAGE_GEN_TIMEOUT_MS` or `VIDEO_GEN_TIMEOUT_MS` for slow providers, and use `LOG_PRESET=prompt-connections` or `LOG_LEVEL=debug` to inspect `[debug/game/storyboard-director]` and `[debug/game/storyboard-video]` logs.
+Most providers start storyboard keyframe media generation concurrently after the prompts are ready, so provider rate limits can surface as partial storyboards. NovelAI image frames run serially to avoid its concurrent-generation lock. Increase `IMAGE_GEN_TIMEOUT_MS` or `VIDEO_GEN_TIMEOUT_MS` for slow providers, and use `LOG_PRESET=prompt-connections` or `LOG_LEVEL=debug` to inspect `[debug/game/storyboard-illustrator]`, `[debug/game/image-generation]`, and `[debug/game/storyboard-video]` logs.
 
 ---
 

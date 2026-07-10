@@ -60,7 +60,10 @@ import { createCustomStickersStorage } from "../services/storage/custom-stickers
 import { createCharacterGalleryStorage } from "../services/storage/character-gallery.storage.js";
 import { createPersonaGalleryStorage } from "../services/storage/persona-gallery.storage.js";
 import { createAppSettingsStorage } from "../services/storage/app-settings.storage.js";
-import { buildLorebookSemanticEmbeddingsById } from "../services/lorebook/embeddings.js";
+import {
+  buildLorebookSemanticEmbeddingsById,
+  warmLorebookEntryEmbeddings,
+} from "../services/lorebook/embeddings.js";
 import { applyRegexScriptsToPromptMessages } from "../services/regex/regex-application.js";
 import { createPromptOverridesStorage } from "../services/storage/prompt-overrides.storage.js";
 import { filterRelevantLorebooks, processLorebooks } from "../services/lorebook/index.js";
@@ -7199,6 +7202,14 @@ export async function generateRoutes(app: FastifyInstance) {
                     preferredTargetLorebookId,
                     writableLorebookIds,
                     updates,
+                    revectorizeEntry: memoryRecallVectorizerAvailable
+                      ? async (entry) => {
+                          await warmLorebookEntryEmbeddings(app.db, [entry], {
+                            embeddingSource: memoryRecallEmbeddingSource,
+                            signal: abortController.signal,
+                          });
+                        }
+                      : undefined,
                   });
                 }
               } catch {

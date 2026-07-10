@@ -71,9 +71,9 @@ Storyboards are per completed GM turn. Marinara uses the GM turn narration.
 The storyboard flow is:
 
 1. The Prompt Director reads the completed turn narration plus stable reader-section indices.
-2. It creates 2-6 ordered keyframes, usually 4, using the chat's selected storyboard prompt preset.
+2. It creates 1-6 ordered keyframes, usually 3, using the chat's selected storyboard prompt preset.
 3. Each keyframe contains a still-image prompt, section anchors, character context, and duration/aspect-ratio settings.
-4. Marinara saves the storyboard metadata, then starts keyframe media generation concurrently once the prompts are ready.
+4. Marinara saves the storyboard metadata, then starts keyframe media generation once the prompts are ready. Providers that accept parallel jobs use concurrent workers; NovelAI image frames run serially because NovelAI locks concurrent generations.
 5. Keyframe illustrations are saved to the Gallery's **Images** tab. When animations are enabled, Marinara builds the video prompt from each saved keyframe image with the selected **Game Video Prompt** used by Gallery **Animate illustration**, then saves keyframe clips to scene videos in the **Videos** tab.
 
 The Game Mode **Gallery** panel has a **Create storyboard** button for manual generation. Manual storyboards create still keyframe illustrations by default using the chat's **Illustration Prompt** selection; they also create clips using the **Animation Prompt** selection plus the Scene Videos **Game Video Prompt** when **Automatic Storyboard Animations** is enabled and a Video Generation connection is selected. After a storyboard exists, gallery also shows its keyframes and a button to reopen the floating storyboard viewer by clicking on **View storyboard**.
@@ -141,7 +141,7 @@ This is expected provider behavior. Marinara does not send `duration_seconds` to
 
 ### Storyboards do not generate automatically
 
-Automatic storyboards are opt-in. Open **Chat Settings -> Agents -> Storyboards** and enable **Automatic Storyboard Illustrations** or **Automatic Storyboard Animations**. Manual **Storyboard turn** generation in **Gallery** still works when the automatic toggles are off.
+Automatic storyboard illustrations default on when Visual Generation is enabled for the game. Open **Chat Settings -> Agents -> Storyboards** if they were disabled for this chat or if you also want **Automatic Storyboard Animations**. Manual **Storyboard turn** generation in **Gallery** still works when automatic illustrations are off.
 
 ### Storyboard keyframes are images but not videos
 
@@ -149,7 +149,7 @@ Storyboard image generation uses the Game Mode image-generation connection. Stor
 
 ### Storyboard generation times out
 
-The Prompt Director has its own request window, then each keyframe image/video render runs as media generation work. Keyframes start concurrently after the prompts are ready, so several provider jobs may be active at once. If a provider is slow or rate-limited, increase the relevant timeout (`IMAGE_GEN_TIMEOUT_MS`, `VIDEO_GEN_TIMEOUT_MS`, or provider-specific polling settings) and check debug logs for `[debug/game/storyboard-director]` and `[debug/game/storyboard-video]`.
+The Prompt Director has its own request window, then each keyframe image/video render runs as media generation work. Most providers start keyframes concurrently after the prompts are ready, so several provider jobs may be active at once. NovelAI image frames run serially to avoid its concurrent-generation lock. If a provider is slow or rate-limited, increase the relevant timeout (`IMAGE_GEN_TIMEOUT_MS`, `VIDEO_GEN_TIMEOUT_MS`, or provider-specific polling settings) and check debug logs for `[debug/game/storyboard-illustrator]`, `[debug/game/image-generation]`, and `[debug/game/storyboard-video]`.
 
 ### Animated Storyboard generation takes a while to load
 

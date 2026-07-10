@@ -408,7 +408,7 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
   const [enableLorebookKeeper, setEnableLorebookKeeper] = useState(false);
   const [imageConnectionId, setImageConnectionId] = useState<string | null>(null);
   const [videoConnectionId, setVideoConnectionId] = useState<string | null>(null);
-  const [enableStoryboardIllustrations, setEnableStoryboardIllustrations] = useState(false);
+  const [enableStoryboardIllustrations, setEnableStoryboardIllustrations] = useState(true);
   const [enableStoryboardAnimations, setEnableStoryboardAnimations] = useState(false);
   const [sceneConnectionId, setSceneConnectionId] = useState<string | null>(null);
   const [activeLorebookIds, setActiveLorebookIds] = useState<string[]>([]);
@@ -772,7 +772,9 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
         enableSpriteGeneration: enableSpriteGeneration || undefined,
         imageConnectionId: enableSpriteGeneration && imageConnectionId ? imageConnectionId : undefined,
         videoConnectionId: enableSpriteGeneration && videoConnectionId ? videoConnectionId : undefined,
-        gameStoryboardAutoIllustrationsEnabled: storyboardIllustrationsEnabled || undefined,
+        gameStoryboardAutoIllustrationsEnabled: enableSpriteGeneration
+          ? enableStoryboardIllustrations
+          : undefined,
         gameStoryboardAutoGenerationEnabled: storyboardAnimationsEnabled || undefined,
         activeLorebookIds: activeLorebookIds.length > 0 ? activeLorebookIds : undefined,
         enableCustomWidgets,

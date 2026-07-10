@@ -20,6 +20,7 @@ import {
   inferImageSource,
   type ImageGenerationDefaultsProfile,
   type ImageStyleProfileSettings,
+  type SceneIllustrationCharacterPrompt,
 } from "@marinara-engine/shared";
 import type { ImageGenerationSize } from "../image/image-generation-settings.js";
 import { compileImagePrompt } from "../image/image-prompt-compiler.js";
@@ -123,6 +124,22 @@ function resolveSceneIllustrationImageBackend(req: Pick<
   if (!explicit) return inferred;
   if (explicit === "openai" && inferred === "gemini_image") return inferred;
   return explicit;
+}
+
+export function resolveSceneIllustrationGenerationConcurrency(
+  req: Pick<SceneIllustrationGenRequest, "imgSource" | "imgModel" | "imgBaseUrl" | "imgService">,
+  requestedConcurrency: number,
+): number {
+  const concurrency = Math.max(1, Math.trunc(requestedConcurrency));
+  return resolveSceneIllustrationImageBackend(req) === "novelai" ? 1 : concurrency;
+}
+
+export function supportsSceneIllustrationStructuredCharacterPrompts(
+  req: Pick<SceneIllustrationGenRequest, "imgSource" | "imgModel" | "imgBaseUrl" | "imgService">,
+): boolean {
+  if (resolveSceneIllustrationImageBackend(req) !== "novelai") return false;
+  if (!req.imgBaseUrl.toLowerCase().includes("novelai.net")) return false;
+  return /^nai-diffusion-(?:4(?:-(?:curated-preview|full))?|4-5(?:-(?:curated|full))?)$/i.test(req.imgModel.trim());
 }
 
 export function resolveSceneIllustrationReferenceImageLimit(req: Pick<
@@ -779,6 +796,8 @@ export interface SceneIllustrationGenRequest {
   /** Extra user instructions appended to scene illustration prompts. */
   imagePromptInstructions?: string;
   referenceImages?: string[];
+  /** Structured named-character prompts for providers with native multi-character controls. */
+  characterPrompts?: SceneIllustrationCharacterPrompt[];
   imgSource?: string | null;
   imgModel: string;
   imgBaseUrl: string;
@@ -799,6 +818,8 @@ export interface SceneIllustrationGenRequest {
   negativePromptOverride?: string;
   /** Receives the exact compiled prompt passed to the image provider. */
   onCompiledPrompt?: (compiled: CompiledGameImagePrompt) => void;
+  /** Use the storyboard illustrator's imagePrompt as the complete scene source, bypassing the scene-illustration prompt template. */
+  useDirectScenePrompt?: boolean;
   /** Preserve the full generated scene prompt instead of distilling it into the selected tagged prompt grammar. */
   preserveFullScenePrompt?: boolean;
   /** Optional request-scoped abort signal. */
@@ -911,9 +932,11 @@ async function buildSceneIllustrationRawPrompt(req: SceneIllustrationGenRequest)
     artDirectionLine: styleHint ? `Art direction: ${styleHint}.` : "",
     imagePromptInstructionsLine,
   };
-  const rawIllustrationPrompt = req.promptOverridesStorage
-    ? await loadPrompt(req.promptOverridesStorage, GAME_SCENE_ILLUSTRATION, sceneIllustrationVars)
-    : GAME_SCENE_ILLUSTRATION.defaultBuilder(sceneIllustrationVars);
+  const rawIllustrationPrompt = req.useDirectScenePrompt
+    ? req.prompt.trim()
+    : req.promptOverridesStorage
+      ? await loadPrompt(req.promptOverridesStorage, GAME_SCENE_ILLUSTRATION, sceneIllustrationVars)
+      : GAME_SCENE_ILLUSTRATION.defaultBuilder(sceneIllustrationVars);
   const finalPrompt =
     imagePromptInstructionsLine && !rawIllustrationPrompt.includes(imagePromptInstructionsLine)
       ? `${rawIllustrationPrompt}\n${imagePromptInstructionsLine}`
@@ -1178,6 +1201,7 @@ export async function generateSceneIllustration(req: SceneIllustrationGenRequest
         imageDefaults: req.imgDefaults ?? undefined,
         signal: req.signal,
         referenceImages: referenceImages.length ? referenceImages : undefined,
+        characterPrompts: req.characterPrompts,
       },
     );
 

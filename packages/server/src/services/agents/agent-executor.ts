@@ -37,6 +37,7 @@ const CHARACTER_LORE_DESCRIPTION_LIMIT = 2000;
 const CHARACTER_LORE_FIELD_LIMIT = 1200;
 const DEFAULT_AGENT_TEMPERATURE = 0.3;
 const DEFAULT_AGENT_CALL_TIMEOUT_MS = 5 * 60_000;
+const ILLUSTRATOR_AGENT_CALL_TIMEOUT_MS = 30 * 60_000;
 const AGENT_BATCH_FALLBACK_MAX_CONCURRENT = 4;
 
 /** Strip HTML/XML-style tags (e.g. <div style="..."> <br> <speaker>) from text to save tokens. */
@@ -452,8 +453,9 @@ function combineAbortSignals(signals: AbortSignal[]): AbortSignal {
   return controller.signal;
 }
 
-function agentCallSignal(parentSignal?: AbortSignal): AbortSignal {
-  const timeoutSignal = AbortSignal.timeout(DEFAULT_AGENT_CALL_TIMEOUT_MS);
+function agentCallSignal(parentSignal?: AbortSignal, agentType?: "illustrator"): AbortSignal {
+  const timeoutMs = agentType === "illustrator" ? ILLUSTRATOR_AGENT_CALL_TIMEOUT_MS : DEFAULT_AGENT_CALL_TIMEOUT_MS;
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
   return parentSignal ? combineAbortSignals([parentSignal, timeoutSignal]) : timeoutSignal;
 }
 
@@ -621,7 +623,7 @@ export async function executeAgent(
             responseText += chunk;
           }
         : undefined,
-      signal: agentCallSignal(context.signal),
+      signal: agentCallSignal(context.signal, config.type === "illustrator" ? "illustrator" : undefined),
     });
 
     if (!responseText && result.content) responseText = result.content;
@@ -667,7 +669,7 @@ export async function executeAgent(
               retryResponseText += chunk;
             }
           : undefined,
-        signal: agentCallSignal(context.signal),
+        signal: agentCallSignal(context.signal, config.type === "illustrator" ? "illustrator" : undefined),
       });
       totalTokens += retryResult.usage?.totalTokens ?? 0;
       if (!retryResponseText && retryResult.content) retryResponseText = retryResult.content;
@@ -740,7 +742,7 @@ async function executeAgentWithTools(
   let totalTokens = 0;
   const debugAgentsEnabled = isDebugAgentsEnabled() && logger.isLevelEnabled("debug");
   const customParameters = agentCustomParameters(config);
-  const toolLoopSignal = agentCallSignal(context.signal);
+  const toolLoopSignal = agentCallSignal(context.signal, config.type === "illustrator" ? "illustrator" : undefined);
 
   for (let round = 0; round < maxToolRounds; round++) {
     emitAgentDebug(context, {
@@ -1029,7 +1031,7 @@ export async function executeAgentBatch(
             responseText += chunk;
           }
         : undefined,
-      signal: agentCallSignal(context.signal),
+      signal: agentCallSignal(context.signal, configs.some((config) => config.type === "illustrator") ? "illustrator" : undefined),
     });
 
     // chatComplete also accumulates content, but streaming via onToken is
@@ -2225,17 +2227,17 @@ function buildAgentExtras(context: AgentContext, agentTypes: string[] = []): str
   if (agentTypes.includes("illustrator") && gameImageStylePrompt) {
     parts.push(`<game_image_instructions>`);
     parts.push(
-      `This chat is in Game Mode. Gallery -> Illustrate should produce one polished visual novel/game scene CG for the current beat, not a selfie, comic page, manga panel, or background-only plate.`,
+      `This chat is in Game Mode. Follow the selected Illustrator prompt mode exactly: Background stays an environment-only plate, Illustration produces a scene CG, and Selfie, Comic Page, or manga modes keep their requested framing and text behavior.`,
     );
     parts.push(`Required visual style prompt: ${escapeXml(gameImageStylePrompt)}`);
     parts.push(
       `Carry this visual style into both the JSON "style" field and the generated "prompt". Do not replace it with a generic art style.`,
     );
     parts.push(
-      `Prefer a landscape/16:9 full-frame scene composition unless the latest assistant message clearly calls for another framing.`,
+      `When the selected prompt mode does not specify another aspect ratio, prefer a landscape/16:9 full-frame scene composition.`,
     );
     parts.push(
-      `Avoid UI, subtitles, captions, speech bubbles, dialogue lettering, manga SFX, watermarks, logos, and split panels unless the user's game image instructions explicitly request text.`,
+      `Avoid UI, subtitles, captions, speech bubbles, dialogue lettering, manga SFX, watermarks, logos, and split panels unless the selected prompt mode or the user's game image instructions explicitly request them.`,
     );
     parts.push(`</game_image_instructions>`);
   }

@@ -190,9 +190,9 @@ import {
   GAME_STORYBOARD_KEYFRAME_COUNT_DEFAULT,
   GAME_STORYBOARD_KEYFRAME_COUNT_MAX,
   GAME_STORYBOARD_KEYFRAME_COUNT_MIN,
+  GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE_ID,
   GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES,
   GAME_VIDEO_PROMPT_TEMPLATE_ID,
-  VIDEO_GENERATION_SETTINGS_KEY,
   getChatModeCapabilities,
   LIMITS,
   MIN_AGENT_MAX_TOKENS,
@@ -204,7 +204,6 @@ import {
   AGENT_COST_HIGH_TOKENS,
   CONVERSATION_COMMAND_KEYS,
   getDefaultBuiltInAgentSettings,
-  normalizeVideoGenerationUserSettings,
   isAgentAvailableInChatMode,
   isAgentConfigDeleted,
   isAgentHiddenFromChatSettingsPicker,
@@ -214,6 +213,7 @@ import {
   normalizeAgentPromptTemplateOptions,
   normalizeAgentPhaseForType,
   normalizeAgentPromptTemplateSelectionMap,
+  resolveDefaultAgentPromptTemplateId,
   resolveAgentPromptTemplate,
 } from "@marinara-engine/shared";
 import type { Chat, CharacterGroup, Lorebook } from "@marinara-engine/shared";
@@ -918,12 +918,6 @@ export function ChatSettingsDrawer({
       </div>
     </button>
   );
-  const videoGenerationSettingsQuery = useQuery({
-    queryKey: ["app-settings", VIDEO_GENERATION_SETTINGS_KEY],
-    queryFn: () => api.get<{ value: string | null }>(`/app-settings/${VIDEO_GENERATION_SETTINGS_KEY}`),
-    enabled: open && isGame,
-    staleTime: 60_000,
-  });
   const { data: currentPromptPresetFull } = usePresetFull(isRoleplayMode ? (chat.promptPresetId ?? null) : null);
   const promptPresetOptionsLoaded = Array.isArray(presets);
   const promptPresetOptions = useMemo(() => (presets ?? []) as PromptPreset[], [presets]);
@@ -1375,6 +1369,13 @@ export function ChatSettingsDrawer({
     },
     [agentConfigsByType],
   );
+  const getDefaultPromptTemplateIdForAgent = useCallback(
+    (agentId: string) => {
+      const cfg = agentConfigsByType.get(agentId);
+      return resolveDefaultAgentPromptTemplateId(mergeBuiltInAgentSettings(agentId, cfg?.settings));
+    },
+    [agentConfigsByType],
+  );
   // Build the available agent list: built-in + custom agents from DB
   // Mode capabilities decide which built-ins are exposed for each chat mode.
   // Custom agents are user-authored and can be attached to any chat mode.
@@ -1605,22 +1606,14 @@ export function ChatSettingsDrawer({
   const gameImageDynamicPromptEnabled = metadata.gameImageDynamicPromptEnabled === true;
   const gameStoryboardAutoIllustrationsEnabled = metadata.gameStoryboardAutoIllustrationsEnabled === true;
   const gameStoryboardAutoAnimationsEnabled = metadata.gameStoryboardAutoGenerationEnabled === true;
+  const gameStoryboardUseDirectScenePrompt = metadata.gameStoryboardUseDirectScenePrompt === true;
+  const gameStoryboardUseNovelAiCharacterPrompts = metadata.gameStoryboardUseNovelAiCharacterPrompts !== false;
   const gameStoryboardKeyframeCount = normalizeGameStoryboardKeyframeCount(metadata.gameStoryboardKeyframeCount);
   const gameStoryboardAnimationDurationConfigured = hasGameStoryboardAnimationDuration(
     metadata.gameStoryboardAnimationDurationSeconds,
   );
-  const gameStoryboardAnimationFallbackDuration = useMemo(
-    () =>
-      normalizeGameStoryboardAnimationDuration(
-        normalizeVideoGenerationUserSettings(videoGenerationSettingsQuery.data?.value ?? null)
-          .sceneVideoDurationSeconds,
-      ),
-    [videoGenerationSettingsQuery.data?.value],
-  );
   const gameStoryboardAnimationDurationSeconds = normalizeGameStoryboardAnimationDuration(
-    gameStoryboardAnimationDurationConfigured
-      ? metadata.gameStoryboardAnimationDurationSeconds
-      : gameStoryboardAnimationFallbackDuration,
+    metadata.gameStoryboardAnimationDurationSeconds,
   );
   const commitGameStoryboardAnimationDuration = useCallback(
     (durationSeconds: number) => {
@@ -2620,14 +2613,14 @@ export function ChatSettingsDrawer({
   const updateAgentPromptTemplateSelection = useCallback(
     (agentId: string, promptTemplateId: string) => {
       const next = { ...readLatestAgentPromptTemplateSelections() };
-      if (!promptTemplateId || promptTemplateId === DEFAULT_AGENT_PROMPT_TEMPLATE_ID) {
+      if (!promptTemplateId || promptTemplateId === getDefaultPromptTemplateIdForAgent(agentId)) {
         delete next[agentId];
       } else {
         next[agentId] = promptTemplateId;
       }
       updateMeta.mutate({ id: chat.id, agentPromptTemplateIds: next });
     },
-    [chat.id, readLatestAgentPromptTemplateSelections, updateMeta],
+    [chat.id, getDefaultPromptTemplateIdForAgent, readLatestAgentPromptTemplateSelections, updateMeta],
   );
 
   const handleLorebookKeeperBackfill = useCallback(async () => {
@@ -3049,6 +3042,7 @@ export function ChatSettingsDrawer({
         activeAgentIds: Array.from(new Set([...readLatestActiveAgentIds(), agent.id])),
         ...buildAgentAddMetadataPatch(agent.id, setup, metadata, {
           allowSecretPlot: supportsNarrativeDirectorSecretPlot,
+          defaultPromptTemplateId: resolveDefaultAgentPromptTemplateId(nextSettings),
         }),
       });
       toast.success(`Added ${agent.name}! You can access its settings in Agents section in Chat Settings!`);
@@ -3502,7 +3496,9 @@ export function ChatSettingsDrawer({
                 </div>
                 <AgentPromptTemplateSelect
                   options={promptOptions}
-                  selectedId={agentPromptTemplateSelections[agent.id] ?? DEFAULT_AGENT_PROMPT_TEMPLATE_ID}
+                  selectedId={
+                    agentPromptTemplateSelections[agent.id] ?? getDefaultPromptTemplateIdForAgent(agent.id)
+                  }
                   onChange={(promptTemplateId) => updateAgentPromptTemplateSelection(agent.id, promptTemplateId)}
                 />
               </div>
@@ -7089,7 +7085,10 @@ export function ChatSettingsDrawer({
                       >
                         <AgentPromptTemplateSelect
                           options={getPromptOptionsForAgent("echo-chamber")}
-                          selectedId={agentPromptTemplateSelections["echo-chamber"] ?? DEFAULT_AGENT_PROMPT_TEMPLATE_ID}
+                          selectedId={
+                            agentPromptTemplateSelections["echo-chamber"] ??
+                            getDefaultPromptTemplateIdForAgent("echo-chamber")
+                          }
                           onChange={(promptTemplateId) =>
                             updateAgentPromptTemplateSelection("echo-chamber", promptTemplateId)
                           }
@@ -7124,7 +7123,10 @@ export function ChatSettingsDrawer({
                       >
                         <AgentPromptTemplateSelect
                           options={getPromptOptionsForAgent("illustrator")}
-                          selectedId={agentPromptTemplateSelections["illustrator"] ?? DEFAULT_AGENT_PROMPT_TEMPLATE_ID}
+                          selectedId={
+                            agentPromptTemplateSelections["illustrator"] ??
+                            getDefaultPromptTemplateIdForAgent("illustrator")
+                          }
                           onChange={(promptTemplateId) =>
                             updateAgentPromptTemplateSelection("illustrator", promptTemplateId)
                           }
@@ -7670,6 +7672,28 @@ export function ChatSettingsDrawer({
                         });
                       }}
                     />
+                    <AgentSettingsToggle
+                      label="Use Storyboard Prompt Directly"
+                      description="Send each illustrator imagePrompt directly to the image model with global style tags. Character references are attached only when Send Avatar References is enabled. Bypasses the Game Scene Illustration prompt override and prevents tag distillation."
+                      enabled={gameStoryboardUseDirectScenePrompt}
+                      onToggle={() =>
+                        updateMeta.mutate({
+                          id: chat.id,
+                          gameStoryboardUseDirectScenePrompt: !gameStoryboardUseDirectScenePrompt,
+                        })
+                      }
+                    />
+                    <AgentSettingsToggle
+                      label="Use NovelAI Character Prompts"
+                      description="For official NovelAI V4/V4.5 storyboards, send visible characters through native Add Character captions and positions. Turn off to keep every character in the shared legacy prompt."
+                      enabled={gameStoryboardUseNovelAiCharacterPrompts}
+                      onToggle={() =>
+                        updateMeta.mutate({
+                          id: chat.id,
+                          gameStoryboardUseNovelAiCharacterPrompts: !gameStoryboardUseNovelAiCharacterPrompts,
+                        })
+                      }
+                    />
                     <div className="space-y-2 rounded-lg bg-[var(--background)]/75 px-3 py-2 ring-1 ring-[var(--border)]">
                       <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0">
@@ -7714,12 +7738,12 @@ export function ChatSettingsDrawer({
                       <div className="min-w-0">
                         <div className="flex items-center gap-1 text-[0.625rem] font-medium text-[var(--foreground)]">
                           Animation Clip Duration
-                          <HelpTooltip text="Overrides the Video Generation scene fallback for storyboard MP4 clips in this chat. Some video providers may clamp to a lower maximum." />
+                          <HelpTooltip text="Controls the duration of each storyboard MP4 clip in this chat. Some video providers may clamp to a lower maximum." />
                         </div>
                         <p className="mt-0.5 text-[0.5625rem] leading-snug text-[var(--muted-foreground)]">
                           {gameStoryboardAnimationDurationConfigured
                             ? "Used for each generated storyboard animation clip."
-                            : "Uses the global Video Generation scene fallback until set."}
+                            : `Uses the ${GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_DEFAULT}-second storyboard default until set.`}
                         </p>
                       </div>
                       <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
@@ -7746,11 +7770,11 @@ export function ChatSettingsDrawer({
                             }
                             className="rounded-md border border-[var(--border)] px-2 py-1 text-[0.625rem] text-[var(--muted-foreground)] transition-colors hover:border-[var(--primary)]/40 hover:text-[var(--foreground)] disabled:cursor-not-allowed disabled:opacity-60"
                           >
-                            Use video default
+                            Use storyboard default
                           </button>
                         ) : (
                           <span className="rounded-md bg-[var(--secondary)]/70 px-2 py-1 text-[0.625rem] text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-                            Video default
+                            Storyboard default
                           </span>
                         )}
                       </div>
@@ -7905,7 +7929,8 @@ export function ChatSettingsDrawer({
                                       <AgentPromptTemplateSelect
                                         options={getPromptOptionsForAgent(agent.id)}
                                         selectedId={
-                                          agentPromptTemplateSelections[agent.id] ?? DEFAULT_AGENT_PROMPT_TEMPLATE_ID
+                                          agentPromptTemplateSelections[agent.id] ??
+                                          getDefaultPromptTemplateIdForAgent(agent.id)
                                         }
                                         onChange={(promptTemplateId) =>
                                           updateAgentPromptTemplateSelection(agent.id, promptTemplateId)
@@ -9472,6 +9497,14 @@ function GameStoryboardPromptLibrary({
             >
               <FilePlus2 size="0.6875rem" />
               Add Comic Copy
+            </button>
+            <button
+              type="button"
+              onClick={() => onAddTemplate(GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE_ID)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+            >
+              <FilePlus2 size="0.6875rem" />
+              Add NovelAI Copy
             </button>
             <button
               type="button"

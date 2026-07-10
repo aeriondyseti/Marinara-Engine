@@ -1,4 +1,5 @@
-import type { AgentContext } from "@marinara-engine/shared";
+import type { AgentContext, LorebookEntry } from "@marinara-engine/shared";
+import { logger } from "../../lib/logger.js";
 import { createLorebooksStorage } from "../../services/storage/lorebooks.storage.js";
 
 export interface LorebookKeeperSettings {
@@ -350,8 +351,10 @@ export async function persistLorebookKeeperUpdates(args: {
   preferredTargetLorebookId: string | null;
   writableLorebookIds: string[] | null;
   updates: Array<Record<string, unknown>>;
+  revectorizeEntry?: (entry: LorebookEntry) => Promise<void>;
 }): Promise<string | null> {
-  const { lorebooksStore, chatId, chatName, preferredTargetLorebookId, writableLorebookIds, updates } = args;
+  const { lorebooksStore, chatId, chatName, preferredTargetLorebookId, writableLorebookIds, updates, revectorizeEntry } =
+    args;
 
   let targetLorebookId = preferredTargetLorebookId ?? writableLorebookIds?.[0] ?? null;
   if (!targetLorebookId) {
@@ -404,11 +407,18 @@ export async function persistLorebookKeeperUpdates(args: {
       });
       const mergedKeys = mergeLorebookKeys(existing.keys, keys);
       const mergedTag = tag || existing.tag || "";
-      await lorebooksStore.updateEntry(existing.id, {
+      const updated = await lorebooksStore.updateEntry(existing.id, {
         content: mergedContent,
         keys: mergedKeys,
         tag: mergedTag,
       });
+      if (revectorizeEntry && updated) {
+        try {
+          await revectorizeEntry(updated as LorebookEntry);
+        } catch (err) {
+          logger.warn(err, "[lorebook-keeper] Failed to refresh embedding for updated entry %s", existing.id);
+        }
+      }
       entryByName.set(rawName.toLowerCase(), {
         ...existing,
         content: mergedContent,

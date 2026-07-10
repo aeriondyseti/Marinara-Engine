@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import {
   BUILT_IN_AGENTS,
+  DEFAULT_AGENT_PROMPT_TEMPLATE_ID,
   DEFAULT_AGENT_PROMPTS,
   getDefaultBuiltInAgentSettings,
   normalizeAgentPhaseForType,
@@ -126,6 +127,17 @@ export function buildLegacyDefaultAgentConfigUpdate(row: typeof agentConfigs.$in
 
     const defaults = getDefaultBuiltInAgentSettings(builtIn.id);
     let settingsChanged = settingsMigration.changed;
+    // Illustrator now defaults to the Background named template. Existing configs with a custom
+    // raw prompt must remain on the legacy Default option unless the user selects another mode.
+    if (
+      row.type === "illustrator" &&
+      row.promptTemplate.trim() &&
+      !hasKnownDefaultPrompt &&
+      settings.defaultPromptTemplateId === undefined
+    ) {
+      settings = { ...settings, defaultPromptTemplateId: DEFAULT_AGENT_PROMPT_TEMPLATE_ID };
+      settingsChanged = true;
+    }
     for (const [key, value] of Object.entries(defaults)) {
       if (key === "promptTemplates") continue;
       if (key === "resultType") {
