@@ -482,6 +482,8 @@ function getCallConversationCommandKey(command: CharacterCommand): ConversationC
       return "chess";
     case "poker":
       return "poker";
+    case "eightball":
+      return "eightball";
     case "spotify":
     case "youtube":
       return "music";

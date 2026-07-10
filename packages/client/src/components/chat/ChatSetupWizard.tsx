@@ -173,6 +173,7 @@ const CONVERSATION_COMMAND_TOGGLE_OPTIONS: Array<{
   { id: "uno", label: "UNO", description: "Let characters start a game of UNO at the table when you agree to play." },
   { id: "chess", label: "Chess", description: "Let characters accept a one-on-one chess challenge at the table." },
   { id: "poker", label: "Poker", description: "Let characters sit down for a game of Texas Hold'em poker at the table." },
+  { id: "eightball", label: "8-Ball Pool", description: "Let characters rack up a game of 8-ball pool at the table." },
 ];
 
 // ─── Main component ───────────────────────────

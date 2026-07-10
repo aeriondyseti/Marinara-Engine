@@ -68,6 +68,8 @@ function getConversationCommandKey(command: CharacterCommand): ConversationComma
       return "chess";
     case "poker":
       return "poker";
+    case "eightball":
+      return "eightball";
     case "spotify":
     case "youtube":
       return "music";
@@ -253,7 +255,7 @@ export async function buildConversationCommandsReminder(args: {
       `   - You invite {{user}} somewhere and they accept → trigger a scene for that activity.`,
       `   - A plan is made (date, trip, hangout, confrontation) and the moment arrives → trigger a scene.`,
       `   Do NOT wait for {{user}} to explicitly ask for a scene. If the conversation implies you and {{user}} are about to DO something together, initiate the scene yourself.`,
-      `   EXCEPTION: Do NOT start a scene for playing UNO, chess, poker, cards, or other board/table games — those have their own commands. Use [uno] for UNO, [chess] for chess, and [poker] for poker, not [scene].`,
+      `   EXCEPTION: Do NOT start a scene for playing UNO, chess, poker, 8-ball pool, cards, or other board/table games — those have their own commands. Use [uno] for UNO, [chess] for chess, [poker] for poker, and [eightball] for 8-ball pool, not [scene].`,
     );
   }
 
@@ -270,8 +272,11 @@ export async function buildConversationCommandsReminder(args: {
     chatMode === "conversation" && isConversationCommandEnabled(chatMeta, "chess") && characterIds.length >= 1;
   const pokerAdvertisable =
     chatMode === "conversation" && isConversationCommandEnabled(chatMeta, "poker") && characterIds.length >= 1;
+  const eightballAdvertisable =
+    chatMode === "conversation" && isConversationCommandEnabled(chatMeta, "eightball") && characterIds.length >= 1;
   const noActiveTurnGame =
-    (unoAdvertisable || chessAdvertisable || pokerAdvertisable) && !(await getActiveTurnGame(args.db, args.chatId));
+    (unoAdvertisable || chessAdvertisable || pokerAdvertisable || eightballAdvertisable) &&
+    !(await getActiveTurnGame(args.db, args.chatId));
   if (unoAdvertisable && noActiveTurnGame) {
     addCommandLines(
       `- [uno] - start a game of UNO at the table. Include this ONLY when ${personaName} proposes playing UNO (or cards) and you are willing to play right now. The system deals the cards and runs the game — you do NOT narrate dealing or describe the hands.`,
@@ -291,6 +296,13 @@ export async function buildConversationCommandsReminder(args: {
       `- [poker] - start a game of Texas Hold'em poker at the table. Include this ONLY when ${personaName} proposes playing poker and you are willing to play right now. The system seats ${personaName} plus every willing character at the table and runs the game — you do NOT narrate dealing, blinds, or describe anyone's cards.`,
       `   If you are busy, tired, or simply don't feel like it, just say so in character and do NOT include [poker]. Agreeing to play IS including [poker].`,
       `   Example: ${personaName} says "who's up for some poker?" and you're in → "Deal me in. [poker]"`,
+    );
+  }
+  if (eightballAdvertisable && noActiveTurnGame) {
+    addCommandLines(
+      `- [eightball] - start a one-on-one game of 8-ball pool against ${personaName}. Include this ONLY when ${personaName} proposes playing pool/8-ball and YOU are willing to play right now. 8-ball seats exactly two players: ${personaName} and you — whichever character includes [eightball] takes the opponent's seat. The system racks the table and runs the game — you do NOT describe the table or narrate shots.`,
+      `   If you'd rather not play, say so in character and do NOT include [eightball]. Agreeing to play IS including [eightball].`,
+      `   Example: ${personaName} says "rack 'em up?" and you're in → "You're breaking. [eightball]"`,
     );
   }
 

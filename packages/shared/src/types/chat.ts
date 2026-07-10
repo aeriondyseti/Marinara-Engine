@@ -39,6 +39,7 @@ export const CONVERSATION_COMMAND_KEYS = [
   "uno",
   "chess",
   "poker",
+  "eightball",
   "music",
   "haptic",
   "influence",

@@ -7,6 +7,7 @@ import { useUIStore } from "../stores/ui.store";
 import { useUnoGameStore } from "../stores/uno-game.store";
 import { useChessGameStore } from "../stores/chess-game.store";
 import { usePokerGameStore } from "../stores/poker-game.store";
+import { useEightBallGameStore } from "../stores/eightball-game.store";
 import { useGalleryStore } from "../stores/gallery.store";
 import { toast } from "sonner";
 import { startSceneWithPromptPreferences } from "./scene-generation";
@@ -588,6 +589,20 @@ const COMMANDS: SlashCommand[] = [
         return { handled: true, feedback: "Poker can only be played in conversation chats." };
       }
       usePokerGameStore.getState().openSetup(ctx.chatId);
+      return { handled: true };
+    },
+  },
+  {
+    name: "8ball",
+    aliases: ["pool"],
+    description: "Start a game of 8-ball pool with a character in this chat",
+    usage: "/8ball",
+    local: true,
+    async execute(_args, ctx) {
+      if (ctx.mode === "roleplay") {
+        return { handled: true, feedback: "8-ball pool can only be played in conversation chats." };
+      }
+      useEightBallGameStore.getState().openSetup(ctx.chatId);
       return { handled: true };
     },
   },

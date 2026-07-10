@@ -33,6 +33,10 @@ export async function handleTurnGameCommand(args: {
     await startPokerFromCommand(args);
     return true;
   }
+  if (args.commandType === "eightball") {
+    await startEightballFromCommand(args);
+    return true;
+  }
   return false;
 }
 
@@ -187,5 +191,41 @@ async function startPokerFromCommand(args: Parameters<typeof handleTurnGameComma
     }
   } catch (err) {
     logger.error(err, "[commands] poker start failed");
+  }
+}
+
+async function startEightballFromCommand(args: Parameters<typeof handleTurnGameCommand>[0]): Promise<void> {
+  try {
+    const existingGame = await getActiveTurnGame(args.db, args.chatId);
+    if (existingGame) {
+      logger.info("[commands] eightball requested but a game is already active in chat %s", args.chatId);
+      return;
+    }
+    if (!args.characterId) {
+      logger.warn("[commands] eightball requested without an agreeing character in chat %s", args.chatId);
+      return;
+    }
+
+    const outcome = await startTurnGame(args.db, args.chatId, {
+      gameType: "eightball",
+      botCharacterIds: [args.characterId],
+      humanFirst: true,
+    });
+    if (outcome.ok) {
+      args.reply.raw.write(`data: ${JSON.stringify({ type: "turn_game_state_patch", data: outcome.view })}\n\n`);
+      logger.info("[commands] eightball started in chat %s against %s", args.chatId, args.characterId);
+      await runTurnGameBotTurns({
+        db: args.db,
+        chatId: args.chatId,
+        conn: args.conn,
+        baseUrl: args.baseUrl,
+        reply: args.reply,
+        signal: args.signal,
+      });
+    } else {
+      logger.warn("[commands] eightball start failed in chat %s: %s", args.chatId, outcome.error ?? "");
+    }
+  } catch (err) {
+    logger.error(err, "[commands] eightball start failed");
   }
 }

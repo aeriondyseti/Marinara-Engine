@@ -15,6 +15,7 @@
 // - [uno] (start a game of UNO at the table; Conversation mode)
 // - [chess] (start a one-on-one chess game against the user; Conversation mode)
 // - [poker] (start a game of Texas Hold'em poker at the table; Conversation mode)
+// - [eightball] (start a one-on-one 8-ball pool game against the user; Conversation mode)
 // - [spotify: title="Song title", artist="Artist"] (play a song on the user's active Spotify player)
 // - [youtube: query="Song title Artist"] (play a song on the user's active YouTube player)
 // - [react: emoji="😂"] or [react: emoji=":custom_name:"] (react to the user's latest message; Conversation mode)
@@ -98,6 +99,11 @@ export interface ChessCommand {
 export interface PokerCommand {
   /** Start a game of Texas Hold'em poker at the table. Param-less; the system seats + runs the game. */
   type: "poker";
+}
+
+export interface EightballCommand {
+  /** Start a one-on-one 8-ball pool game against the user. Param-less; the system racks + runs the table. */
+  type: "eightball";
 }
 
 export interface InfluenceCommand {
@@ -359,6 +365,7 @@ export type CharacterCommand =
   | UnoCommand
   | ChessCommand
   | PokerCommand
+  | EightballCommand
   | InfluenceCommand
   | NoteCommand
   | DirectMessageCommand
@@ -389,6 +396,8 @@ const UNO_RE = /\[uno(?::[^\]\r\n]*)?\]/gi;
 const CHESS_RE = /\[chess(?::[^\]\r\n]*)?\]/gi;
 // Param-less poker trigger. Same tolerant shape as UNO_RE.
 const POKER_RE = /\[poker(?::[^\]\r\n]*)?\]/gi;
+// Param-less 8-ball trigger. Same tolerant shape as UNO_RE.
+const EIGHTBALL_RE = /\[eightball(?::[^\]\r\n]*)?\]/gi;
 const HAPTIC_RE = new RegExp(`\\[haptic:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 const SPOTIFY_RE = new RegExp(`\\[spotify:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
 const YOUTUBE_RE = new RegExp(`\\[youtube:\\s*(${QUOTED_PARAM_BLOCK})\\]`, "gi");
@@ -1027,6 +1036,12 @@ export function parseCharacterCommands(content: string): {
     break;
   }
 
+  // Parse eightball command — start a one-on-one 8-ball pool game. Param-less; only one per message.
+  for (const _eightballMatch of content.matchAll(EIGHTBALL_RE)) {
+    commands.push({ type: "eightball" });
+    break;
+  }
+
   // Parse influence commands (<influence>text</influence>)
   for (const match of content.matchAll(INFLUENCE_RE)) {
     const text = stripConversationPromptTimestamps(match[1]!.trim());
@@ -1232,6 +1247,7 @@ export function parseCharacterCommands(content: string): {
     .replace(UNO_RE, "")
     .replace(CHESS_RE, "")
     .replace(POKER_RE, "")
+    .replace(EIGHTBALL_RE, "")
     .replace(HAPTIC_RE, "")
     .replace(SPOTIFY_RE, "")
     .replace(YOUTUBE_RE, "")

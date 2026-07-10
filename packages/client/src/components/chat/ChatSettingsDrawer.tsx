@@ -620,6 +620,11 @@ const CONVERSATION_COMMAND_TOGGLE_OPTIONS: Array<{
     label: "Poker",
     description: "Let characters sit down for a game of Texas Hold'em poker at the table.",
   },
+  {
+    id: "eightball",
+    label: "8-Ball Pool",
+    description: "Let characters rack up a game of 8-ball pool at the table.",
+  },
 ];
 
 function normalizeSpotifySourceType(value: unknown): SpotifySourceType {
