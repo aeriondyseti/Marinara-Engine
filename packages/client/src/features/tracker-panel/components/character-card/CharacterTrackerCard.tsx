@@ -431,6 +431,7 @@ export function CharacterTrackerCard({
                 />
               ) : (
                 <span
+                  title={value}
                   className={cn(
                     "min-w-0 text-[color:var(--tracker-profile-text)]",
                     readableCustomFields ? "line-clamp-2 whitespace-normal break-words" : "truncate",

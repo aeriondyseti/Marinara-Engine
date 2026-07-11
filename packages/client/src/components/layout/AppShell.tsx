@@ -90,7 +90,6 @@ const PANEL_RESIZE_STEP = 16;
 const PANEL_RESIZE_LARGE_STEP = 48;
 const SHARED_SIDEBAR_WIDTH_MIN = Math.max(SIDEBAR_WIDTH_MIN, RIGHT_PANEL_WIDTH_MIN);
 const SHARED_SIDEBAR_WIDTH_MAX = Math.min(SIDEBAR_WIDTH_MAX, RIGHT_PANEL_WIDTH_MAX);
-const RESIZER_HITBOX = 10;
 const TRACKER_PANEL_EDGE_OFFSET = 8;
 const TRACKER_PANEL_HUD_GAP = 6;
 const TRACKER_PANEL_DESKTOP_MOTION_MS = 260;
@@ -602,15 +601,17 @@ export function AppShell() {
     const topBarRect = topBar ? readVisibleElementRect(topBar) : null;
     if (topBarRect) topCandidates.push(Math.ceil(topBarRect.bottom + TRACKER_PANEL_HUD_GAP));
 
-    const anchors = Array.from(document.querySelectorAll<HTMLElement>(TRACKER_PANEL_ANCHOR_SELECTOR));
-    anchors.forEach((anchor) => {
-      const rect = readVisibleElementRect(anchor);
-      if (rect) topCandidates.push(Math.ceil(rect.bottom + TRACKER_PANEL_HUD_GAP));
-    });
+    if (!trackerPanelDockToEdge) {
+      const anchors = Array.from(document.querySelectorAll<HTMLElement>(TRACKER_PANEL_ANCHOR_SELECTOR));
+      anchors.forEach((anchor) => {
+        const rect = readVisibleElementRect(anchor);
+        if (rect) topCandidates.push(Math.ceil(rect.bottom + TRACKER_PANEL_HUD_GAP));
+      });
+    }
 
     const nextTop = Math.max(...topCandidates);
     setTrackerPanelTop((current) => (current === nextTop ? current : nextTop));
-  }, []);
+  }, [trackerPanelDockToEdge]);
 
   useLayoutEffect(() => {
     if (shellOverlayMode || trackerPanelVisible || !trackerPanelSurfaceAvailable) return;
@@ -786,8 +787,8 @@ export function AppShell() {
             Math.min(56, (trackerPanelToggleAnchorY ?? trackerPanelTop) - trackerPanelTop),
           )}px`,
           ...(side === "left"
-            ? { left: sidebarOpen ? liveSidebarWidth + RESIZER_HITBOX : 0 }
-            : { right: rightPanelOpen ? liveRightPanelWidth + RESIZER_HITBOX : 0 }),
+            ? { left: sidebarOpen ? liveSidebarWidth : 0 }
+            : { right: rightPanelOpen ? liveRightPanelWidth : 0 }),
           ...(trackerPanelBackgroundStyle ?? {}),
         }}
       >
@@ -859,7 +860,7 @@ export function AppShell() {
           tabIndex={0}
           onMouseDown={startSidebarResize}
           onKeyDown={adjustSidebarWidth}
-          className="absolute inset-y-0 z-20 hidden w-1 cursor-col-resize bg-transparent transition-colors hover:bg-[var(--primary)]/30 focus-visible:bg-[var(--primary)]/40 focus-visible:outline-none md:block"
+          className="absolute inset-y-0 z-40 hidden w-1 cursor-col-resize bg-transparent transition-colors hover:bg-[var(--primary)]/30 focus-visible:bg-[var(--primary)]/40 focus-visible:outline-none md:block"
           style={{ left: sidebarOpen ? liveSidebarWidth : 0 }}
         />
       )}
@@ -1055,7 +1056,7 @@ export function AppShell() {
           tabIndex={0}
           onMouseDown={startRightPanelResize}
           onKeyDown={adjustRightPanelWidth}
-          className="absolute inset-y-0 z-20 hidden w-1 cursor-col-resize bg-transparent transition-colors hover:bg-[var(--primary)]/30 focus-visible:bg-[var(--primary)]/40 focus-visible:outline-none md:block"
+          className="absolute inset-y-0 z-40 hidden w-1 cursor-col-resize bg-transparent transition-colors hover:bg-[var(--primary)]/30 focus-visible:bg-[var(--primary)]/40 focus-visible:outline-none md:block"
           style={{ right: rightPanelOpen ? liveRightPanelWidth : 0 }}
         />
       )}

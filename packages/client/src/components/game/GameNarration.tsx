@@ -466,6 +466,8 @@ interface GameNarrationProps {
   voicePlaybackBlocked?: boolean;
   /** Effective game-mode TTS playback volume, 0–1. */
   gameVoiceVolume?: number;
+  /** Reuse cached voice if present, but never generate new TTS audio. Used by read-only replay. */
+  disableVoiceGeneration?: boolean;
   /**
    * Player hit the "Interrupt!" button. Soft-pauses narration: the parent
    * stops generation, records the interrupt anchor, and only truncates the
@@ -975,6 +977,7 @@ export function GameNarration({
   autoPlayBlocked,
   voicePlaybackBlocked,
   gameVoiceVolume = 1,
+  disableVoiceGeneration = false,
   onInterruptRequest,
   onInterruptCancel,
   interruptPending,
@@ -1752,7 +1755,13 @@ export function GameNarration({
           arr.push({
             character: seg.speaker ?? "",
             type: seg.partyType,
-            content: prepareSegmentText(seg.content, seg.speaker ?? null, latestAssistant.id, latestAssistant.role, rawIndex),
+            content: prepareSegmentText(
+              seg.content,
+              seg.speaker ?? null,
+              latestAssistant.id,
+              latestAssistant.role,
+              rawIndex,
+            ),
             expression: seg.sprite,
             target: seg.whisperTarget,
             voiceSourceMessageId: latestAssistant.id,
@@ -1795,7 +1804,13 @@ export function GameNarration({
           arr.push({
             ...line,
             character: editedCharacter,
-            content: prepareSegmentText(editedContent, editedCharacter, partyChatMessageId, sourceRole, partySegmentIndex),
+            content: prepareSegmentText(
+              editedContent,
+              editedCharacter,
+              partyChatMessageId,
+              sourceRole,
+              partySegmentIndex,
+            ),
             voiceSourceMessageId: partyChatMessageId,
             voiceSourceSegmentIndex: partySegmentIndex,
             voiceSourceRole: sourceRole,
@@ -2898,7 +2913,7 @@ export function GameNarration({
   }, [active, narrationMessageChanged, scenePreparing, visibleChars, onReadable]);
 
   useEffect(() => {
-    if (!ttsConfig || !gameVoiceEnabled || isStreaming || generationFailed) return;
+    if (!ttsConfig || !gameVoiceEnabled || isStreaming || generationFailed || disableVoiceGeneration) return;
 
     const plans: GameVoiceEntryPlan[] = [];
     const queuePlan = (key: string | null, requests: GameSegmentVoiceRequest[]) => {
@@ -2990,6 +3005,7 @@ export function GameNarration({
     void gameVoiceGenerationTailRef.current;
   }, [
     cacheGameVoiceEntry,
+    disableVoiceGeneration,
     gameNpcs,
     gameVoiceConfigSignature,
     gameVoiceEnabled,
@@ -3777,7 +3793,8 @@ export function GameNarration({
       sourceRole !== "user" &&
       sourceRole !== "system" &&
       sourceMessageId !== "party-chat";
-    const isEditingThis = editingLogSeg?.messageId === sourceMessageId && editingLogSeg?.segIndex === sourceSegmentIndex;
+    const isEditingThis =
+      editingLogSeg?.messageId === sourceMessageId && editingLogSeg?.segIndex === sourceSegmentIndex;
     const showDeleteButton = canDeleteMessage || canDeleteThisSegment;
     const copyKey =
       sourceMessageId && hasSourceSegmentIndex
@@ -4090,11 +4107,7 @@ export function GameNarration({
                   )}
                   title="Generate NPC portrait"
                 >
-                  {logPortraitGenerating ? (
-                    <Loader2 size="0.6rem" className="animate-spin" />
-                  ) : (
-                    <Wand2 size="0.6rem" />
-                  )}
+                  {logPortraitGenerating ? <Loader2 size="0.6rem" className="animate-spin" /> : <Wand2 size="0.6rem" />}
                 </button>
               )}
             </div>
@@ -4105,7 +4118,9 @@ export function GameNarration({
               crop={logAvatar.crop}
               className="h-7 w-7 shrink-0 rounded-lg border border-[var(--border)] dark:border-white/10"
               onLoadError={
-                canGenerateLogPortrait && seg.speaker ? () => onNpcPortraitLoadError?.(seg.speaker as string) : undefined
+                canGenerateLogPortrait && seg.speaker
+                  ? () => onNpcPortraitLoadError?.(seg.speaker as string)
+                  : undefined
               }
             />
           ) : (

@@ -17,6 +17,7 @@ import {
   Sparkles,
   X,
   RefreshCw,
+  Play,
 } from "lucide-react";
 import type { GameMap, GameNpc, PartyArc, SessionSummary } from "@marinara-engine/shared";
 import { toast } from "sonner";
@@ -197,6 +198,7 @@ interface GameSessionHistoryProps {
   onRegenerateSession?: (sessionNumber: number) => Promise<void> | void;
   onRegenerateLorebook?: (sessionNumber: number) => Promise<void> | void;
   onUpdatePlotArcs?: (sessionNumber: number) => Promise<void> | void;
+  onReplaySession?: (sessionNumber: number) => void;
   currentSessionActionLabel?: string;
   currentSessionActionIcon?: ReactNode;
   currentSessionActionDisabled?: boolean;
@@ -222,6 +224,7 @@ export function GameSessionHistory({
   onRegenerateSession,
   onRegenerateLorebook,
   onUpdatePlotArcs,
+  onReplaySession,
   currentSessionActionLabel,
   currentSessionActionIcon,
   currentSessionActionDisabled = false,
@@ -373,9 +376,7 @@ export function GameSessionHistory({
   return (
     <div
       className={
-        embedded
-          ? "flex min-h-0 flex-col"
-          : "absolute inset-0 z-40 flex flex-col bg-[var(--card)]/95 backdrop-blur-sm"
+        embedded ? "flex min-h-0 flex-col" : "absolute inset-0 z-40 flex flex-col bg-[var(--card)]/95 backdrop-blur-sm"
       }
     >
       {!embedded && (
@@ -640,6 +641,17 @@ export function GameSessionHistory({
                           </div>
                           {!isEditing && (
                             <div className="flex flex-wrap items-center justify-end gap-2">
+                              {onReplaySession && (
+                                <button
+                                  type="button"
+                                  onClick={() => onReplaySession(session.sessionNumber)}
+                                  title={`Replay Session ${session.sessionNumber} from the beginning`}
+                                  className="inline-flex items-center gap-1 rounded-md bg-[var(--primary)]/12 px-2 py-1 text-[0.6875rem] font-semibold text-[var(--primary)] ring-1 ring-[var(--primary)]/25 transition-colors hover:bg-[var(--primary)]/20"
+                                >
+                                  <Play size={11} fill="currentColor" />
+                                  Replay Session
+                                </button>
+                              )}
                               {canRegenerateLorebook && lorebookRun && (
                                 <span
                                   title={lorebookRun.error}

@@ -687,6 +687,15 @@ export interface MessageExtra {
   spriteExpressions?: Record<string, string> | null;
   /** Per-swipe CYOA choices from the CYOA Choices agent */
   cyoaChoices?: Array<{ label: string; text: string }> | null;
+  /** Presentation-only Game Mode cues retained so completed turns can be replayed without rerunning scene analysis. */
+  gameReplayCue?: {
+    background?: string | null;
+    music?: string | null;
+    ambient?: string | null;
+    sfx?: string[];
+    directions?: import("./game.js").DirectionCommand[];
+    segmentEffects?: import("./sidecar.js").SceneSegmentEffect[];
+  } | null;
   /** Snapshot of the persona that was active when this message was sent (user messages only) */
   personaSnapshot?: {
     personaId: string;

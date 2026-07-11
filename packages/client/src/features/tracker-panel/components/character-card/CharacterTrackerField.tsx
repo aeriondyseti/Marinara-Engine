@@ -90,6 +90,7 @@ export function CompactCharacterField({
         />
       ) : (
         <span
+          title={visibleText(value, placeholder)}
           className={cn(
             "relative z-[1] min-w-0 text-[color:var(--tracker-profile-text)]",
             readable ? "line-clamp-2 whitespace-normal break-words leading-[1.15]" : "truncate",

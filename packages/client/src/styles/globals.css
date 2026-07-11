@@ -2807,12 +2807,11 @@ strong {
 }
 
 .mari-tracker-panel-scroll {
-  scrollbar-gutter: stable;
   scrollbar-color: color-mix(in srgb, var(--primary) 42%, transparent) transparent;
 }
 
 .mari-tracker-panel-scroll::-webkit-scrollbar {
-  width: 0.5rem;
+  width: 0.25rem;
 }
 
 .mari-tracker-panel-scroll::-webkit-scrollbar-track {
@@ -2822,7 +2821,7 @@ strong {
 .mari-tracker-panel-scroll::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--primary) 44%, transparent);
   background-clip: padding-box;
-  border: 0.1875rem solid transparent;
+  border: 0.0625rem solid transparent;
   border-radius: 999px;
 }
 

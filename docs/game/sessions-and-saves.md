@@ -57,6 +57,18 @@ Each row shows the session number, the date, and how many discoveries it recorde
 - **Next Session Request**: the note you left when ending the session.
 - **Stats Snapshot** and **Party Status**: saved numbers and party state.
 
+### Replaying a completed session
+
+Completed sessions can be replayed without changing your campaign.
+
+1. Expand a concluded session in **Session History**.
+2. Click **Replay Session**.
+3. Use **Next** and **Next turn** to click through the original narration and dialogue.
+4. When the replay reaches a choice, only the option you selected during the original session is enabled. Click it to continue along the recorded path.
+5. Click the close button at the top of the replay or **Return to current session** when you are finished.
+
+Replay is read-only. It does not call the GM, create messages, change inventory or stats, update the journal, or restore a checkpoint. Sessions created before replay support can still use their saved text, inline effects, choices, and available assets. An older turn may omit a scene effect that was not stored when that turn was originally played.
+
 ### Editing a past session
 
 You can hand-edit a concluded session's notes so future sessions remember them correctly.

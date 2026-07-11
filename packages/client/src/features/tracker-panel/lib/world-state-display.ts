@@ -8,12 +8,11 @@ import { visibleText } from "./tracker-display";
 // full-width row below (see WorldStatePanel), so no per-tile width balancing is
 // needed. Word-based times ("Afternoon") get a wider Time column so the word
 // stays readable and wraps on spaces instead of shrinking; clock times keep the
-// compact 2.5rem column.
-export const WORLD_GRID_BASE_CLASS = "grid-cols-[2.5rem_2.5rem_minmax(0,1fr)]";
+// compact 3.25rem column.
+export const WORLD_GRID_BASE_CLASS = "grid-cols-[2.5rem_3.25rem_minmax(0,1fr)]";
 export const WORLD_GRID_PHRASE_TIME_CLASS = "grid-cols-[2.5rem_4.5rem_minmax(0,1fr)]";
-export const WORLD_FREEFORM_DATE_GRID_BASE_CLASS = "grid-cols-[minmax(3.8rem,4.45rem)_2.5rem_minmax(0,1fr)]";
-export const WORLD_FREEFORM_DATE_GRID_PHRASE_TIME_CLASS =
-  "grid-cols-[minmax(3.8rem,4.45rem)_4.5rem_minmax(0,1fr)]";
+export const WORLD_FREEFORM_DATE_GRID_BASE_CLASS = "grid-cols-[minmax(3.8rem,4.45rem)_3.25rem_minmax(0,1fr)]";
+export const WORLD_FREEFORM_DATE_GRID_PHRASE_TIME_CLASS = "grid-cols-[minmax(3.8rem,4.45rem)_4.5rem_minmax(0,1fr)]";
 
 export const WORLD_MONTH_LABELS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
 export const WORLD_MONTH_ALIASES: Record<string, number> = {
@@ -237,6 +236,14 @@ export function parseTemperatureValue(temperature: string | null | undefined) {
   return numeric;
 }
 
+/** Parse a temperature only when the entire value is numeric, with an optional unit. */
+export function parsePureTemperatureValue(temperature: string | null | undefined) {
+  const match = (temperature ?? "").match(/^\s*([+-]?\d+(?:\.\d+)?)\s*°?\s*(f(?:ahrenheit)?|c(?:elsius)?)?\s*$/i);
+  if (!match) return null;
+  const numeric = parseFloat(match[1]!);
+  return match[2]?.toLowerCase().startsWith("f") ? (numeric - 32) * (5 / 9) : numeric;
+}
+
 function formatTemperatureValue(celsius: number, unit: TrackerTemperatureUnit) {
   if (unit === "fahrenheit") return `${Math.round(celsius * (9 / 5) + 32)}°F`;
   return `${Math.round(celsius)}°C`;
@@ -268,6 +275,7 @@ export function getTemperatureGaugeDisplay(
   unit: TrackerTemperatureUnit = "celsius",
 ) {
   const parsed = parseTemperatureValue(temperature);
+  const pureParsed = parsePureTemperatureValue(temperature);
   const hinted = getTemperatureKeywordHint(temperature);
   const value = parsed ?? hinted;
   const percent =
@@ -285,7 +293,7 @@ export function getTemperatureGaugeDisplay(
 
   return {
     color,
-    label: parsed !== null ? formatTemperatureValue(parsed, unit) : visibleText(temperature, "--"),
+    label: pureParsed !== null ? formatTemperatureValue(pureParsed, unit) : visibleText(temperature, "--"),
     percent,
   };
 }

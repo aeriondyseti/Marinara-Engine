@@ -62,9 +62,7 @@ export function WorldStatePanel({
       />
 
       {!collapsed && (
-        <div
-          className={cn("relative grid gap-px p-1 @min-[380px]:gap-1 @min-[380px]:p-1.5", gridColumnsClass)}
-        >
+        <div className={cn("relative grid gap-0.5 p-1", gridColumnsClass)}>
           <WorldDateTile
             value={state?.date}
             display={dateDisplay}

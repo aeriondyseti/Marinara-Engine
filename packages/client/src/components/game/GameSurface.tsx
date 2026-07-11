@@ -227,6 +227,20 @@ type GameAssetGenerationResult = {
   generatedNpcAvatars: Array<{ name: string; avatarUrl: string }>;
 };
 
+function persistReplayPresentationCue(
+  chatId: string,
+  message: { id: string; content?: string | null },
+  cue: import("../../lib/game-session-replay").GameReplayPresentationCue,
+): void {
+  void import("../../lib/game-session-replay")
+    .then(({ persistGameReplayPresentationCue }) => {
+      persistGameReplayPresentationCue(chatId, message, cue);
+    })
+    .catch((error) => {
+      console.warn("[game-replay] Failed to load presentation-cue persistence", error);
+    });
+}
+
 const GAME_TOP_ICON_BUTTON = getChatToolbarButtonClass();
 const GAME_MOBILE_ROOT_BUTTON = getChatToolbarButtonClass({
   compact: true,
@@ -325,7 +339,10 @@ function getInitialStoryboardViewerPosition(width: number): StoryboardViewerPosi
 }
 
 function shouldIgnoreStoryboardViewerDragTarget(target: EventTarget | null): boolean {
-  return target instanceof Element && !!target.closest("button,a,video,input,textarea,select,[data-storyboard-viewer-no-drag]");
+  return (
+    target instanceof Element &&
+    !!target.closest("button,a,video,input,textarea,select,[data-storyboard-viewer-no-drag]")
+  );
 }
 
 function getGameMobileFloatingPanelStyle(anchor: ChatToolbarFloatingPanelAnchor): CSSProperties {
@@ -1334,6 +1351,11 @@ const GameSessionHistory = lazy(async () => {
 const GameJournal = lazy(async () => {
   const module = await import("./GameJournal");
   return { default: module.GameJournal };
+});
+
+const GameSessionReplay = lazy(async () => {
+  const module = await import("./GameSessionReplay");
+  return { default: module.GameSessionReplay };
 });
 
 const ChatGalleryDrawer = lazy(async () => {
@@ -2356,6 +2378,10 @@ function GameSurfaceComponent({
   const latestSceneVideo = sceneVideosQuery.data?.videos?.[0] ?? null;
   const updateChat = useUpdateChat();
   const branchChat = useBranchChat();
+  const [replaySessionNumber, setReplaySessionNumber] = useState<number | null>(null);
+  const [replayBackgroundTag, setReplayBackgroundTag] = useState<string | null>(null);
+  const [replaySpriteMessages, setReplaySpriteMessages] = useState<Message[]>([]);
+  const replayActive = replaySessionNumber != null;
   const languageConnections = useMemo(
     () =>
       filterLanguageGenerationConnections(
@@ -2847,9 +2873,7 @@ function GameSurfaceComponent({
   const autoAssetGenerationKeyRef = useRef<string | null>(null);
   const autoStoryboardGenerationKeyRef = useRef<string | null>(null);
   const storyboardViewerVideoRef = useRef<HTMLVideoElement | null>(null);
-  const storyboardViewerDragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(
-    null,
-  );
+  const storyboardViewerDragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const storyboardViewerResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   const closeGameFloatingPanels = useCallback(() => {
@@ -2960,6 +2984,9 @@ function GameSurfaceComponent({
   useEffect(() => {
     if (prevSceneRuntimeScopeRef.current === sceneRuntimeScopeKey) return; // skip initial mount
     prevSceneRuntimeScopeRef.current = sceneRuntimeScopeKey;
+    setReplaySessionNumber(null);
+    setReplayBackgroundTag(null);
+    setReplaySpriteMessages([]);
     recentMusicHistoryRef.current = normalizeRecentMusicHistory(chatMeta.gameRecentMusic);
     recentSpotifyTrackHistoryRef.current = normalizeRecentSpotifyTrackHistory(chatMeta.gameRecentSpotifyTracks);
     setPartyDialogue([]);
@@ -3175,6 +3202,25 @@ function GameSurfaceComponent({
     ],
   );
 
+  const handleExitSessionReplay = useCallback(() => {
+    setReplaySessionNumber(null);
+    setReplayBackgroundTag(null);
+    setReplaySpriteMessages([]);
+    setActiveSpeaker(null);
+    setActiveDirections([]);
+  }, []);
+
+  const handleReplaySession = useCallback(
+    (sessionNumberToReplay: number) => {
+      audioManager.unlock();
+      setReplayBackgroundTag(null);
+      setReplaySessionNumber(sessionNumberToReplay);
+      setActiveSpeaker(null);
+      closeLocalFloatingWindows();
+    },
+    [closeLocalFloatingWindows],
+  );
+
   // Fetch asset manifest on mount
   useEffect(() => {
     fetchManifest();
@@ -3255,7 +3301,11 @@ function GameSurfaceComponent({
     })),
   });
 
-  const recentSpriteSpeakerNames = useMemo(() => extractRecentGameDialogueSpeakerNames(messages), [messages]);
+  const spriteSpeakerMessages = replayActive ? replaySpriteMessages : messages;
+  const recentSpriteSpeakerNames = useMemo(
+    () => extractRecentGameDialogueSpeakerNames(spriteSpeakerMessages),
+    [spriteSpeakerMessages],
+  );
 
   useEffect(() => {
     const avatarPatches: Array<{ name: string; avatarUrl: string }> = [];
@@ -3554,15 +3604,14 @@ function GameSurfaceComponent({
   const gameStoryboardViewerDisplayMode: GameStoryboardViewerDisplayMode =
     chatMeta.gameStoryboardViewerDisplayMode === "background" ? "background" : "floating";
   const storyboardViewerPlaying =
-    !!activeStoryboardKeyframe?.video?.id &&
-    storyboardViewerPlayingVideoId === activeStoryboardKeyframe.video.id;
+    !!activeStoryboardKeyframe?.video?.id && storyboardViewerPlayingVideoId === activeStoryboardKeyframe.video.id;
   const storyboardBackgroundAnimationPlaying =
-    gameStoryboardViewerDisplayMode === "background" &&
-    !!activeStoryboardKeyframe?.video &&
-    storyboardViewerPlaying;
+    gameStoryboardViewerDisplayMode === "background" && !!activeStoryboardKeyframe?.video && storyboardViewerPlaying;
   const latestStoryboardViewerTurnKey = useMemo(() => {
     if (!latestAssistantMsg?.id) return null;
-    return activeChatId ? `${activeChatId}:${latestAssistantMsg.id}:${latestAssistantSwipeIndex}` : latestAssistantMsg.id;
+    return activeChatId
+      ? `${activeChatId}:${latestAssistantMsg.id}:${latestAssistantSwipeIndex}`
+      : latestAssistantMsg.id;
   }, [activeChatId, latestAssistantMsg?.id, latestAssistantSwipeIndex]);
   const storyboardViewerDismissed =
     !!latestStoryboardViewerTurnKey && storyboardViewerDismissedKey === latestStoryboardViewerTurnKey;
@@ -3671,7 +3720,8 @@ function GameSurfaceComponent({
   );
   const handleStoryboardViewerDragEnd = useCallback((event: ReactPointerEvent<HTMLElement>) => {
     storyboardViewerDragRef.current = null;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
   }, []);
   const handleStoryboardViewerResizeStart = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
@@ -3693,7 +3743,8 @@ function GameSurfaceComponent({
   }, []);
   const handleStoryboardViewerResizeEnd = useCallback((event: ReactPointerEvent<HTMLElement>) => {
     storyboardViewerResizeRef.current = null;
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    if (event.currentTarget.hasPointerCapture(event.pointerId))
+      event.currentTarget.releasePointerCapture(event.pointerId);
   }, []);
 
   const combatLogEntries = useMemo(
@@ -3764,8 +3815,7 @@ function GameSurfaceComponent({
     gameImageGenerationEnabled && chatMeta.gameImageAutoGenerationEnabled !== false;
   const gameStoryboardBackgroundVisualEnabled = gameStoryboardViewerDisplayMode === "background";
   const gameBackgroundGenerationEnabled = gameImageGenerationEnabled && !gameStoryboardBackgroundVisualEnabled;
-  const gameBackgroundAutoGenerationEnabled =
-    gameImageAutoGenerationEnabled && !gameStoryboardBackgroundVisualEnabled;
+  const gameBackgroundAutoGenerationEnabled = gameImageAutoGenerationEnabled && !gameStoryboardBackgroundVisualEnabled;
   const gameStoryboardAutoIllustrationsEnabled = chatMeta.gameStoryboardAutoIllustrationsEnabled === true;
   const gameStoryboardAutoAnimationsEnabled = chatMeta.gameStoryboardAutoGenerationEnabled === true;
   const gameStoryboardAutoGenerationEnabled =
@@ -4817,7 +4867,11 @@ function GameSurfaceComponent({
     runSceneAnalysis(sceneContext);
   };
 
-  function applyInlineTags(gmTags: ReturnType<typeof parseGmTags>, assetMap: any, msg: { id: string }) {
+  function applyInlineTags(
+    gmTags: ReturnType<typeof parseGmTags>,
+    assetMap: any,
+    msg: { id: string; content?: string | null },
+  ) {
     const sceneAnalysisState: GameActiveState =
       gmTags.combatEncounter || gmTags.stateChange === "combat"
         ? "combat"
@@ -4870,6 +4924,15 @@ function GameSurfaceComponent({
         useGameAssetStore.getState().setCurrentBackground(pick);
       }
     }
+    const appliedPresentation = useGameAssetStore.getState();
+    persistReplayPresentationCue(activeChatId, msg, {
+      background: appliedPresentation.currentBackground ?? gmTags.background,
+      music: appliedPresentation.currentMusic ?? scoredMusic ?? gmTags.music,
+      ambient: appliedPresentation.currentAmbient ?? scoredAmbient ?? gmTags.ambient,
+      sfx: gmTags.sfx.map((tag) => resolveAssetTag(tag, "sfx", assetMap)),
+      directions: gmTags.directions,
+      segmentEffects: [],
+    });
     // Scene effects are applied — ungate narration
     markSceneReady(msg.id);
   }
@@ -5091,6 +5154,7 @@ function GameSurfaceComponent({
         location: gameSnapshot?.location ?? "",
       });
     }
+
     if (result.timeOfDay) {
       _advanceTime.mutate({ chatId: activeChatId, action: result.timeOfDay });
     }
@@ -5172,6 +5236,44 @@ function GameSurfaceComponent({
       useGameModeStore.getState().patchNpcAvatars(result.generatedNpcAvatars);
       clearFailedNpcAvatars(result.generatedNpcAvatars.map((avatar) => avatar.name));
     }
+
+    const inlinePresentation = parseGmTags(msg.content || "");
+    const replaySegmentEffects: SceneSegmentEffect[] = (result.segmentEffects ?? []).map((effect) => ({
+      ...effect,
+      sfx: effect.sfx ? [...effect.sfx] : undefined,
+      directions: effect.directions ? [...effect.directions] : undefined,
+    }));
+    const generatedIllustration = result.generatedIllustration;
+    if (generatedIllustration?.segment !== undefined && generatedIllustration.segment > 0) {
+      const existingIndex = replaySegmentEffects.findIndex(
+        (effect) => effect.segment === generatedIllustration.segment,
+      );
+      if (existingIndex >= 0) {
+        replaySegmentEffects[existingIndex] = {
+          ...replaySegmentEffects[existingIndex]!,
+          background: generatedIllustration.tag,
+        };
+      } else {
+        replaySegmentEffects.push({ segment: generatedIllustration.segment, background: generatedIllustration.tag });
+      }
+    } else if (generatedIllustration) {
+      const segmentZeroIndex = replaySegmentEffects.findIndex((effect) => effect.segment === 0);
+      if (segmentZeroIndex >= 0) {
+        replaySegmentEffects[segmentZeroIndex] = {
+          ...replaySegmentEffects[segmentZeroIndex]!,
+          background: generatedIllustration.tag,
+        };
+      }
+    }
+    const appliedPresentation = useGameAssetStore.getState();
+    persistReplayPresentationCue(activeChatId, msg, {
+      background: appliedPresentation.currentBackground ?? result.background ?? inlinePresentation.background,
+      music: appliedPresentation.currentMusic ?? result.music ?? inlinePresentation.music,
+      ambient: appliedPresentation.currentAmbient ?? result.ambient ?? inlinePresentation.ambient,
+      sfx: inlinePresentation.sfx.map((tag) => resolveAssetTag(tag, "sfx", getScopedAssetMap())),
+      directions: [...inlinePresentation.directions, ...(result.directions ?? [])],
+      segmentEffects: replaySegmentEffects,
+    });
 
     const latestAssetMap = getScopedAssetMap();
     if (latestAssetMap) {
@@ -5628,8 +5730,8 @@ function GameSurfaceComponent({
         isGameTurnStoryboardRendering(result.storyboard)
           ? `Storyboard planned with ${frameCount} keyframes; images are rendering.`
           : result.storyboard.status === "partial"
-          ? `Storyboard saved with ${frameCount} keyframes; some media failed.`
-          : `Storyboard saved with ${frameCount} keyframes.`,
+            ? `Storyboard saved with ${frameCount} keyframes; some media failed.`
+            : `Storyboard saved with ${frameCount} keyframes.`,
         { duration: 2200 },
       );
     } catch (error) {
@@ -9145,26 +9247,28 @@ function GameSurfaceComponent({
     };
   }, [combatUiActive, normalizedWidgets.length]);
 
+  const effectiveBackgroundTag = replayActive ? replayBackgroundTag : currentBackground;
+
   // Resolve background image URL — supports exact tag match, partial/fuzzy match, and "black" override
   const resolvedBackground = useMemo(() => {
-    if (chatBackground) {
+    if (chatBackground && (!replayActive || !effectiveBackgroundTag)) {
       return chatBackground;
     }
 
-    if (!sceneAnalysisEnabled) {
+    if (!sceneAnalysisEnabled && !replayActive) {
       return undefined;
     }
 
-    if (currentBackground && scopedAssetMap) {
+    if (effectiveBackgroundTag && scopedAssetMap) {
       // Special value: "black" means no background (e.g. character waking up)
-      if (currentBackground === "black" || currentBackground === "none") {
+      if (effectiveBackgroundTag === "black" || effectiveBackgroundTag === "none") {
         return "black";
       }
       // 1. Exact tag match
-      let entry = scopedAssetMap[currentBackground];
+      let entry = scopedAssetMap[effectiveBackgroundTag];
       // 2. Fuzzy match: try to find a tag that ends with or contains the given value
       if (!entry) {
-        const lowerTag = currentBackground.toLowerCase();
+        const lowerTag = effectiveBackgroundTag.toLowerCase();
         const keys = Object.keys(scopedAssetMap);
         // Try suffix match first (e.g. "forest-night" matches "backgrounds:fantasy:forest-night")
         const suffixMatch = keys.find((k) => k.toLowerCase().endsWith(`:${lowerTag}`) || k.toLowerCase() === lowerTag);
@@ -9178,16 +9282,20 @@ function GameSurfaceComponent({
       if (entry) {
         return backgroundAssetUrl(entry);
       }
-      const fallbackTag = pickFallbackBackgroundTag(currentBackground, scopedAssetMap);
+      const fallbackTag = pickFallbackBackgroundTag(effectiveBackgroundTag, scopedAssetMap);
       const fallbackEntry = fallbackTag ? scopedAssetMap[fallbackTag] : undefined;
       if (fallbackEntry) {
-        console.warn("[bg-resolve] No asset match for background tag; using fallback:", currentBackground, fallbackTag);
+        console.warn(
+          "[bg-resolve] No asset match for background tag; using fallback:",
+          effectiveBackgroundTag,
+          fallbackTag,
+        );
         return backgroundAssetUrl(fallbackEntry);
       }
-      console.warn("[bg-resolve] No asset match for background tag:", currentBackground);
+      console.warn("[bg-resolve] No asset match for background tag:", effectiveBackgroundTag);
     }
     return undefined;
-  }, [sceneAnalysisEnabled, chatBackground, currentBackground, scopedAssetMap]);
+  }, [chatBackground, effectiveBackgroundTag, replayActive, sceneAnalysisEnabled, scopedAssetMap]);
 
   const lastResolvedBackgroundRef = useRef<{ scopeKey: string; url?: string }>({ scopeKey: sceneRuntimeScopeKey });
   useEffect(() => {
@@ -9637,6 +9745,7 @@ function GameSurfaceComponent({
                 currentSessionActionIcon={sessionActionIcon}
                 currentSessionActionDisabled={sessionActionDisabled}
                 onCurrentSessionAction={handleSessionAction}
+                onReplaySession={handleReplaySession}
                 onClose={() => setSessionPanelOpen(false)}
                 embedded
               />
@@ -9676,7 +9785,10 @@ function GameSurfaceComponent({
     const frame = activeStoryboardKeyframe;
     const framePosition =
       latestTurnStoryboard && frame
-        ? Math.max(0, latestTurnStoryboard.keyframes.findIndex((item) => item.id === frame.id))
+        ? Math.max(
+            0,
+            latestTurnStoryboard.keyframes.findIndex((item) => item.id === frame.id),
+          )
         : 0;
     const hasVideo = !!frame?.video;
 
@@ -10075,7 +10187,7 @@ function GameSurfaceComponent({
             if (!playing && introCinematicActive) setIntroCinematicActive(false);
           }}
         >
-          {renderStoryboardBackgroundVisual()}
+          {!replayActive && renderStoryboardBackgroundVisual()}
 
           {/* Full-body VN sprite — active speaker only */}
           <div
@@ -10086,7 +10198,7 @@ function GameSurfaceComponent({
               <Suspense fallback={null}>
                 <SpriteOverlay
                   characterIds={displaySpriteIds}
-                  messages={narrationMessages}
+                  messages={replayActive ? replaySpriteMessages : narrationMessages}
                   side={displaySpriteIds.length === 1 ? "center" : "right"}
                   spriteExpressions={gameSpriteExpressions}
                   fullBodyOnly
@@ -10107,7 +10219,11 @@ function GameSurfaceComponent({
               <div
                 data-tour="game-controls"
                 data-tracker-panel-anchor="roleplay-hud"
-                className={cn("pointer-events-none absolute right-3 z-50", topOverlayOffsetClass)}
+                className={cn(
+                  "pointer-events-none absolute right-3 z-50",
+                  topOverlayOffsetClass,
+                  replayActive && "hidden",
+                )}
               >
                 {/* Desktop controls */}
                 <div className={cn("pointer-events-auto hidden items-center md:flex", CHAT_TOOLBAR_ICON_GAP_CLASS)}>
@@ -10584,7 +10700,7 @@ function GameSurfaceComponent({
                 </div>
               </div>
 
-              {pendingReaction && (
+              {!replayActive && pendingReaction && (
                 <GameElementReaction reaction={pendingReaction} onDismiss={() => setPendingReaction(null)} />
               )}
 
@@ -10595,6 +10711,7 @@ function GameSurfaceComponent({
                   className={cn(
                     "pointer-events-auto absolute left-3 right-14 z-20 flex min-w-0 items-start gap-2 md:right-auto",
                     topOverlayOffsetClass,
+                    replayActive && "hidden",
                   )}
                 >
                   {/* Mobile: map icon button that opens modal */}
@@ -10654,17 +10771,19 @@ function GameSurfaceComponent({
                 </div>
 
                 {/* Dynamic weather effects from tracked game state */}
-                {weatherEffectsEnabled && (gameSnapshot?.weather || gameSnapshot?.time || metaTime) && (
-                  <div className="pointer-events-none absolute inset-0 z-[1]">
-                    <WeatherEffects
-                      weather={gameSnapshot?.weather ?? null}
-                      timeOfDay={gameSnapshot?.time ?? metaTime ?? null}
-                      showCelestial={false}
-                    />
-                  </div>
-                )}
+                {!replayActive &&
+                  weatherEffectsEnabled &&
+                  (gameSnapshot?.weather || gameSnapshot?.time || metaTime) && (
+                    <div className="pointer-events-none absolute inset-0 z-[1]">
+                      <WeatherEffects
+                        weather={gameSnapshot?.weather ?? null}
+                        timeOfDay={gameSnapshot?.time ?? metaTime ?? null}
+                        showCelestial={false}
+                      />
+                    </div>
+                  )}
 
-                {sidecarStartupFailed && (
+                {!replayActive && sidecarStartupFailed && (
                   <div className="pointer-events-auto absolute top-4 left-1/2 z-30 w-[min(92vw,42rem)] -translate-x-1/2">
                     <div className="rounded-xl border border-amber-500/20 bg-black/80 px-4 py-3 shadow-lg backdrop-blur-sm">
                       <div className="flex items-start gap-3">
@@ -10697,7 +10816,7 @@ function GameSurfaceComponent({
                 )}
 
                 {/* Image generation failed — retry banner */}
-                {assetGenerationFailed && pendingAssetGeneration && (
+                {!replayActive && assetGenerationFailed && pendingAssetGeneration && (
                   <div className="pointer-events-auto absolute bottom-32 left-1/2 z-30 -translate-x-1/2">
                     <div className="flex items-center gap-3 rounded-xl bg-black/80 px-4 py-2.5 shadow-lg backdrop-blur-sm">
                       <AlertTriangle size={14} className="shrink-0 text-amber-400" />
@@ -10724,7 +10843,7 @@ function GameSurfaceComponent({
                 )}
 
                 {/* Scene analysis failed — retry banner (only when narration is still blocked) */}
-                {sceneAnalysisFailed && introPresented && (
+                {!replayActive && sceneAnalysisFailed && introPresented && (
                   <div className="pointer-events-auto absolute bottom-32 left-1/2 z-30 -translate-x-1/2">
                     <div className="flex items-center gap-3 rounded-xl bg-black/80 px-4 py-2.5 shadow-lg backdrop-blur-sm">
                       <AlertTriangle size={14} className="shrink-0 text-amber-400" />
@@ -10782,6 +10901,38 @@ function GameSurfaceComponent({
                   const diceResultSlot = diceRollResult ? (
                     <GameDiceResult result={diceRollResult} onDismiss={handleDismissDice} />
                   ) : undefined;
+
+                  if (replaySessionNumber != null) {
+                    return (
+                      <Suspense
+                        fallback={
+                          <div className="flex h-full flex-1 items-center justify-center text-sm text-white/70">
+                            <Loader2 size={15} className="mr-2 animate-spin" />
+                            Loading replay...
+                          </div>
+                        }
+                      >
+                        <GameSessionReplay
+                          gameId={activeGameMetaId}
+                          sessionNumber={replaySessionNumber}
+                          characterMap={characterMap}
+                          activeCharacterIds={characterIds}
+                          personaInfo={personaInfo}
+                          spriteMap={spriteMap}
+                          speakerAvatarMap={librarySpeakerAvatars}
+                          gameVoiceVolume={effectiveGameVoiceVolume}
+                          directionsActive={directionsPlaying}
+                          assetMap={scopedAssetMap}
+                          useMusicDjPlayerMusic={useMusicDjPlayerMusic}
+                          onActiveSpeakerChange={handleActiveSpeakerChange}
+                          onBackgroundChange={setReplayBackgroundTag}
+                          onPlayDirections={playDirections}
+                          onMessagesLoaded={setReplaySpriteMessages}
+                          onExit={handleExitSessionReplay}
+                        />
+                      </Suspense>
+                    );
+                  }
 
                   if (combatUiActive) {
                     const combatControlsSlot = (
@@ -11017,10 +11168,10 @@ function GameSurfaceComponent({
                   );
                 })()}
 
-                {renderStoryboardInlineViewer()}
+                {!replayActive && renderStoryboardInlineViewer()}
 
                 {/* QTE overlay — absolute, centered */}
-                {activeQte && sessionInteractive && (
+                {!replayActive && activeQte && sessionInteractive && (
                   <div className="pointer-events-auto absolute inset-0 z-30 flex items-center justify-center">
                     <GameQteOverlay
                       actions={activeQte.actions.map((a) => ({ label: a }))}
@@ -11200,7 +11351,7 @@ function GameSurfaceComponent({
               )}
 
               {/* HUD Widgets - Left & Right, tops aligned */}
-              {!combatUiActive && hudWidgets.length > 0 && !compactHudWidgets && (
+              {!replayActive && !combatUiActive && hudWidgets.length > 0 && !compactHudWidgets && (
                 <>
                   {/* Desktop: full widget cards */}
                   <div className="pointer-events-none absolute inset-x-3 bottom-24 z-30 hidden items-end justify-between md:flex">
