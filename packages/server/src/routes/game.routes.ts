@@ -100,7 +100,6 @@ import {
   findKnownModel,
   generationParametersSchema,
   VIDEO_GENERATION_SETTINGS_KEY,
-  VIDEO_DEFAULTS_STORAGE_KEY,
   GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_DEFAULT,
   GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MAX,
@@ -110,10 +109,7 @@ import {
   GAME_STORYBOARD_KEYFRAME_COUNT_DEFAULT,
   GAME_STORYBOARD_KEYFRAME_COUNT_MAX,
   GAME_STORYBOARD_KEYFRAME_COUNT_MIN,
-  createDefaultVideoGenerationProfile,
-  inferVideoSource,
   normalizeVideoGenerationUserSettings,
-  normalizeVideoGenerationProfile,
   normalizeAgentPromptTemplateOptions,
   isClaudeAdaptiveOnlyNoSamplingModel,
   localAuthProviderBaseUrl,
@@ -179,11 +175,10 @@ import { saveImageToDisk } from "../services/image/image-generation.js";
 import {
   generateVideo,
   removeSavedVideoFromDisk,
-  resolveVideoReferencePublicUploadOptions,
   saveVideoToDisk,
   type VideoReferenceImage,
-  type VideoReferencePublicUploadOptions,
 } from "../services/video/video-generation.js";
+import { resolveGameVideoRuntime, type GameVideoRuntime } from "../services/video/game-video-runtime.js";
 import { resolveConnectionImageDefaults } from "../services/image/image-generation-defaults.js";
 import {
   loadImageGenerationUserSettings,
@@ -205,7 +200,6 @@ import {
 import {
   compactVideoPromptText,
   excerptIllustrationPromptForVideo,
-  getSceneVideoPromptLimits,
   limitSceneVideoPromptForProvider,
   summarizeVideoNarration,
   type SceneVideoPromptLimits,
@@ -1282,16 +1276,6 @@ const GENERATED_ILLUSTRATION_TAG_PREFIX = "backgrounds:illustrations:";
 const GAME_SCENE_VIDEOS_ROOT = join(DATA_DIR, "game-scene-videos");
 const CHAT_GALLERY_ROOT = join(DATA_DIR, "gallery");
 const GAME_SCENE_VIDEO_FILENAME_RE = /^[A-Za-z0-9_-]+\.mp4$/;
-const DEFAULT_GEMINI_OMNI_MODEL = "gemini-omni-flash-preview";
-const DEFAULT_GEMINI_OMNI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
-const DEFAULT_GOOGLE_VEO_MODEL = "veo-3.1-generate-preview";
-const DEFAULT_GOOGLE_VEO_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
-const DEFAULT_XAI_VIDEO_MODEL = "grok-imagine-video-1.5";
-const DEFAULT_XAI_VIDEO_BASE_URL = "https://api.x.ai/v1";
-const DEFAULT_OPENROUTER_VIDEO_MODEL = "google/veo-3.1";
-const DEFAULT_OPENROUTER_VIDEO_BASE_URL = "https://openrouter.ai/api/v1";
-const DEFAULT_SEEDANCE_VIDEO_MODEL = "seedance-2-0";
-const DEFAULT_SEEDANCE_VIDEO_BASE_URL = "https://api.seedance2.ai";
 
 type GameSceneVideoRow = NonNullable<Awaited<ReturnType<ReturnType<typeof createGameSceneVideosStorage>["getById"]>>>;
 type ChatGalleryImageRow = NonNullable<Awaited<ReturnType<ReturnType<typeof createGalleryStorage>["getById"]>>>;
@@ -1507,31 +1491,6 @@ async function buildStoryboardGalleryAnimatePrompt(args: {
     },
   });
   return limitSceneVideoPromptForProvider(promptDraft, args.promptLimits.finalPrompt);
-}
-
-function parseDefaultParametersRoot(raw: unknown): Record<string, unknown> {
-  if (!raw) return {};
-  let parsed: unknown = raw;
-  if (typeof parsed === "string") {
-    try {
-      parsed = JSON.parse(parsed) as unknown;
-    } catch {
-      return {};
-    }
-  }
-  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-    ? { ...(parsed as Record<string, unknown>) }
-    : {};
-}
-
-function getStoredVideoDefaults(raw: unknown) {
-  const root = parseDefaultParametersRoot(raw);
-  return normalizeVideoGenerationProfile(root[VIDEO_DEFAULTS_STORAGE_KEY]).profile;
-}
-
-function hasStoredVideoDefaults(raw: unknown) {
-  const root = parseDefaultParametersRoot(raw);
-  return Object.prototype.hasOwnProperty.call(root, VIDEO_DEFAULTS_STORAGE_KEY);
 }
 
 async function resolveGameVideoConnectionId(
@@ -4863,10 +4822,7 @@ function reconcileStoryboardFrameForRendering(args: {
     imagePrompt: scopedPrompt,
     mangaPanelPrompt: scopedMangaPanelPrompt,
     characters: reconciledCharacters.characters,
-    characterPrompts: sanitizeStoryboardCharacterPrompts(
-      args.frame.characterPrompts,
-      reconciledCharacters.characters,
-    ),
+    characterPrompts: sanitizeStoryboardCharacterPrompts(args.frame.characterPrompts, reconciledCharacters.characters),
   };
 }
 
@@ -4903,13 +4859,12 @@ function matchStoryboardCharacterPromptName(value: unknown, characters: string[]
   return characters.find((name) => normalizeAvatarLookupName(name) === requested) ?? null;
 }
 
-function sanitizeStoryboardCharacterPrompts(
-  value: unknown,
-  characters: string[],
-): SceneIllustrationCharacterPrompt[] {
+function sanitizeStoryboardCharacterPrompts(value: unknown, characters: string[]): SceneIllustrationCharacterPrompt[] {
   if (!Array.isArray(value) || characters.length === 0) return [];
   const seen = new Set<string>();
-  const candidates: Array<Omit<SceneIllustrationCharacterPrompt, "position"> & { position?: { x: number; y: number } }> = [];
+  const candidates: Array<
+    Omit<SceneIllustrationCharacterPrompt, "position"> & { position?: { x: number; y: number } }
+  > = [];
 
   for (const rawEntry of value.slice(0, MAX_STORYBOARD_CHARACTER_PROMPTS)) {
     const entry = asStoryboardRecord(rawEntry);
@@ -4942,7 +4897,10 @@ function sanitizeStoryboardCharacterPrompts(
 }
 
 function storyboardCharacterPromptIdentity(name: string): string {
-  return name.replace(/[-_]+$/g, "").replace(/\s+/g, " ").trim();
+  return name
+    .replace(/[-_]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function resolveStoryboardCharacterPromptsForImage(args: {
@@ -4952,9 +4910,7 @@ function resolveStoryboardCharacterPromptsForImage(args: {
   includeCharacterAppearance: boolean;
 }): SceneIllustrationCharacterPrompt[] {
   if (args.characters.length < 2) return [];
-  const promptByName = new Map(
-    args.prompts.map((entry) => [normalizeAvatarLookupName(entry.name), entry] as const),
-  );
+  const promptByName = new Map(args.prompts.map((entry) => [normalizeAvatarLookupName(entry.name), entry] as const));
   const selectedCharacters = args.characters.slice(0, MAX_STORYBOARD_CHARACTER_PROMPTS);
 
   return selectedCharacters.map((name, index) => {
@@ -10200,11 +10156,9 @@ export async function gameRoutes(app: FastifyInstance) {
       };
       const storyboardReferenceImageLimit = resolveSceneIllustrationReferenceImageLimit(storyboardImageRequestContext);
       const useNovelAiCharacterPrompts = meta.gameStoryboardUseNovelAiCharacterPrompts !== false;
-      const providerSupportsStructuredCharacterPrompts = supportsSceneIllustrationStructuredCharacterPrompts(
-        storyboardImageRequestContext,
-      );
-      const structuredCharacterPrompts =
-        useNovelAiCharacterPrompts && providerSupportsStructuredCharacterPrompts;
+      const providerSupportsStructuredCharacterPrompts =
+        supportsSceneIllustrationStructuredCharacterPrompts(storyboardImageRequestContext);
+      const structuredCharacterPrompts = useNovelAiCharacterPrompts && providerSupportsStructuredCharacterPrompts;
       const storyboardMaxVisibleCharacters = structuredCharacterPrompts
         ? Math.min(MAX_STORYBOARD_CHARACTER_PROMPTS, storyboardReferenceImageLimit)
         : storyboardReferenceImageLimit;
@@ -10390,79 +10344,12 @@ export async function gameRoutes(app: FastifyInstance) {
       const includeCharacterAppearance = meta.gameImageIncludeCharacterAppearance !== false;
       const { charReferenceByName, charAvatarByName, charDescriptionByName } = storyboardCharacterContext;
 
-      let videoRuntime: {
-        source: string;
-        serviceHint: string;
-        baseUrl: string;
-        apiKey: string;
-        model: string;
-        resolution?: "480p" | "720p" | "1080p";
-        maxDurationSeconds: number;
-        promptLimits: SceneVideoPromptLimits;
-        publicReferenceUpload: VideoReferencePublicUploadOptions | null;
-      } | null = null;
+      let videoRuntime: GameVideoRuntime | null = null;
       if (generateStoryboardVideos) {
         const videoConnectionId = await resolveGameVideoConnectionId(meta, connections);
         const videoConn = videoConnectionId ? await connections.getWithKey(videoConnectionId) : null;
         if (videoConn?.provider === "video_generation") {
-          const videoDefaults = videoConn.defaultParameters
-            ? getStoredVideoDefaults(videoConn.defaultParameters)
-            : createDefaultVideoGenerationProfile();
-          const explicitVideoSource = videoConn.videoGenerationSource || videoConn.videoService || "";
-          const source =
-            explicitVideoSource ||
-            (videoDefaults.service !== "gemini_omni"
-              ? videoDefaults.service
-              : inferVideoSource(videoConn.model || "", videoConn.baseUrl || ""));
-          const rawServiceHint = videoConn.videoService || source;
-          const serviceHint =
-            rawServiceHint === "google_ai_studio"
-              ? inferVideoSource(videoConn.model || "", videoConn.baseUrl || "")
-              : rawServiceHint;
-          const isXaiVideo = source === "xai" || serviceHint === "xai";
-          const isGoogleVeoVideo = source === "google_veo" || serviceHint === "google_veo";
-          const isOpenRouterVideo = source === "openrouter" || serviceHint === "openrouter";
-          const isSeedanceVideo = source === "seedance" || serviceHint === "seedance";
-          const promptLimits = getSceneVideoPromptLimits(isXaiVideo);
-          videoRuntime = {
-            source,
-            serviceHint,
-            baseUrl:
-              videoConn.baseUrl ||
-              (isXaiVideo
-                ? DEFAULT_XAI_VIDEO_BASE_URL
-                : isGoogleVeoVideo
-                  ? DEFAULT_GOOGLE_VEO_BASE_URL
-                  : isOpenRouterVideo
-                    ? DEFAULT_OPENROUTER_VIDEO_BASE_URL
-                    : isSeedanceVideo
-                      ? DEFAULT_SEEDANCE_VIDEO_BASE_URL
-                      : DEFAULT_GEMINI_OMNI_BASE_URL),
-            apiKey: videoConn.apiKey || "",
-            model:
-              videoConn.model ||
-              (isXaiVideo
-                ? DEFAULT_XAI_VIDEO_MODEL
-                : isGoogleVeoVideo
-                  ? DEFAULT_GOOGLE_VEO_MODEL
-                  : isOpenRouterVideo
-                    ? DEFAULT_OPENROUTER_VIDEO_MODEL
-                    : isSeedanceVideo
-                      ? DEFAULT_SEEDANCE_VIDEO_MODEL
-                      : DEFAULT_GEMINI_OMNI_MODEL),
-            resolution: isXaiVideo
-              ? videoDefaults.xai.resolution
-              : isGoogleVeoVideo
-                ? videoDefaults.googleVeo.resolution
-                : isOpenRouterVideo
-                  ? videoDefaults.openrouter.resolution
-                  : isSeedanceVideo
-                    ? videoDefaults.seedance.resolution
-                    : undefined,
-            maxDurationSeconds: isXaiVideo || isSeedanceVideo ? 15 : isGoogleVeoVideo ? 8 : 60,
-            promptLimits,
-            publicReferenceUpload: resolveVideoReferencePublicUploadOptions(isSeedanceVideo, videoDefaults.seedance),
-          };
+          videoRuntime = resolveGameVideoRuntime(videoConn);
         }
       }
 
@@ -10888,80 +10775,31 @@ export async function gameRoutes(app: FastifyInstance) {
       sourceDescription = `the current scene illustration (${illustrationTag})`;
     }
 
-    const storedVideoDefaults =
-      videoConn.defaultParameters && hasStoredVideoDefaults(videoConn.defaultParameters)
-        ? getStoredVideoDefaults(videoConn.defaultParameters)
-        : null;
-    const videoDefaults = storedVideoDefaults ?? createDefaultVideoGenerationProfile();
-    const explicitVideoSource = videoConn.videoGenerationSource || videoConn.videoService || "";
-    const source =
-      explicitVideoSource ||
-      (videoDefaults.service !== "gemini_omni"
-        ? videoDefaults.service
-        : inferVideoSource(videoConn.model || "", videoConn.baseUrl || ""));
-    const rawServiceHint = videoConn.videoService || source;
-    const serviceHint =
-      rawServiceHint === "google_ai_studio"
-        ? inferVideoSource(videoConn.model || "", videoConn.baseUrl || "")
-        : rawServiceHint;
-    const isXaiVideo = source === "xai" || serviceHint === "xai";
-    const isGoogleVeoVideo = source === "google_veo" || serviceHint === "google_veo";
-    const isOpenRouterVideo = source === "openrouter" || serviceHint === "openrouter";
-    const isSeedanceVideo = source === "seedance" || serviceHint === "seedance";
-    const activeVideoDefaults = isXaiVideo
-      ? videoDefaults.xai
-      : isGoogleVeoVideo
-        ? videoDefaults.googleVeo
-        : isOpenRouterVideo
-          ? videoDefaults.openrouter
-          : isSeedanceVideo
-            ? videoDefaults.seedance
-            : videoDefaults.geminiOmni;
+    const videoRuntime = resolveGameVideoRuntime(videoConn);
+    const {
+      source,
+      serviceHint,
+      baseUrl,
+      model,
+      resolution,
+      promptLimits,
+      minDurationSeconds,
+      maxDurationSeconds,
+      publicReferenceUpload,
+      activeDefaults: activeVideoDefaults,
+      hasStoredDefaults,
+    } = videoRuntime;
     const videoSettings = normalizeVideoGenerationUserSettings(
       await createAppSettingsStorage(app.db).get(VIDEO_GENERATION_SETTINGS_KEY),
     );
-    const fallbackDurationSeconds = storedVideoDefaults
+    const fallbackDurationSeconds = hasStoredDefaults
       ? activeVideoDefaults.durationSeconds
       : videoSettings.sceneVideoDurationSeconds;
-    const maxDurationSeconds = isXaiVideo || isSeedanceVideo ? 15 : isGoogleVeoVideo ? 8 : 60;
-    const minDurationSeconds = isGoogleVeoVideo || isSeedanceVideo ? 4 : 1;
     const durationSeconds = Math.min(
       maxDurationSeconds,
       Math.max(minDurationSeconds, Math.trunc(input.durationSeconds ?? fallbackDurationSeconds)),
     );
     const aspectRatio = input.aspectRatio ?? activeVideoDefaults.aspectRatio;
-    const baseUrl =
-      videoConn.baseUrl ||
-      (isXaiVideo
-        ? DEFAULT_XAI_VIDEO_BASE_URL
-        : isGoogleVeoVideo
-          ? DEFAULT_GOOGLE_VEO_BASE_URL
-          : isOpenRouterVideo
-            ? DEFAULT_OPENROUTER_VIDEO_BASE_URL
-            : isSeedanceVideo
-              ? DEFAULT_SEEDANCE_VIDEO_BASE_URL
-              : DEFAULT_GEMINI_OMNI_BASE_URL);
-    const model =
-      videoConn.model ||
-      (isXaiVideo
-        ? DEFAULT_XAI_VIDEO_MODEL
-        : isGoogleVeoVideo
-          ? DEFAULT_GOOGLE_VEO_MODEL
-          : isOpenRouterVideo
-            ? DEFAULT_OPENROUTER_VIDEO_MODEL
-            : isSeedanceVideo
-              ? DEFAULT_SEEDANCE_VIDEO_MODEL
-              : DEFAULT_GEMINI_OMNI_MODEL);
-    const resolution = isXaiVideo
-      ? videoDefaults.xai.resolution
-      : isGoogleVeoVideo
-        ? videoDefaults.googleVeo.resolution
-        : isOpenRouterVideo
-          ? videoDefaults.openrouter.resolution
-          : isSeedanceVideo
-            ? videoDefaults.seedance.resolution
-            : undefined;
-    const promptLimits = getSceneVideoPromptLimits(isXaiVideo);
 
     const latestState = await createGameStateStorage(app.db)
       .getLatest(input.chatId)
@@ -11024,7 +10862,7 @@ export async function gameRoutes(app: FastifyInstance) {
         aspectRatio,
         resolution,
         referenceImage,
-        publicReferenceUpload: resolveVideoReferencePublicUploadOptions(isSeedanceVideo, videoDefaults.seedance),
+        publicReferenceUpload,
         signal: sceneVideoAbortSignal,
       });
       const filePath = await saveVideoToDisk(input.chatId, generated.base64);

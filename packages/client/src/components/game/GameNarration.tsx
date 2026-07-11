@@ -41,7 +41,12 @@ import { cn, copyToClipboard, getAvatarCropStyle, type AvatarCrop, type LegacyAv
 import { useRenderTimer } from "../../lib/perf-diagnostics";
 import { findNamedMapValue } from "../../lib/game-character-name-match";
 import type { GameSegmentEdit } from "../../lib/game-segment-edits";
-import { parseGmTags, stripGmTagsKeepReadables } from "../../lib/game-tag-parser";
+import {
+  escapeStandaloneGameNarrationAngleLines,
+  hasVisibleGameNarrationText,
+  parseGmTags,
+  stripGmTagsKeepReadables,
+} from "../../lib/game-tag-parser";
 import { audioManager } from "../../lib/game-audio";
 import { normalizeSpriteExpressionKey, resolveSpriteExpression } from "../../lib/sprite-expression-match";
 import {
@@ -1663,6 +1668,25 @@ export function GameNarration({
     // so downstream renderers (formatNarration / animateTextHtml) receive final text.
     for (let i = 0; i < result.length; i++) {
       result[i] = prepareDisplaySegment(result[i]!);
+    }
+
+    // Regexes and macros run after parsing and may erase an entire segment.
+    // Remove that final empty step while keeping source and party indices aligned.
+    for (let i = result.length - 1; i >= 0; i--) {
+      const segment = result[i]!;
+      if (hasVisibleGameNarrationText(segment.content) || segment.readableContent?.trim()) continue;
+      result.splice(i, 1);
+      origIndices.splice(i, 1);
+      editInfos.splice(i, 1);
+      sourceMessageIds.splice(i, 1);
+      if (partyStart < 0) continue;
+      if (i < partyStart) {
+        partyStart--;
+        continue;
+      }
+      const partyOffset = i - partyStart;
+      logBaseCutoff.splice(partyOffset, 1);
+      logCutoff.splice(partyOffset, 1);
     }
 
     segmentOriginalIndices.current = origIndices;
@@ -6150,7 +6174,7 @@ function formatSignedNumber(value: string): string {
 }
 
 export function formatNarration(content: string, boldDialogue = true): string {
-  let html = content
+  let html = escapeStandaloneGameNarrationAngleLines(content)
     .replace(/\[combat_result]\s*([\s\S]*?)\s*\[\/combat_result]/gi, (_match, recap: string) => {
       const cleaned = recap.trim();
       return `${commandBadge("bg-red-500/15 text-red-200 ring-1 ring-red-400/20", "⚔ Combat Result")}${

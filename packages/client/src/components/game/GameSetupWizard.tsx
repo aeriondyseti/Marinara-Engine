@@ -29,9 +29,9 @@ import {
 import {
   ANIME_GAME_PROMPT_TEMPLATE_ID,
   ANIME_GAME_SYSTEM_PROMPT,
-  ANIME_GAME_VIDEO_PROMPT_TEMPLATE_ID,
+  COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE_ID,
   DEFAULT_GAME_SYSTEM_PROMPT,
-  GAME_STORYBOARD_ANIME_EPISODE_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_KEYFRAME_COUNT_DEFAULT,
   GAME_STORYBOARD_KEYFRAME_COUNT_MAX,
   GAME_STORYBOARD_KEYFRAME_COUNT_MIN,
@@ -814,9 +814,9 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
         gameStoryboardKeyframeCount: storyboardKeyframeCount,
         gameGmPromptTemplateId: gamePresentation === "anime" ? ANIME_GAME_PROMPT_TEMPLATE_ID : null,
         gameStoryboardAnimationPromptTemplateId:
-          gamePresentation === "anime" ? GAME_STORYBOARD_ANIME_EPISODE_PROMPT_TEMPLATE_ID : null,
+          gamePresentation === "anime" ? GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID : null,
         gameStoryboardVideoPromptTemplateId:
-          gamePresentation === "anime" ? ANIME_GAME_VIDEO_PROMPT_TEMPLATE_ID : null,
+          gamePresentation === "anime" ? COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE_ID : null,
         gameStoryboardUseDirectScenePrompt: gamePresentation === "anime" || undefined,
         activeLorebookIds: activeLorebookIds.length > 0 ? activeLorebookIds : undefined,
         enableCustomWidgets,
@@ -2220,7 +2220,7 @@ export function GameSetupWizard({ onComplete, onCancel, isLoading, characters }:
               </select>
               <p className="mt-1 text-[0.575rem] leading-relaxed text-[var(--muted-foreground)]">
                 {gamePresentation === "anime"
-                  ? "Shapes narration and storyboard direction like an anime episode. It does not enable image or video generation or change your connections."
+                  ? "Shapes narration like an anime episode and pairs Comic Page Animation with Comic Page Video for storyboard animations. It does not enable image or video generation or change your connections."
                   : "Uses the standard flexible Game Mode narration and media prompts."}
               </p>
             </div>

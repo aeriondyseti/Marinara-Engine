@@ -4,6 +4,8 @@ import {
   ANIME_GAME_PROMPT_TEMPLATE_ID,
   ANIME_GAME_SYSTEM_PROMPT,
   ANIME_GAME_VIDEO_PROMPT_TEMPLATE_ID,
+  COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE,
+  COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE_ID,
   applyRegexReplacement,
   buildNarratorInstructionMessage,
   compileChatSummaryEntries,
@@ -24,8 +26,14 @@ import {
   DEFAULT_AGENT_PROMPT_TEMPLATE_ID,
   DEFAULT_AGENT_PROMPTS,
   GAME_GM_BUILT_IN_PROMPT_TEMPLATES,
+  GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES,
+  GAME_VIDEO_PROMPT_TEMPLATE,
+  GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_ANIME_EPISODE_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES,
+  GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE,
+  GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_COMIC_PROMPT_TEMPLATE,
   GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE,
   GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE_ID,
   DEFERRED_RELOCATION_CONDITIONAL_TOKEN_RE,
@@ -42,6 +50,10 @@ import {
 } from "../../packages/server/src/services/agents/agent-executor.js";
 import type { ResolvedAgent } from "../../packages/server/src/services/agents/agent-pipeline.js";
 import { loadGameVideoPrompt } from "../../packages/server/src/services/video/game-video-prompt.js";
+import {
+  compactVideoPromptText,
+  getSceneVideoPromptLimits,
+} from "../../packages/server/src/services/video/prompt-context.js";
 import { resolveGameGmPromptTemplate } from "../../packages/server/src/services/generation/game-gm-prompt-runtime.js";
 import { countUserMessagesAfterSummaryAnchor } from "../../packages/server/src/services/conversation/auto-summary.service.js";
 import { buildLegacyDefaultAgentConfigUpdate } from "../../packages/server/src/services/agents/default-prompt-migration.js";
@@ -63,6 +75,10 @@ import {
 } from "../../packages/server/src/services/generation/prose-guardian-settings.js";
 import type { DB } from "../../packages/server/src/db/connection.js";
 import { escapeXmlText } from "../../packages/server/src/services/prompt/prompt-escaping.js";
+import {
+  escapeStandaloneGameNarrationAngleLines,
+  hasVisibleGameNarrationText,
+} from "../../packages/client/src/lib/game-tag-parser.js";
 import {
   appendNonLeadingSystemMessagesToLastUser,
   appendReadableAttachmentsToContent,
@@ -183,6 +199,28 @@ const keywordOptions = {
 };
 
 const cases: RegressionCase[] = [
+  {
+    name: "game narration preserves angle-bracket status readouts and rejects transformed empty steps",
+    run() {
+      const statusReadout = [
+        "<BRONZE PROCTOR — CALIBRATION CONSTRUCT>",
+        "<CORE: SEALED>",
+        "<RULE: DAMAGE REGISTERED ONLY AFTER A MATCHED ATTACK IS COUNTERED>",
+      ].join("\n");
+      assert.equal(
+        escapeStandaloneGameNarrationAngleLines(statusReadout),
+        [
+          "&lt;BRONZE PROCTOR — CALIBRATION CONSTRUCT&gt;",
+          "&lt;CORE: SEALED&gt;",
+          "&lt;RULE: DAMAGE REGISTERED ONLY AFTER A MATCHED ATTACK IS COUNTERED&gt;",
+        ].join("\n"),
+      );
+      assert.equal(escapeStandaloneGameNarrationAngleLines("<strong>Warning</strong>"), "<strong>Warning</strong>");
+      assert.equal(hasVisibleGameNarrationText("  \n  "), false);
+      assert.equal(hasVisibleGameNarrationText("{shake:   }"), false);
+      assert.equal(hasVisibleGameNarrationText("<CORE: SEALED>"), true);
+    },
+  },
   {
     name: "readable text attachments are not pre-truncated before context fitting",
     run() {
@@ -827,6 +865,14 @@ const cases: RegressionCase[] = [
       assert.match(directorPreset?.promptTemplate ?? "", /PROVIDER-SAFE STAGING/);
       assert.match(directorPreset?.promptTemplate ?? "", /Create exactly \$\{keyframeCount\} shots/);
       assert.match(gameSetupWizardSource, /gamePresentation === "anime"\s*\? ANIME_GAME_SYSTEM_PROMPT/);
+      assert.match(
+        gameSetupWizardSource,
+        /gamePresentation === "anime"\s*\? GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID/,
+      );
+      assert.match(
+        gameSetupWizardSource,
+        /gamePresentation === "anime"\s*\? COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE_ID/,
+      );
       assert.match(gameSetupWizardSource, /trimmedGameSystemPrompt !== effectiveGameSystemPrompt\.trim\(\)/);
       assert.match(gameSetupWizardSource, /Reset to selected/);
     },
@@ -870,6 +916,84 @@ const cases: RegressionCase[] = [
       assert.doesNotMatch(illustrationPrompt, /"transitionHint"/);
       assert.equal(promptKeys.includes("game.storyboardIllustrationDirector"), true);
       assert.equal(promptKeys.includes("game.storyboardDirector"), false);
+    },
+  },
+  {
+    name: "Comic Page illustration and animation presets remain separate prompt contracts",
+    run() {
+      const drawerSource = readFileSync(
+        new URL("../../packages/client/src/components/chat/ChatSettingsDrawer.tsx", import.meta.url),
+        "utf8",
+      );
+      const gameSurfaceSource = readFileSync(
+        new URL("../../packages/client/src/components/game/GameSurface.tsx", import.meta.url),
+        "utf8",
+      );
+      const backgroundControlsSource = readFileSync(
+        new URL("../../packages/client/src/components/game/StoryboardBackgroundControls.tsx", import.meta.url),
+        "utf8",
+      );
+      const illustrationPreset = GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES.find(
+        (template) => template.id === "comic-page-keyframes",
+      );
+      const animationPreset = GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES.find(
+        (template) => template.id === GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID,
+      );
+
+      assert.equal(illustrationPreset?.promptTemplate, GAME_STORYBOARD_COMIC_PROMPT_TEMPLATE);
+      assert.match(illustrationPreset?.promptTemplate ?? "", /2-6 panels per illustration/);
+      assert.doesNotMatch(illustrationPreset?.promptTemplate ?? "", /\$\{durationSeconds\}-second/);
+      assert.equal(animationPreset?.promptTemplate, GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE);
+      assert.match(animationPreset?.promptTemplate ?? "", /Each keyframe becomes one \$\{durationSeconds\}-second/);
+      assert.match(animationPreset?.promptTemplate ?? "", /2 panels for 6-7 seconds/);
+      assert.match(animationPreset?.promptTemplate ?? "", /third panel is allowed in a 6-7 second clip only/);
+      assert.match(animationPreset?.promptTemplate ?? "", /2-3 panels for 8-10 seconds/);
+      assert.match(animationPreset?.promptTemplate ?? "", /Never show a consequence before its cause/);
+      assert.match(animationPreset?.promptTemplate ?? "", /Omit speech bubbles, captions, and SFX lettering by default/);
+      assert.match(animationPreset?.promptTemplate ?? "", /Reserve the final 0.4-0.7 seconds/);
+      assert.match(animationPreset?.promptTemplate ?? "", /Do not ask the video model to animate every panel at once/);
+      assert.doesNotMatch(animationPreset?.promptTemplate ?? "", /2-6 panels per illustration/);
+      assert.match(COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE, /no more than 0.35 seconds/);
+      assert.match(COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE, /reveal a later consequence before its cause/);
+      assert.match(
+        drawerSource,
+        /onAddTemplate\(GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID\)/,
+      );
+      assert.match(drawerSource, /Add Comic Animation Copy/);
+      assert.match(drawerSource, /onAddTemplate\(COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE_ID\)/);
+      assert.match(drawerSource, /Add Comic Video Copy/);
+      const backgroundViewerStart = gameSurfaceSource.indexOf("const renderStoryboardBackgroundVisual");
+      const backgroundViewerEnd = gameSurfaceSource.indexOf("const renderGameAssetsPanel", backgroundViewerStart);
+      const backgroundViewerSource = gameSurfaceSource.slice(backgroundViewerStart, backgroundViewerEnd);
+      assert.match(backgroundControlsSource, /Replay background animation/);
+      assert.match(gameSurfaceSource, /storyboardBackgroundAnimationPlaying/);
+      assert.match(gameSurfaceSource, /storyboardViewerPlayingVideoId === activeStoryboardKeyframe\.video\.id/);
+      assert.match(gameSurfaceSource, /video\.playbackRate = 1/);
+      assert.match(gameSurfaceSource, /setStoryboardViewerMuted\(false\)/);
+      assert.match(
+        gameSurfaceSource,
+        /setStoryboardViewerPlayingVideoId\(activeStoryboardKeyframe\.video\.id\)/,
+      );
+      assert.match(backgroundViewerSource, /onEnded=\{\(\) =>/);
+      assert.doesNotMatch(backgroundViewerSource, /\bloop\b/);
+    },
+  },
+  {
+    name: "Gemini Omni video prompts preserve complete storyboard direction",
+    run() {
+      const direction = [
+        "0.0-2.0s: Establish the hall and move toward the relic.",
+        "2.0-4.0s: The sealing spike lands and the conduits extinguish.",
+        "4.0-6.0s: Pull back through falling parchment and hold on Vaela's final expression.",
+        "continuity ".repeat(100),
+      ].join(" ");
+      const omniLimits = getSceneVideoPromptLimits(false, true);
+      const defaultLimits = getSceneVideoPromptLimits(false);
+      const xaiLimits = getSceneVideoPromptLimits(true, true);
+
+      assert.equal(compactVideoPromptText(direction, omniLimits.narrationSummary), direction.trim());
+      assert.ok(compactVideoPromptText(direction, defaultLimits.narrationSummary).endsWith("..."));
+      assert.equal(xaiLimits.finalPrompt, 3800);
     },
   },
   {
@@ -1014,6 +1138,52 @@ const cases: RegressionCase[] = [
       assert.match(storyboardPrompt, /anime shot from the supplied first-frame illustration/);
       assert.match(storyboardPrompt, /Stage severe harm with broadcast-anime restraint/);
       assert.doesNotMatch(storyboardPrompt, /CHAT VIDEO|GLOBAL VIDEO OVERRIDE/);
+
+      const comicReferencePrompt = await loadGameVideoPrompt({
+        promptOverridesStorage,
+        meta: {},
+        templateId: COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE_ID,
+        ctx: {
+          sceneTitle: "Rooftop pursuit",
+          narrationSummary:
+            "[0-2s] Establish the page and first panel. [2-5s] Push into the leap. [5-8s] Follow the landing and hold.",
+          illustrationPrompt: "Three-panel comic page in chronological reading order.",
+          charactersLine: "Mira",
+          settingLine: "rainy rooftop",
+          artStyleLine: "colored anime comic",
+          durationSeconds: 8,
+          aspectRatio: "16:9",
+          sourceIllustrationLine: "Use image-456 as the first frame/reference image.",
+        },
+      });
+
+      assert.match(comicReferencePrompt, /8-second 16:9 animation/);
+      assert.match(comicReferencePrompt, /comic or manga page reference/);
+      assert.match(comicReferencePrompt, /ordered temporal beats rather than simultaneous subjects/);
+      assert.match(comicReferencePrompt, /Do not merge panels, collapse gutters/);
+      assert.match(comicReferencePrompt, /Preserve any deliberate comic lettering only while it remains visible/);
+      assert.equal(
+        GAME_VIDEO_PROMPT_TEMPLATE,
+        [
+          "Create a ${durationSeconds}-second ${aspectRatio} animated game scene from the provided first-frame illustration.",
+          "${sourceIllustrationLine}",
+          "Scene: ${sceneTitle}",
+          "Story beat: ${narrationSummary}",
+          "Characters: ${charactersLine}",
+          "Setting: ${settingLine}",
+          "Art style: ${artStyleLine}",
+          "Reference prompt excerpt: ${illustrationPrompt}",
+          "Use the reference image as the visual anchor. Keep recognizable characters, setting, and mood while adding motion that feels natural for this moment.",
+          "You may choose the most cinematic camera drift, focus shift, gestures, atmospheric movement, and ending pose that fit the scene.",
+          "Avoid subtitles, captions, UI, logos, watermarks, unrelated new characters, distorted anatomy, and abrupt cuts.",
+        ].join("\n"),
+      );
+      assert.equal(
+        GAME_VIDEO_BUILT_IN_PROMPT_TEMPLATES.find(
+          (template) => template.id === COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE_ID,
+        )?.promptTemplate,
+        COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE,
+      );
     },
   },
   {

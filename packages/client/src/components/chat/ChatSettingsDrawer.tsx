@@ -188,6 +188,7 @@ import {
   GAME_STORYBOARD_BW_MANGA_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES,
   GAME_STORYBOARD_COLORED_MANGA_PROMPT_TEMPLATE_ID,
+  GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_KEYFRAME_COUNT_DEFAULT,
   GAME_STORYBOARD_KEYFRAME_COUNT_MAX,
@@ -205,6 +206,7 @@ import {
   AGENT_COST_HIGH_CALLS,
   AGENT_COST_HIGH_TOKENS,
   ANIME_GAME_VIDEO_PROMPT_TEMPLATE_ID,
+  COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE_ID,
   CONVERSATION_COMMAND_KEYS,
   getDefaultBuiltInAgentSettings,
   isAgentAvailableInChatMode,
@@ -9553,6 +9555,14 @@ function GameStoryboardPromptLibrary({
             </button>
             <button
               type="button"
+              onClick={() => onAddTemplate(GAME_STORYBOARD_COMIC_ANIMATION_PROMPT_TEMPLATE_ID)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+            >
+              <FilePlus2 size="0.6875rem" />
+              Add Comic Animation Copy
+            </button>
+            <button
+              type="button"
               onClick={() => onAddTemplate(GAME_STORYBOARD_ANIME_EPISODE_PROMPT_TEMPLATE_ID)}
               className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
             >
@@ -9710,10 +9720,18 @@ function GameVideoPromptLibrary({
               <FilePlus2 size="0.6875rem" />
               Add Anime Video Copy
             </button>
+            <button
+              type="button"
+              onClick={() => onAddTemplate(COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE_ID)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+            >
+              <FilePlus2 size="0.6875rem" />
+              Add Comic Video Copy
+            </button>
           </div>
           {customTemplates.length === 0 ? (
             <p className="rounded-lg bg-[var(--secondary)]/55 px-2.5 py-2 text-[0.625rem] leading-relaxed text-[var(--muted-foreground)] ring-1 ring-[var(--border)]">
-              Add a copy, edit it here, then choose it from the Game Video Prompt selector above.
+              Add a copy, edit it here, then choose it from the Game Video or Storyboard Video Prompt selector above.
             </p>
           ) : (
             <div className="space-y-2">
