@@ -19,14 +19,17 @@ import { newId, now } from "../../utils/id-generator.js";
 import { normalizeThemeCss } from "../../utils/theme-css.js";
 import { getMariImagesService } from "./mari-images.service.js";
 import { executeWikiCli } from "../professor-mari/fandom-mediawiki/wiki-cli.js";
-import type {
-  MariDbCommandResult,
-  MariDbDiffSummary,
-  MariDbHistoryEntry,
-  MariDbPendingApproval,
-  MariDbRowChange,
-  MariDbValidationIssue,
-  MariDbValidationResult,
+import {
+  LIMITS,
+  PROFESSOR_MARI_ID,
+  normalizeLorebookCategory,
+  type MariDbCommandResult,
+  type MariDbDiffSummary,
+  type MariDbHistoryEntry,
+  type MariDbPendingApproval,
+  type MariDbRowChange,
+  type MariDbValidationIssue,
+  type MariDbValidationResult,
 } from "@marinara-engine/shared";
 
 type Row = Record<string, unknown>;
@@ -1129,6 +1132,22 @@ function assignNumberField(target: Row, source: Row, sourceKeys: string[], targe
   return true;
 }
 
+function assignBoundedNumberField(
+  target: Row,
+  source: Row,
+  sourceKeys: string[],
+  targetKey: string,
+  minimum: number,
+  maximum: number,
+  integer = true,
+): boolean {
+  const value = firstNumber(source, sourceKeys);
+  if (value === undefined) return false;
+  const normalized = integer ? Math.trunc(value) : value;
+  target[targetKey] = Math.max(minimum, Math.min(maximum, normalized));
+  return true;
+}
+
 function assignListField(target: Row, source: Row, sourceKeys: string[], targetKey: string): boolean {
   const value = firstStringList(source, sourceKeys);
   if (value === undefined) return false;
@@ -1868,7 +1887,11 @@ export class MariDbService {
     let changed = false;
     changed = assignStringField(target, source, ["name"], "name") || changed;
     changed = assignStringField(target, source, ["description"], "description") || changed;
-    changed = assignStringField(target, source, ["category"], "category") || changed;
+    const category = firstString(source, ["category"]);
+    if (category !== undefined) {
+      target.category = normalizeLorebookCategory(category);
+      changed = true;
+    }
     changed = assignListField(target, source, ["tags"], "tags") || changed;
     changed = assignBooleanTextField(target, source, ["isGlobal", "global"], "isGlobal") || changed;
     changed = assignBooleanTextField(target, source, ["enabled"], "enabled") || changed;
@@ -1880,17 +1903,67 @@ export class MariDbService {
       target.enabled = "false";
       changed = true;
     }
-    changed = assignNumberField(target, source, ["scanDepth", "scan_depth"], "scanDepth") || changed;
-    changed = assignNumberField(target, source, ["tokenBudget", "token_budget"], "tokenBudget") || changed;
-    changed = assignNumberField(target, source, ["entryLimit", "entry_limit"], "entryLimit") || changed;
-    changed = assignBooleanTextField(target, source, ["recursiveScanning", "recursive"], "recursiveScanning") || changed;
-    changed = assignNumberField(target, source, ["maxRecursionDepth", "max_recursion_depth"], "maxRecursionDepth") || changed;
-    changed = assignBooleanTextField(target, source, ["excludeFromVectorization", "vectorsDisabled"], "excludeFromVectorization") || changed;
-    changed = assignNumberField(target, source, ["vectorQueryDepth", "vector_query_depth"], "vectorQueryDepth") || changed;
     changed =
-      assignNumberField(target, source, ["vectorScoreThreshold", "vector_score_threshold"], "vectorScoreThreshold") ||
+      assignBoundedNumberField(target, source, ["scanDepth", "scan_depth"], "scanDepth", 0, Number.MAX_SAFE_INTEGER) ||
       changed;
-    changed = assignNumberField(target, source, ["vectorMaxResults", "vector_max_results"], "vectorMaxResults") || changed;
+    changed =
+      assignBoundedNumberField(
+        target,
+        source,
+        ["tokenBudget", "token_budget"],
+        "tokenBudget",
+        0,
+        Number.MAX_SAFE_INTEGER,
+      ) || changed;
+    changed =
+      assignBoundedNumberField(
+        target,
+        source,
+        ["entryLimit", "entry_limit"],
+        "entryLimit",
+        LIMITS.LOREBOOK_ENTRY_LIMIT_MIN,
+        LIMITS.LOREBOOK_ENTRY_LIMIT_MAX,
+      ) || changed;
+    changed = assignBooleanTextField(target, source, ["recursiveScanning", "recursive"], "recursiveScanning") || changed;
+    changed =
+      assignBoundedNumberField(
+        target,
+        source,
+        ["maxRecursionDepth", "max_recursion_depth"],
+        "maxRecursionDepth",
+        1,
+        10,
+      ) || changed;
+    changed = assignBooleanTextField(target, source, ["excludeFromVectorization", "vectorsDisabled"], "excludeFromVectorization") || changed;
+    changed =
+      assignBoundedNumberField(
+        target,
+        source,
+        ["vectorQueryDepth", "vector_query_depth"],
+        "vectorQueryDepth",
+        0,
+        LIMITS.LOREBOOK_VECTOR_QUERY_DEPTH_MAX,
+      ) || changed;
+    changed =
+      assignBoundedNumberField(
+        target,
+        source,
+        ["vectorScoreThreshold", "vector_score_threshold"],
+        "vectorScoreThreshold",
+        0,
+        1,
+        false,
+      ) ||
+      changed;
+    changed =
+      assignBoundedNumberField(
+        target,
+        source,
+        ["vectorMaxResults", "vector_max_results"],
+        "vectorMaxResults",
+        LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_MIN,
+        LIMITS.LOREBOOK_VECTOR_MAX_RESULTS_MAX,
+      ) || changed;
     if (isRecord(source.scope)) {
       target.scope = clone(source.scope);
       changed = true;
@@ -2018,6 +2091,8 @@ export class MariDbService {
           vectorMaxResults: 10,
           scope: { mode: "all", chatIds: [] },
           tags: [],
+          generatedBy: "agent",
+          sourceAgentId: PROFESSOR_MARI_ID,
           createdAt: timestamp,
           updatedAt: timestamp,
         };
@@ -3301,7 +3376,7 @@ export class MariDbService {
           id: flagString(flags, "id") ?? newId(),
           name,
           description: flagString(flags, "description") ?? "",
-          category: flagString(flags, "category") ?? "uncategorized",
+          category: normalizeLorebookCategory(flagString(flags, "category")),
           isGlobal: hasFlag(flags, "global") ? "true" : "false",
           enabled: "true",
           scanDepth: 2,
@@ -3312,6 +3387,8 @@ export class MariDbService {
           excludeFromVectorization: "false",
           scope: { mode: "all", chatIds: [] },
           tags: [],
+          generatedBy: "agent",
+          sourceAgentId: PROFESSOR_MARI_ID,
           createdAt: timestamp,
           updatedAt: timestamp,
         };
@@ -3337,12 +3414,13 @@ export class MariDbService {
         const fieldMap: Array<[string, string]> = [
           ["name", "name"],
           ["description", "description"],
-          ["category", "category"],
         ];
         for (const [flagName, fieldName] of fieldMap) {
           const val = flagString(flags, flagName);
           if (val !== undefined) patch[fieldName] = val;
         }
+        const category = flagString(flags, "category");
+        if (category !== undefined) patch.category = normalizeLorebookCategory(category);
         if (hasFlag(flags, "global")) patch.isGlobal = "true";
         if (hasFlag(flags, "no-global")) patch.isGlobal = "false";
         if (hasFlag(flags, "enable")) patch.enabled = "true";

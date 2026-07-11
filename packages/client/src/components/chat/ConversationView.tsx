@@ -623,6 +623,7 @@ export function ConversationView({
   const composerScrollTopRef = useRef(0);
   const userScrolledAtRef = useRef(0);
   const openedAtBottomChatIdRef = useRef<string | null>(null);
+  const streamScrollFrameRef = useRef(0);
   const shouldKeepMobileComposerOpen = hasLiveStream || hasDraftInput || isFetchingNextPage;
 
   const scrollToMessagesBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
@@ -633,6 +634,20 @@ export function ConversationView({
     }
     messagesEndRef.current?.scrollIntoView({ behavior });
   }, []);
+  const scheduleStreamScrollToBottom = useCallback(() => {
+    if (streamScrollFrameRef.current) return;
+    streamScrollFrameRef.current = requestAnimationFrame(() => {
+      streamScrollFrameRef.current = 0;
+      if (isLoadingMoreRef.current || !isNearBottomRef.current || userScrolledAwayRef.current) return;
+      scrollToMessagesBottom("auto");
+    });
+  }, [scrollToMessagesBottom]);
+  useEffect(
+    () => () => {
+      if (streamScrollFrameRef.current) cancelAnimationFrame(streamScrollFrameRef.current);
+    },
+    [],
+  );
 
   const scheduleScrollToMessagesBottom = useCallback(
     (behavior: ScrollBehavior = "smooth") => {
@@ -706,8 +721,11 @@ export function ConversationView({
   useEffect(() => {
     if (isLoadingMoreRef.current) return;
     // Always scroll when the user just sent a message (optimistic msg)
-    if (isOptimistic || (isNearBottomRef.current && !userScrolledAwayRef.current)) {
+    if (isOptimistic) {
       scrollToMessagesBottom("smooth");
+    } else if (isNearBottomRef.current && !userScrolledAwayRef.current) {
+      if (hasLiveStream) scheduleStreamScrollToBottom();
+      else scrollToMessagesBottom("smooth");
     }
   }, [
     newestMsgId,
@@ -717,6 +735,7 @@ export function ConversationView({
     delayedCharacterInfo,
     typingCharacterName,
     isOptimistic,
+    scheduleStreamScrollToBottom,
     scrollToMessagesBottom,
   ]);
 

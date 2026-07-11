@@ -2201,6 +2201,7 @@ export function ChatArea() {
   const userScrolledAtRef = useRef(0);
   const forcedBottomScrollRef = useRef<{ requestedAt: number; behavior: ScrollBehavior } | null>(null);
   const openedAtBottomChatIdRef = useRef<string | null>(null);
+  const streamScrollFrameRef = useRef(0);
   const scrollToMessagesBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     const el = scrollRef.current;
     if (el) {
@@ -2209,6 +2210,23 @@ export function ChatArea() {
     }
     messagesEndRef.current?.scrollIntoView({ behavior });
   }, []);
+  const scheduleStreamScrollToBottom = useCallback(() => {
+    if (streamScrollFrameRef.current) return;
+    streamScrollFrameRef.current = requestAnimationFrame(() => {
+      streamScrollFrameRef.current = 0;
+      if (isLoadingMoreRef.current || !isNearBottomRef.current || userScrolledAwayRef.current) return;
+      // Streaming already animates the text every frame. Starting a new smooth
+      // scroll for every character queues competing animations and makes both
+      // the typewriter and bottom-follow motion stutter.
+      scrollToMessagesBottom("auto");
+    });
+  }, [scrollToMessagesBottom]);
+  useEffect(
+    () => () => {
+      if (streamScrollFrameRef.current) cancelAnimationFrame(streamScrollFrameRef.current);
+    },
+    [],
+  );
   const scheduleScrollToMessagesBottom = useCallback(
     (behavior: ScrollBehavior = "smooth") => {
       scrollToMessagesBottom(behavior);
@@ -2390,13 +2408,11 @@ export function ChatArea() {
     const unsub = useChatStore.subscribe((state) => {
       if (state.streamBuffer !== prev) {
         prev = state.streamBuffer;
-        if (!isLoadingMoreRef.current && isNearBottomRef.current && !userScrolledAwayRef.current) {
-          scrollToMessagesBottom("smooth");
-        }
+        scheduleStreamScrollToBottom();
       }
     });
     return unsub;
-  }, [scrollToMessagesBottom]);
+  }, [scheduleStreamScrollToBottom]);
 
   // Preserve scroll position when older messages are prepended
   const pageCount = msgData?.pages.length ?? 0;

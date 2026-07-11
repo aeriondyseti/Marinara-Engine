@@ -15,7 +15,7 @@ The buttons below appear on messages. Some only show up in certain situations, w
 | **Translate** / **Hide translation** | Translates the message into your language, then hides the translation again. | Always |
 | **Edit** | Opens the message for editing. See below. | Always |
 | **Regenerate** | Creates a new alternate reply (a swipe). See below. | AI messages. In Roleplay mode, also on your messages. In Conversation mode, also on your messages made by Impersonate |
-| **Restore original before rewrite** | Puts back the original text if a rewrite agent changed the message. | Only after an agent rewrote the message |
+| **Show original before rewrite** / **Show rewritten version** | Switches between the original and rewritten text. Both versions remain available so you can compare them or keep the one you prefer. | Only after an agent rewrote the message |
 | **Hide from AI** / **Unhide from AI** | Stops or resumes sending this message to the AI on later turns. | Always |
 | **Peek prompt** | Shows the exact prompt the AI received for this reply. | Only on the latest AI message |
 | **Stored guidance** | Shows the direction that steered this reply. | Only if the reply used a guided direction or was made by Impersonate |

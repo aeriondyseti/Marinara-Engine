@@ -55,7 +55,7 @@ This readout turns amber with a warning icon when the load gets heavy. The real 
 Every built-in agent is off by default. To save you setup, Roleplay chats switch on a small starter set when you create the chat. Each chat mode also limits which agents you can add.
 
 - **Roleplay**: a new chat starts with **World State**, **Prose Guardian**, **Continuity Checker**, and **Expression Engine** active. You can add any other built-in agent that supports Roleplay.
-- **Conversation**: no agents run by default. The only built-in agent you can add is **About Me Keeper**, which keeps a character's self-description current.
+- **Conversation**: no built-in agents run by default or appear in the picker. You can still attach your own custom agents.
 - **Game Mode**: the normal agent picker is hidden. Game Mode has its own built-in world, quest, and combat systems, so Roleplay agents stay out of the way. Instead, Game Mode gives you toggles for **Game Session Keeper** and **Music DJ**, and you can still attach your own custom agents.
 
 You can add or remove agents at any time, so the starter set is only a starting point.

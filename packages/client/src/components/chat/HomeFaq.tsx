@@ -328,7 +328,7 @@ const HOME_FAQ_ITEMS: HomeFaqItem[] = [
     bullets: [
       "It edits the last model reply for banned words, repetition, prose slop, and your writing instructions without changing events or meaning.",
       "If no edit is needed, it should leave the message alone.",
-      "If it rewrites a message, use the shield action under that message to restore the original.",
+      "If it rewrites a message, use the persistent shield action under that message to switch between the original and rewritten versions.",
       "Continuity Checker can share the same rewrite pass when both are enabled.",
     ],
   },

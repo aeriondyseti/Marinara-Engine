@@ -1,4 +1,9 @@
-import type { DirectionCommand, Message, SceneSegmentEffect } from "@marinara-engine/shared";
+import type {
+  DirectionCommand,
+  GameTurnStoryboardKeyframe,
+  Message,
+  SceneSegmentEffect,
+} from "@marinara-engine/shared";
 import { api } from "./api-client";
 import { parseGmTags } from "./game-tag-parser";
 import { normalizeChoiceText } from "./game-choice-utils";
@@ -35,6 +40,35 @@ const SYNTHETIC_GAME_START_RE = /^\s*\[start(?:\s+the)?\s+game\]\s*$/i;
 const SESSION_CONCLUSION_RE = /^\s*\*\*Session\s+\d+\s+Concluded\*\*/i;
 const PARTY_CHAT_RE = /^\s*\[party-chat\]\s*/i;
 const RECORDED_CHOICE_RE = /^\s*\[choice:\s*([\s\S]*?)\]\s*$/i;
+
+export function findReplayStoryboardKeyframe(
+  frames: readonly GameTurnStoryboardKeyframe[],
+  segmentIndex: number | null,
+): GameTurnStoryboardKeyframe | null {
+  if (frames.length === 0) return null;
+  const sorted = [...frames].sort((a, b) => a.index - b.index);
+  if (segmentIndex == null || !Number.isFinite(segmentIndex)) return sorted[0] ?? null;
+
+  const exact = sorted.find((frame) => {
+    const start = frame.sectionStartIndex ?? frame.sectionEndIndex;
+    const end = frame.sectionEndIndex ?? frame.sectionStartIndex;
+    if (start == null || end == null) return false;
+    return segmentIndex >= Math.min(start, end) && segmentIndex <= Math.max(start, end);
+  });
+  if (exact) return exact;
+
+  const anchored = sorted.filter((frame) => frame.sectionStartIndex != null || frame.sectionEndIndex != null);
+  if (anchored.length === 0) return sorted[0] ?? null;
+  return anchored.reduce((best, frame) => {
+    const bestStart = best.sectionStartIndex ?? best.sectionEndIndex ?? 0;
+    const bestEnd = best.sectionEndIndex ?? best.sectionStartIndex ?? bestStart;
+    const frameStart = frame.sectionStartIndex ?? frame.sectionEndIndex ?? 0;
+    const frameEnd = frame.sectionEndIndex ?? frame.sectionStartIndex ?? frameStart;
+    const bestCenter = (bestStart + bestEnd) / 2;
+    const frameCenter = (frameStart + frameEnd) / 2;
+    return Math.abs(frameCenter - segmentIndex) < Math.abs(bestCenter - segmentIndex) ? frame : best;
+  });
+}
 
 function messageExtra(message: Message): Record<string, unknown> {
   const raw = message.extra as unknown;

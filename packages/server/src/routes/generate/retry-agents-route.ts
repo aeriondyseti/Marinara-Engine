@@ -32,6 +32,7 @@ import { listCharacterSprites } from "../../services/game/sprite.service.js";
 import { DATA_DIR } from "../../utils/data-dir.js";
 import {
   AGENT_PHASE_MAX_CONCURRENT_GROUPS,
+  getAgentBatchLane,
   normalizeAgentMaxParallelJobs,
   settleAgentJobsWithConcurrencyLimit,
   type ResolvedAgent,
@@ -2162,7 +2163,7 @@ async function executeRetryBatches(
     const context =
       preGenerationContext && entry.resolved.phase === "pre_generation" ? preGenerationContext : agentContext;
     const contextKind = context === preGenerationContext ? "pre_generation" : "default";
-    const key = `${retryProviderKey(entry.agentProvider)}::${entry.agentModel}::${contextKind}`;
+    const key = `${retryProviderKey(entry.agentProvider)}::${entry.agentModel}::${contextKind}::${getAgentBatchLane(entry.resolved)}`;
     if (!providerModelGroups.has(key)) {
       providerModelGroups.set(key, {
         agents: [],
@@ -2505,6 +2506,7 @@ async function applyRetryResultEffects(args: {
           if (originalText) {
             await chats.updateMessageExtra(retryMessageId, {
               proseGuardianOriginalText: originalText,
+              proseGuardianRewrittenText: editedText,
               proseGuardianRewrittenAt: new Date().toISOString(),
             });
           }

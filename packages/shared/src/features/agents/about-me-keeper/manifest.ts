@@ -8,6 +8,7 @@ export const aboutMeKeeperAgentManifest = {
   phase: "post_processing",
   enabledByDefault: false,
   category: "misc",
+  libraryHidden: true,
   resultType: "about_me_update",
   modeAllowlist: ["conversation"],
   defaultTools: [],

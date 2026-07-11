@@ -135,6 +135,58 @@ test("provider concurrency errors appear in generation toasts", async ({ page },
   }
 });
 
+test("rewrite shield switches repeatedly between original and rewritten message versions", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "Rewrite version toolbar regression is covered on desktop.");
+
+  const chatResponse = await page.request.post("/api/chats", {
+    data: { name: "Rewrite Version Toggle Smoke", mode: "roleplay", characterIds: [] },
+  });
+  expect(chatResponse.ok()).toBeTruthy();
+  const chat = (await chatResponse.json()) as { id: string };
+  const originalText = "The original assistant reply for comparison.";
+  const rewrittenText = "The polished rewritten assistant reply for comparison.";
+
+  try {
+    const messageResponse = await page.request.post(`/api/chats/${chat.id}/messages`, {
+      data: {
+        role: "assistant",
+        content: rewrittenText,
+        extra: {
+          proseGuardianOriginalText: originalText,
+          proseGuardianRewrittenText: rewrittenText,
+          proseGuardianRewrittenAt: new Date().toISOString(),
+        },
+      },
+    });
+    expect(messageResponse.ok()).toBeTruthy();
+
+    await page.addInitScript((chatId) => {
+      localStorage.setItem("marinara-active-chat-id", chatId);
+    }, chat.id);
+    await page.goto("/");
+
+    await expect(page.getByText(rewrittenText, { exact: true })).toBeVisible();
+    await page.getByText(rewrittenText, { exact: true }).hover();
+    await page.getByTitle("Show original before rewrite").click();
+    await expect(page.getByText(originalText, { exact: true })).toBeVisible();
+
+    await page.getByText(originalText, { exact: true }).hover();
+    await page.getByTitle("Show rewritten version").click();
+    await expect(page.getByText(rewrittenText, { exact: true })).toBeVisible();
+    await expect(page.getByTitle("Show original before rewrite")).toBeAttached();
+
+    await page.getByText(rewrittenText, { exact: true }).hover();
+    await page.getByTitle("Show original before rewrite").click();
+    await expect(page.getByText(originalText, { exact: true })).toBeVisible();
+
+    await page.getByText(originalText, { exact: true }).hover();
+    await page.getByTitle("Show rewritten version").click();
+    await expect(page.getByText(rewrittenText, { exact: true })).toBeVisible();
+  } finally {
+    await page.request.delete(`/api/chats/${chat.id}`);
+  }
+});
+
 test("historical Game Peek Prompt returns the exact selected turn request", async ({ request }, testInfo) => {
   test.skip(!testInfo.project.name.includes("desktop"), "Historical prompt API regression is covered on desktop.");
 
@@ -342,6 +394,68 @@ test("home shell and primary topbar panels open without client errors", async ({
   const health = await page.request.get("/api/health");
   expect(health.ok()).toBeTruthy();
   expect(errors).toEqual([]);
+});
+
+test("Lorebook Save keeps Overview stable while the updated detail cache settles", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name.includes("mobile"), "Desktop editor regression");
+
+  const name = `Lorebook save stability ${Date.now()}`;
+  const createResponse = await page.request.post("/api/lorebooks", {
+    data: {
+      name,
+      description: "Temporary browser regression lorebook.",
+      category: "world",
+      isGlobal: true,
+      enabled: true,
+    },
+  });
+  expect(createResponse.ok()).toBeTruthy();
+  const lorebook = (await createResponse.json()) as { id: string };
+
+  let patchSaved = false;
+  await page.route(`**/api/lorebooks/${lorebook.id}`, async (route) => {
+    const method = route.request().method();
+    if (method === "PATCH") {
+      const response = await route.fetch();
+      patchSaved = response.ok();
+      await route.fulfill({ response });
+      return;
+    }
+    if (method === "GET" && patchSaved) {
+      // Expose the old cache race: before the fix, Save marked the form clean
+      // and reloaded its stale pre-save detail while this refetch was pending.
+      await new Promise((resolve) => setTimeout(resolve, 750));
+    }
+    await route.continue();
+  });
+
+  try {
+    await page.goto("/");
+    await page.locator('[data-tour="panel-lorebooks"]').click();
+    await page.getByText(name, { exact: true }).click();
+    await expect(page.getByRole("heading", { name })).toBeVisible();
+
+    await page.getByRole("checkbox", { name: "Disable global lorebook" }).evaluate((element) => {
+      (element as HTMLInputElement).click();
+    });
+    const disabledGlobalSwitch = page.getByRole("checkbox", { name: "Enable global lorebook" });
+    await expect(disabledGlobalSwitch).not.toBeChecked();
+
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.getByText("Lorebook saved")).toBeVisible();
+    await page.waitForTimeout(900);
+    await expect(disabledGlobalSwitch).toBeVisible();
+    await expect(disabledGlobalSwitch).not.toBeChecked();
+
+    const savedResponse = await page.request.get(`/api/lorebooks/${lorebook.id}`);
+    expect(savedResponse.ok()).toBeTruthy();
+    expect(((await savedResponse.json()) as { isGlobal: boolean }).isGlobal).toBe(false);
+  } finally {
+    if (!page.isClosed()) {
+      await page.unroute(`**/api/lorebooks/${lorebook.id}`);
+      await page.request.delete(`/api/lorebooks/${lorebook.id}`);
+    }
+  }
 });
 
 test("home page stays fitted while FAQ behavior matches the viewport", async ({ page }, testInfo) => {

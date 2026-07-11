@@ -22,7 +22,7 @@ If a built-in agent is close, copy it instead. In the **Agents** panel, hover an
 Two facts matter before you build:
 
 1. Agents are set per chat, not per character. Building an agent in the library does not run it. You must add it to a chat and turn on **Enable Agents** in **Chat Settings**.
-2. Custom agents work in every chat mode: Roleplay, Game Mode, and Conversation. In Conversation mode, the only built-in agent you can add is **About Me Keeper**. Your own custom agents are still available there.
+2. Custom agents work in every chat mode: Roleplay, Game Mode, and Conversation. Conversation does not expose built-in agents in its picker, but your own custom agents remain available there.
 
 ## Creating a custom agent
 

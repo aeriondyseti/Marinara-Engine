@@ -1525,6 +1525,7 @@ export function ChatSettingsDrawer({
           phase: meta.phase,
           connectionId: cfg?.connectionId ?? null,
           promptTemplate,
+          resultType: typeof settings.resultType === "string" ? settings.resultType : undefined,
         },
       ];
     });

@@ -15,6 +15,7 @@ import {
 import { newId, now } from "../../utils/id-generator.js";
 import {
   LIMITS,
+  normalizeLorebookCategory,
   type CreateLorebookInput,
   type UpdateLorebookInput,
   type CreateLorebookEntryInput,
@@ -34,6 +35,18 @@ function normalizeLorebookEntryLimit(value: unknown): number {
     LIMITS.LOREBOOK_ENTRY_LIMIT_MIN,
     Math.min(LIMITS.LOREBOOK_ENTRY_LIMIT_MAX, Math.trunc(parsed)),
   );
+}
+
+function normalizeNonNegativeLorebookInteger(value: unknown, fallback: number): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.trunc(parsed));
+}
+
+function normalizeLorebookMaxRecursionDepth(value: unknown): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(parsed)) return 3;
+  return Math.max(1, Math.min(10, Math.trunc(parsed)));
 }
 
 function normalizeLorebookVectorQueryDepth(value: unknown): number {
@@ -143,9 +156,12 @@ function parseLorebookRow(row: Record<string, unknown>) {
   const personaIds = resolveLinkIds(row.personaIds, row.personaId);
   return {
     ...row,
+    category: normalizeLorebookCategory(row.category),
+    scanDepth: normalizeNonNegativeLorebookInteger(row.scanDepth, 2),
+    tokenBudget: normalizeNonNegativeLorebookInteger(row.tokenBudget, 2048),
     recursiveScanning: row.recursiveScanning === "true",
     entryLimit: normalizeLorebookEntryLimit(row.entryLimit),
-    maxRecursionDepth: typeof row.maxRecursionDepth === "number" ? row.maxRecursionDepth : 3,
+    maxRecursionDepth: normalizeLorebookMaxRecursionDepth(row.maxRecursionDepth),
     excludeFromVectorization: row.excludeFromVectorization === "true",
     vectorQueryDepth: normalizeLorebookVectorQueryDepth(row.vectorQueryDepth),
     vectorScoreThreshold: normalizeLorebookVectorScoreThreshold(row.vectorScoreThreshold),

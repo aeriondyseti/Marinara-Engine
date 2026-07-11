@@ -1340,6 +1340,9 @@ export function LorebookEditor() {
         tags: formTags,
       });
       setLorebookDirty(false);
+      toast.success("Lorebook saved");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to save lorebook");
     } finally {
       setSaving(false);
     }

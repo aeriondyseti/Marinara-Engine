@@ -196,14 +196,6 @@ Adds clickable "What will you do?" choice buttons after each reply, for a choose
 - **Where it works**: Roleplay.
 - **Key settings**: **Edit** to rewrite the choices and **Re-roll** to generate new ones.
 
-### About Me Keeper
-
-Lets a character keep its own short "about me" self-description up to date as a conversation reveals new lasting facts. It can update the public profile or a private, chat-specific one.
-
-- **Phase**: Post-Processing.
-- **Where it works**: Conversation only. This is the only built-in agent you can add to a Conversation chat.
-- **Key settings**: it runs once every 8 assistant messages by default. See [Conversation Mode profiles](../conversation/profiles.md).
-
 ## Related guides
 
 - [Agents overview](agents-overview.md)

@@ -7880,6 +7880,7 @@ export async function generateRoutes(app: FastifyInstance) {
                     if (originalText) {
                       await chats.updateMessageExtra(messageId, {
                         proseGuardianOriginalText: originalText,
+                        proseGuardianRewrittenText: editedText,
                         proseGuardianRewrittenAt: new Date().toISOString(),
                       });
                     }

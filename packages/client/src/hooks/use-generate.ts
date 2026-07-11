@@ -9,6 +9,7 @@ import { api, ApiError } from "../lib/api-client";
 import { formatAgentFailuresToast, toAgentFailure, type AgentFailure } from "../lib/agent-failures";
 import { chatBackgroundMetadataToUrl } from "../lib/backgrounds";
 import { formatGenerationParameterError } from "../lib/generation-parameter-errors";
+import { shouldKeepStreamLiveThroughPostProcessing } from "../lib/generation-stream-policy";
 import { requestChatScrollToBottom } from "../lib/chat-scroll-events";
 import { startSceneWithPromptPreferences } from "../lib/scene-generation";
 import { agentKeys } from "./use-agents";
@@ -1158,6 +1159,13 @@ export function useGenerate() {
       const chatModeForGeneration = getCachedChatMode(qc, params.chatId);
       const shouldDisplayRawStream =
         chatModeForGeneration !== "conversation" || !!params.regenerateMessageId || !!params.continueMessageId;
+      const keepStreamLiveThroughPostProcessing = shouldKeepStreamLiveThroughPostProcessing({
+        streamingEnabled,
+        shouldDisplayRawStream,
+        isGameGeneration,
+        isRegeneration: !!params.regenerateMessageId,
+        isContinuation: !!params.continueMessageId,
+      });
       const leadingSpeakerPrefixFilter = createLeadingSpeakerPrefixFilter([
         ...getCachedChatSpeakerNames(qc, params.chatId),
         ...(params.mentionedCharacterNames ?? []),
@@ -1247,7 +1255,6 @@ export function useGenerate() {
       let typewriterRemainder = 0;
       const canInspectPageFocus = typeof document !== "undefined";
       let pageWasHiddenDuringStream = canInspectPageFocus && document.visibilityState !== "visible";
-      const shouldFlushTypewriterForBackground = () => canInspectPageFocus && document.visibilityState !== "visible";
 
       const flushTypewriterBuffer = () => {
         cancelAnimationFrame(rafId);
@@ -1303,17 +1310,9 @@ export function useGenerate() {
       };
 
       const startTypewriter = () => {
-        if (shouldFlushTypewriterForBackground()) {
-          flushTypewriterBuffer();
-          return;
-        }
         if (typingActive) return;
         typingActive = true;
         const tick = (now = performance.now()) => {
-          if (shouldFlushTypewriterForBackground()) {
-            flushTypewriterBuffer();
-            return;
-          }
           if (pendingText.length === 0) {
             typingActive = false;
             lastTypewriterPaintAt = 0;
@@ -1352,22 +1351,27 @@ export function useGenerate() {
         };
         rafId = requestAnimationFrame(tick);
       };
-      const markPageHiddenAndFlushTypewriter = () => {
+      const markPageHidden = () => {
         pageWasHiddenDuringStream = true;
-        if (pendingText.length > 0 || typingActive) {
-          flushTypewriterBuffer();
-        }
       };
-      const flushBackgroundedTypewriter = () => {
-        if (shouldFlushTypewriterForBackground()) markPageHiddenAndFlushTypewriter();
+      const recordBackgroundedStream = () => {
+        if (document.visibilityState === "visible") return;
+        markPageHidden();
+        // Browsers pause requestAnimationFrame in background tabs. Finish the
+        // queued text immediately so post-processing cannot wait indefinitely.
+        if (pendingText.length > 0 || typingActive) flushTypewriterBuffer();
       };
       if (canInspectPageFocus) {
-        document.addEventListener("visibilitychange", flushBackgroundedTypewriter);
-        window.addEventListener("pagehide", markPageHiddenAndFlushTypewriter);
+        document.addEventListener("visibilitychange", recordBackgroundedStream);
+        window.addEventListener("pagehide", markPageHidden);
       }
 
       const waitForTypewriterDrain = async () => {
         if (!streamingEnabled || !shouldDisplayRawStream || (pendingText.length === 0 && !typingActive)) return;
+        if (canInspectPageFocus && document.visibilityState !== "visible") {
+          recordBackgroundedStream();
+          return;
+        }
         await new Promise<void>((resolve) => {
           if (pendingText.length === 0 && !typingActive) {
             resolve();
@@ -1760,16 +1764,7 @@ export function useGenerate() {
               if (turn.index > 0) {
                 flushLeadingSpeakerPrefix();
                 // Drain typewriter for the previous character (only if streaming)
-                if (streamingEnabled && (pendingText.length > 0 || typingActive)) {
-                  await new Promise<void>((resolve) => {
-                    if (pendingText.length === 0 && !typingActive) {
-                      resolve();
-                      return;
-                    }
-                    typewriterDone = resolve;
-                    startTypewriter();
-                  });
-                }
+                await waitForTypewriterDrain();
                 const previousGroupMessage = latestAssistantMessage(persistedMessages.values());
 
                 // Pick up the just-saved message from the previous character
@@ -1943,9 +1938,11 @@ export function useGenerate() {
                   delete heldExtra.postProcessingPending;
                   if (builtInRewriteApplied) {
                     heldExtra.proseGuardianOriginalText = rw.originalText;
+                    heldExtra.proseGuardianRewrittenText = rewrittenText;
                     heldExtra.proseGuardianRewrittenAt = new Date().toISOString();
                   } else {
                     delete heldExtra.proseGuardianOriginalText;
+                    delete heldExtra.proseGuardianRewrittenText;
                     delete heldExtra.proseGuardianRewrittenAt;
                   }
                   const updatedMessage = {
@@ -1955,12 +1952,9 @@ export function useGenerate() {
                   };
                   rememberContinuedMessageContent(updatedMessage);
                   persistedMessages.set(updatedMessage.id, updatedMessage);
-                  upsertPersistedMessages(qc, params.chatId, [updatedMessage]);
-                  clearStreamBuffer(params.chatId);
-                  clearThinkingBuffer(params.chatId);
-                  setStreamCommitted(params.chatId, true);
-                  fullBuffer = "";
-                  pendingText = "";
+                  // Keep the final rewritten text as the live stream until the
+                  // full generation lifecycle finishes. The durable row is
+                  // primed during final cleanup so there is no full-text flash.
                   holdingTextRewrite = false;
                   heldTextRewriteMessage = null;
                   break;
@@ -1979,6 +1973,7 @@ export function useGenerate() {
                     const nextExtra = parseMessageExtraRecordForMerge(latestSavedMessage.extra);
                     if (builtInRewriteApplied) {
                       nextExtra.proseGuardianOriginalText = rw.originalText;
+                      nextExtra.proseGuardianRewrittenText = rewrittenText;
                       nextExtra.proseGuardianRewrittenAt = new Date().toISOString();
                     }
                     const updatedMessage = {
@@ -2056,23 +2051,13 @@ export function useGenerate() {
                 }
                 break;
               }
-              // Once an ordinary roleplay stream is saved, the durable message
-              // should own the transcript even if post-generation agents
-              // (Illustrator, Spotify, etc.) are still running.
-              if (params.regenerateMessageId || params.continueMessageId || !streamingEnabled) {
+              // The server saves fresh Roleplay output before post-processing
+              // agents start. Keep the live stream authoritative until `done`,
+              // otherwise the complete persisted row replaces the animated
+              // buffer as soon as agents begin their work.
+              if (!keepStreamLiveThroughPostProcessing) {
                 rememberContinuedMessageContent(savedMessage);
                 upsertPersistedMessages(qc, params.chatId, [savedMessage]);
-              } else if (shouldDisplayRawStream && !isGameGeneration) {
-                await waitForTypewriterDrain();
-                upsertPersistedMessages(qc, params.chatId, [savedMessage]);
-                clearStreamBuffer(params.chatId);
-                clearThinkingBuffer(params.chatId);
-                setStreamCommitted(params.chatId, true);
-                if (isActiveChat() && useChatStore.getState().streamingChatId === params.chatId) {
-                  setStreamingCharacterId(null);
-                  setTypingCharacterName(null);
-                  setDelayedCharacterInfo(null);
-                }
               }
               break;
             }
@@ -2384,12 +2369,9 @@ export function useGenerate() {
               if (spriteChangeReceived) {
                 qc.invalidateQueries({ queryKey: chatKeys.messages(params.chatId) });
               }
-              if (isActiveChat()) {
-                if (useChatStore.getState().streamingChatId === params.chatId) {
-                  setStreaming(false);
-                  clearStreamBuffer(params.chatId);
-                }
-              }
+              // Final UI handoff happens after the typewriter drains below.
+              // Clearing here makes the completed persisted message flash in
+              // while tokens or a held rewrite are still being animated.
               clearMariPhaseForThisChat();
               break;
             }
@@ -2486,14 +2468,7 @@ export function useGenerate() {
         flushThinkingStreamFilter();
         flushLeadingSpeakerPrefix();
         if (streamingEnabled && shouldDisplayRawStream && isActiveChat() && (pendingText.length > 0 || typingActive)) {
-          await new Promise<void>((resolve) => {
-            if (pendingText.length === 0 && !typingActive) {
-              resolve();
-              return;
-            }
-            typewriterDone = resolve;
-            startTypewriter();
-          });
+          await waitForTypewriterDrain();
         }
         // Final flush — ensure full content is set (only for the viewed chat)
         if (streamingEnabled && shouldDisplayRawStream) {
@@ -2529,8 +2504,8 @@ export function useGenerate() {
         // Cancel any pending animation frame to prevent leaks
         cancelAnimationFrame(rafId);
         if (canInspectPageFocus) {
-          document.removeEventListener("visibilitychange", flushBackgroundedTypewriter);
-          window.removeEventListener("pagehide", markPageHiddenAndFlushTypewriter);
+          document.removeEventListener("visibilitychange", recordBackgroundedStream);
+          window.removeEventListener("pagehide", markPageHidden);
         }
         const stillOwnerAtCleanupStart =
           useChatStore.getState().abortControllers.get(params.chatId) === abortController;
@@ -2665,14 +2640,16 @@ export function useGenerate() {
               setStreaming(false);
               clearStreamBuffer(params.chatId);
             } else {
-              setStreaming(false);
-              clearStreamBuffer(params.chatId);
               if (receivedContent && persistedForRefresh.length === 0) {
                 await refreshMessagesAuthoritatively(qc, params.chatId, persistedForRefresh);
               } else {
                 primeMessagesFromSaved();
-                refreshMessagesInBackground();
               }
+              // Prime the durable message before releasing the live stream so
+              // React never renders an empty frame or the wrong full response.
+              setStreaming(false);
+              clearStreamBuffer(params.chatId);
+              if (persistedForRefresh.length > 0) refreshMessagesInBackground();
             }
           } else {
             if (isGameGeneration || (receivedContent && persistedForRefresh.length === 0)) {

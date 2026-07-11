@@ -4,7 +4,15 @@
 import { z } from "zod";
 import { LIMITS } from "../constants/defaults.js";
 
-export const lorebookCategorySchema = z.enum(["world", "character", "npc", "spellbook", "uncategorized"]);
+export const LOREBOOK_CATEGORY_VALUES = ["world", "character", "npc", "spellbook", "uncategorized"] as const;
+export type LorebookCategoryValue = (typeof LOREBOOK_CATEGORY_VALUES)[number];
+export const lorebookCategorySchema = z.enum(LOREBOOK_CATEGORY_VALUES);
+
+export function normalizeLorebookCategory(value: unknown): LorebookCategoryValue {
+  if (typeof value !== "string") return "uncategorized";
+  const parsed = lorebookCategorySchema.safeParse(value.trim().toLowerCase());
+  return parsed.success ? parsed.data : "uncategorized";
+}
 
 export const lorebookScopeModeSchema = z.enum(["all", "disabled", "specific"]);
 

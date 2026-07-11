@@ -84,20 +84,6 @@ To set an override:
 
 While editing, a **Revert** button undoes unsaved changes, and **Cancel** closes edit mode without saving. When an override exists, a **Clear** button removes it and returns to the card default. Saving an empty bio also clears the override. Remember: the default **About Me** is edited on the card, and an override only applies in that one chat.
 
-## The About Me Keeper agent
-
-You can let a character keep its own bio up to date automatically. This is done by the **About Me Keeper** agent. An agent is a helper that runs alongside your chat. See [Built-in Agents Reference](../agents/built-in-agents.md).
-
-**About Me Keeper** is special: it is the only agent that Conversation Mode allows you to add. Conversation Mode ships with no agents on by default. The tracker style agents from Roleplay are not offered here.
-
-Key facts:
-
-- It is off by default. Turn it on in **Chat Settings** under the **Agents** section, using **Enable Agents** and then adding the agent.
-- Its **Run Interval** default is 8 assistant messages, so it checks in every 8 replies.
-- It only ever updates its own bio, never another character's.
-- It can update the public card **About Me**. A public change is sent to you for approval first.
-- It can also update a private chat-specific override. That change is applied to the current chat right away.
-
 ## Letting a character update its own About Me on demand
 
 There is also a tool a character can call in the moment to change its own bio. It is named **update_about_me**. It is off by default. Turn it on in **Chat Settings** under the **Function Calling** section: turn on **Enable Tool Use** and add the **update_about_me** tool.

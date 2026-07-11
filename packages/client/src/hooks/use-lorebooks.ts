@@ -174,10 +174,13 @@ export function useUpdateLorebook() {
   return useMutation({
     mutationFn: ({ id, ...data }: { id: string } & Record<string, unknown>) =>
       api.patch<Lorebook>(`/lorebooks/${id}`, data),
-    onSuccess: (_data, variables) => {
-      qc.invalidateQueries({ queryKey: lorebookKeys.all });
+    onSuccess: (data, variables) => {
+      // The PATCH response is the authoritative updated row. Prime the detail
+      // cache before the editor marks its form clean so it never reloads the
+      // pre-save snapshot for one frame and remounts conditional sections.
+      qc.setQueryData(lorebookKeys.detail(variables.id), data);
       qc.invalidateQueries({ queryKey: lorebookKeys.list() });
-      qc.invalidateQueries({ queryKey: lorebookKeys.detail(variables.id) });
+      qc.invalidateQueries({ queryKey: [...lorebookKeys.all, "category"] });
       qc.invalidateQueries({ queryKey: lorebookKeys.active() });
     },
   });
