@@ -498,6 +498,8 @@ export interface ChatMetadata {
   gameVideoConnectionId?: string | null;
   /** Selected Game Mode scene/storyboard video prompt template. */
   gameVideoPromptTemplateId?: string | null;
+  /** Selected Game Mode prompt template for storyboard keyframe clips only. */
+  gameStoryboardVideoPromptTemplateId?: string | null;
   /** Chat-local Game Mode scene/storyboard video prompt templates. */
   gameVideoPromptTemplates?: import("./agent.js").AgentPromptTemplateOption[];
   /** When true, completed Game Mode GM turns automatically create storyboard keyframe illustrations. */
@@ -528,6 +530,10 @@ export interface ChatMetadata {
   sceneLastVideoId?: string | null;
   /** Game-mode GM instruction override. Empty/null uses the built-in default prompt. */
   gameSystemPrompt?: string | null;
+  /** Selected built-in or chat-local Game Mode GM prompt template. */
+  gameGmPromptTemplateId?: string | null;
+  /** Chat-local Game Mode GM prompt templates. */
+  gameGmPromptTemplates?: import("./agent.js").AgentPromptTemplateOption[];
   /** Additional game-mode generation instructions appended to the final GM format reminder. */
   gameSpecialInstructions?: string | null;
   /** Generic Game Mode Music DJ toggle. Legacy gameUseSpotifyMusic remains the Spotify-specific pipeline flag. */

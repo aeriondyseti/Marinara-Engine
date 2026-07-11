@@ -24,6 +24,7 @@ import type {
   EncounterLogEntry,
   RPGStatsConfig,
 } from "@marinara-engine/shared";
+import { resolveActivePersonaCandidate } from "./generate/generate-route-utils.js";
 
 // ──────────────────────────────────────────────
 // Helpers
@@ -158,12 +159,18 @@ async function buildCharacterContext(chars: ReturnType<typeof createCharactersSt
  * user who picks a per-chat persona but doesn't have a matching global active
  * persona ends up named "User" in combat because the encounter prompt's
  * `${personaName}` placeholder defaulted to that string.
+ *
+ * Game mode skips the active-persona fallback — persona must be explicitly
+ * selected in the setup wizard (see generate.routes.ts persona resolution),
+ * so a persona-less game stays persona-less in combat too.
  */
-async function buildPersonaContext(chars: ReturnType<typeof createCharactersStorage>, chatPersonaId: string | null) {
+async function buildPersonaContext(
+  chars: ReturnType<typeof createCharactersStorage>,
+  chatPersonaId: string | null,
+  chatMode?: string | null,
+) {
   const allPersonas = await chars.listPersonas();
-  const persona =
-    (chatPersonaId ? allPersonas.find((p) => p.id === chatPersonaId) : null) ??
-    allPersonas.find((p) => p.isActive === "true");
+  const persona = resolveActivePersonaCandidate(allPersonas, chatPersonaId, chatMode);
   if (!persona) return { personaName: "User", personaCtx: "No persona information available." };
   let ctx = `Name: ${persona.name}\n`;
   const description = cardPromptText(persona.description);
@@ -568,7 +575,7 @@ export async function encounterRoutes(app: FastifyInstance) {
 
       const characterIds: string[] = JSON.parse(chat.characterIds as string);
       const characterCtx = await buildCharacterContext(chars, characterIds);
-      const { personaName, personaCtx } = await buildPersonaContext(chars, chat.personaId ?? null);
+      const { personaName, personaCtx } = await buildPersonaContext(chars, chat.personaId ?? null, chat.mode);
       let chatMeta: Record<string, unknown> | null = null;
       if (typeof chat.metadata === "string") {
         try {
@@ -663,7 +670,7 @@ export async function encounterRoutes(app: FastifyInstance) {
 
       const characterIds: string[] = JSON.parse(chat.characterIds as string);
       const characterCtx = await buildCharacterContext(chars, characterIds);
-      const { personaName, personaCtx } = await buildPersonaContext(chars, chat.personaId ?? null);
+      const { personaName, personaCtx } = await buildPersonaContext(chars, chat.personaId ?? null, chat.mode);
       const spellbookCtx = await loadSpellbookContext(spellbookId);
 
       const chatMessages = await chats.listMessages(chatId);
@@ -761,7 +768,7 @@ export async function encounterRoutes(app: FastifyInstance) {
 
       const characterIds: string[] = JSON.parse(chat.characterIds as string);
       const characterCtx = await buildCharacterContext(chars, characterIds);
-      const { personaName, personaCtx } = await buildPersonaContext(chars, chat.personaId ?? null);
+      const { personaName, personaCtx } = await buildPersonaContext(chars, chat.personaId ?? null, chat.mode);
 
       const prompt = buildSummaryPrompt(
         personaName,

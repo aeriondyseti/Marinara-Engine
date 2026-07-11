@@ -35,6 +35,7 @@ import {
   findKnownModel,
   LOCAL_SIDECAR_CONNECTION_ID,
   normalizeTextForMatch,
+  normalizeGameStoryboardKeyframeCount,
   type APIProvider,
   type MacroContext,
 } from "@marinara-engine/shared";
@@ -183,6 +184,7 @@ import {
   preserveTrackerCharacterUiFields,
   prefixGroupIndividualHistorySpeakers,
   resolveActiveCharacterIds,
+  resolveActivePersonaCandidate,
   resolveBaseUrl,
   resolveRoleplaySummaryTail,
   resolveCharacterNameMap,
@@ -754,11 +756,10 @@ export async function generateRoutes(app: FastifyInstance) {
       }
 
       // Snapshot persona info for per-message persona tracking
+      // (game mode skips the active-persona fallback, matching the prompt's persona resolution below)
       if (userMsg?.id) {
         const snapshotPersonas = await chars.listPersonas().catch(releaseActiveGenerationAndRethrow);
-        const snapshotPersona =
-          (chat.personaId ? snapshotPersonas.find((p: any) => p.id === chat.personaId) : null) ??
-          snapshotPersonas.find((p: any) => p.isActive === "true");
+        const snapshotPersona = resolveActivePersonaCandidate(snapshotPersonas, chat.personaId, requestChatMode);
         if (snapshotPersona) {
           await chats
             .updateMessageExtra(userMsg.id, {
@@ -1205,9 +1206,7 @@ export async function generateRoutes(app: FastifyInstance) {
       const currentUserInputContent = (): string | undefined =>
         [...currentInputMessages()].reverse().find((message) => message.role === "user")?.content;
 
-      const persona =
-        (chat.personaId ? allPersonas.find((p: any) => p.id === chat.personaId) : null) ??
-        (chatMode !== "game" ? allPersonas.find((p: any) => p.isActive === "true") : null);
+      const persona = resolveActivePersonaCandidate(allPersonas, chat.personaId, chatMode);
       if (persona) {
         personaId = persona.id as string;
         personaName = persona.name;
@@ -1455,7 +1454,11 @@ export async function generateRoutes(app: FastifyInstance) {
           personaPhoneticName,
           personaDescription,
           personaFields,
-          variables: {},
+          variables: {
+            gameStoryboardKeyframeCount: String(
+              normalizeGameStoryboardKeyframeCount(chatMeta.gameStoryboardKeyframeCount),
+            ),
+          },
           groupScenarioOverrideText:
             typeof chatMeta.groupScenarioText === "string" && (chatMeta.groupScenarioText as string).trim()
               ? (chatMeta.groupScenarioText as string).trim()
@@ -2529,7 +2532,8 @@ export async function generateRoutes(app: FastifyInstance) {
               : "";
           const gamePromptMetadata =
             selectedGamePrompt &&
-            !(typeof chatMeta.gameSystemPrompt === "string" && chatMeta.gameSystemPrompt.trim().length > 0)
+            !(typeof chatMeta.gameSystemPrompt === "string" && chatMeta.gameSystemPrompt.trim().length > 0) &&
+            !(typeof chatMeta.gameGmPromptTemplateId === "string" && chatMeta.gameGmPromptTemplateId.trim().length > 0)
               ? { ...chatMeta, gameSystemPrompt: selectedGamePrompt }
               : chatMeta;
           const { gmCtx, gameActiveState, sessionNumber, gameTurnNumber, gameTime, gameMap, hasSceneModel } =

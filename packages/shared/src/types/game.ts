@@ -185,6 +185,16 @@ export interface GameSetupConfig {
   gameStoryboardAutoIllustrationsEnabled?: boolean;
   /** Automatically create storyboard keyframe videos after completed GM turns. */
   gameStoryboardAutoGenerationEnabled?: boolean;
+  /** Target number of storyboard keyframes to create per completed GM turn. */
+  gameStoryboardKeyframeCount?: number;
+  /** Selected built-in or chat-local GM prompt template. */
+  gameGmPromptTemplateId?: string | null;
+  /** Selected animation-ready storyboard director template. */
+  gameStoryboardAnimationPromptTemplateId?: string | null;
+  /** Selected prompt template used only for storyboard keyframe videos. */
+  gameStoryboardVideoPromptTemplateId?: string | null;
+  /** Send storyboard imagePrompt directly to the image compiler/provider. */
+  gameStoryboardUseDirectScenePrompt?: boolean;
   /** Unified art style prompt applied to all generated images (auto-generated at setup) */
   artStylePrompt?: string;
   /** Optional image style profile applied to generated images in this game. */

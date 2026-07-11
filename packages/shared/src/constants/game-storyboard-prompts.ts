@@ -2,6 +2,7 @@ import type { AgentPromptTemplateOption } from "../types/agent.js";
 
 export const GAME_STORYBOARD_ILLUSTRATION_PROMPT_TEMPLATE_ID = "still-keyframes";
 export const GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID = "comic-page-keyframes";
+export const GAME_STORYBOARD_ANIME_EPISODE_PROMPT_TEMPLATE_ID = "anime-episode-director";
 export const GAME_STORYBOARD_COLORED_MANGA_PROMPT_TEMPLATE_ID = "colored-manga-keyframes";
 export const GAME_STORYBOARD_BW_MANGA_PROMPT_TEMPLATE_ID = "bw-manga-keyframes";
 export const GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE_ID = "novelai-keyframes";
@@ -11,6 +12,20 @@ export const GAME_STORYBOARD_KEYFRAME_COUNT_DEFAULT = 3;
 export const GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MIN = 1;
 export const GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MAX = 15;
 export const GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_DEFAULT = 6;
+
+export function normalizeGameStoryboardKeyframeCount(
+  value: unknown,
+  fallback = GAME_STORYBOARD_KEYFRAME_COUNT_DEFAULT,
+): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  const normalizedFallback = Math.min(
+    GAME_STORYBOARD_KEYFRAME_COUNT_MAX,
+    Math.max(GAME_STORYBOARD_KEYFRAME_COUNT_MIN, Math.trunc(fallback)),
+  );
+  return Number.isFinite(parsed)
+    ? Math.min(GAME_STORYBOARD_KEYFRAME_COUNT_MAX, Math.max(GAME_STORYBOARD_KEYFRAME_COUNT_MIN, Math.trunc(parsed)))
+    : normalizedFallback;
+}
 
 export const GAME_STORYBOARD_PROMPT_TEMPLATE_VARIABLES = [
   "gameContextBlock",
@@ -67,6 +82,44 @@ export const GAME_STORYBOARD_COMIC_PROMPT_TEMPLATE = [
   "Rules: Build the prompt as a complete comic page. Include panel count, panel composition, camera framing, mood, lighting, and action flow.",
   "The prompt must include a short readable text plan: dialogue bubbles for spoken lines, captions for narration/reaction beats, and SFX lettering for action. Draw text from the scene and keep it brief.",
   "Use the negativePrompt: watermark, logo, signature, UI chrome, unreadable text, broken lettering, malformed speech bubbles, blurry, low quality.",
+  "Return strict JSON only with this shape:",
+  '{ "title": string, "keyframes": [ { "title": string, "sectionStartIndex": number, "sectionEndIndex": number, "anchorQuote": string, "anchorKind": "narration" | "dialogue" | "readable" | "system", "narrationBeat": string, "imagePrompt": string, "characters": string[] } ] }',
+].join("\n");
+
+export const GAME_STORYBOARD_ANIME_EPISODE_PROMPT_TEMPLATE = [
+  "You are Marinara's Anime Episode Director.",
+  "Convert one completed GM turn into ${keyframeCount} ordered, animation-ready anime shots. Use only events present in the GM narration.",
+  "Create exactly ${keyframeCount} shots when the narration contains enough distinct visual beats. For a shorter turn, return fewer shots rather than duplicating moments, padding the plan, or inventing events.",
+  "Treat each keyframe as one continuous animated shot, not a comic page or collection of panels.",
+  "",
+  "SHOT SELECTION:",
+  "- Select visually important actions, reactions, reveals, transformations, emotional turns, establishing moments, and consequences.",
+  "- Follow the narration chronologically and prefer action/reaction pairs when both are important.",
+  "- Do not invent events, dialogue, characters, props, or outcomes.",
+  "- Keep character appearance, clothing, injuries, equipment, positions, location, lighting, weather, and damage continuous between shots.",
+  "- Use only the allowed visible characters.",
+  "",
+  "IMAGE PROMPT:",
+  "- imagePrompt must describe time T=0: the exact first frame immediately before Action begins.",
+  "- Include visible characters, expressions, poses, composition, camera angle, environment, lighting, mood, and important props.",
+  "- Choose a starting pose that naturally leads into the intended movement.",
+  "- Do not include injuries, damage, displaced objects, opened mechanisms, environmental changes, or other consequences that occur during Action or End.",
+  "- Audit imagePrompt against Start before returning it.",
+  "- Do not describe multiple panels, captions, subtitles, dialogue bubbles, logos, UI, or text.",
+  "",
+  "ANIMATION DIRECTION:",
+  "- narrationBeat is an internal animation direction, not reader-facing prose.",
+  "- Write it compactly in this order: Start: exact initial pose and state. Action: primary character or object movement. Camera: one simple camera movement or a locked camera. Environment: secondary motion. End: final pose, expression, composition, or dramatic hold.",
+  "- Keep each shot achievable as one continuous ${durationSeconds}-second image-to-video clip.",
+  "- Prefer one strong motion over several unrelated actions.",
+  "- Avoid abrupt cuts, scene changes, teleportation, new characters, costume changes, and transformations not supported by the narration.",
+  "",
+  "PROVIDER-SAFE STAGING:",
+  "- When the narration contains severe harm, preserve the event and emotional consequence using broadcast-anime restraint.",
+  "- Use steam, smoke, silhouette, impact light, partial occlusion, off-axis framing, environmental reaction, character reaction, and aftermath instead of explicit anatomical injury.",
+  "- Keep imagePrompt and narrationBeat non-graphic. Do not erase the event or alter its outcome; change only how it is visually staged.",
+  "",
+  "Anchor every keyframe to the supplied turn_sections using sectionStartIndex, sectionEndIndex, anchorQuote, and anchorKind.",
   "Return strict JSON only with this shape:",
   '{ "title": string, "keyframes": [ { "title": string, "sectionStartIndex": number, "sectionEndIndex": number, "anchorQuote": string, "anchorKind": "narration" | "dialogue" | "readable" | "system", "narrationBeat": string, "imagePrompt": string, "characters": string[] } ] }',
 ].join("\n");
@@ -128,6 +181,13 @@ export const GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES: AgentPromptTemplateOptio
     description:
       "Game Mode storyboard preset with comic panels, dialogue, captions, and SFX. Intended for automatic animations.",
     promptTemplate: GAME_STORYBOARD_COMIC_PROMPT_TEMPLATE,
+  },
+  {
+    id: GAME_STORYBOARD_ANIME_EPISODE_PROMPT_TEMPLATE_ID,
+    name: "Anime Episode Director",
+    description:
+      "Plans single-shot first frames and compact motion direction from each completed GM turn.",
+    promptTemplate: GAME_STORYBOARD_ANIME_EPISODE_PROMPT_TEMPLATE,
   },
   {
     id: GAME_STORYBOARD_COLORED_MANGA_PROMPT_TEMPLATE_ID,

@@ -6,6 +6,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Added
 
+- Added an Anime Episode presentation for Game Mode with coordinated **Anime Game Prompt**, **Anime Episode Director**, and **Anime Game Video** presets; setup-time keyframe targeting; a `{{gameStoryboardKeyframeCount}}` GM macro; and a storyboard-only video prompt selector that leaves manual scene videos unchanged.
 - Added GLM-5.2 to custom OpenAI-compatible connection model choices, including its 1M context and 128K output limits.
 - Added prefix-matched `@handle` suggestions to Noodle post and reply composers, with click, touch, and keyboard insertion.
 - Added OpenAI GPT-5.6 Sol/Terra/Luna model support, including the `gpt-5.6` Sol alias, a `gpt-5.6-sol-pro` pro-mode alias, Responses API routing, GPT-5.6 `max` reasoning effort mapping, and reuse of the existing Exclude Past Reasoning toggle for GPT-5.6 reasoning context.
@@ -25,6 +26,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Changed
 
+- Removed the obsolete Visual Novel coming-soon tab and grouped legacy/imported Visual Novel chats under Roleplay while preserving their schema, importer, and achievement compatibility; Game dialogue layout labels now use Dialogue Box wording.
 - Updated Noodle timeline guidance so characters may naturally be rude, petty, confrontational, revive grudges, form rivalries, and stir up interpersonal drama when it fits their established personalities and relationships.
 - Restyled Noodle around the Klusek blue logo asset, replacing the always-visible settings column with a profile-triggered drawer and a more Twitter-like central feed.
 - Updated Noodle image prompt generation so character posts may request either character-focused images or in-character memes when image generation is enabled.
@@ -34,6 +36,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Fixed
 
+- Fixed desktop Noodle emoji, custom emoji, and sticker insertions always appending to the end of post and reply drafts instead of replacing the active selection at the caret.
 - Fixed example dialogue `<START>` sentinels being escaped as `&lt;START&gt;` in XML-wrapped prompts while continuing to escape arbitrary imported markup (#3441).
 - Fixed Conversation **About Me** and Noodle avatars ignoring saved crop settings, and restored custom emoji rendering in Noodle profile bios (#3443).
 - Fixed structured Game and Noodle generations being rejected when a model wraps an otherwise valid JSON object or array in thinking, metadata, or other stray text.

@@ -1097,9 +1097,12 @@ export function useGenerate() {
           qc.getQueryData<any>(chatKeys.detail(params.chatId)) ??
           (qc.getQueryData<any[]>(chatKeys.list()) ?? []).find((c: any) => c.id === params.chatId);
         const chatPersonaId = activeChat?.personaId as string | null | undefined;
+        // Game mode skips the active-persona fallback, matching the server's snapshot stamping
         const snapshotPersona = cachedPersonas
           ? ((chatPersonaId ? cachedPersonas.find((p) => p.id === chatPersonaId) : null) ??
-            cachedPersonas.find((p) => p.isActive === "true" || p.isActive === true))
+            (activeChat?.mode !== "game"
+              ? cachedPersonas.find((p) => p.isActive === "true" || p.isActive === true)
+              : null))
           : null;
         const personaSnapshot = snapshotPersona
           ? {

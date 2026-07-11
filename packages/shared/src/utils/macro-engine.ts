@@ -367,6 +367,11 @@ export const SUPPORTED_MACROS: readonly SupportedMacroDefinition[] = [
   { category: "Context", syntax: "{{lastGenerationType}}", description: "Current generation type label" },
   { category: "Context", syntax: "{{idle_duration}}", description: "Time since the last chat activity" },
   { category: "Context", syntax: "{{agent::TYPE}}", description: "Cached output for an agent or tracker type" },
+  {
+    category: "Game",
+    syntax: "{{gameStoryboardKeyframeCount}}",
+    description: "Current Game Mode Keyframes per Turn target (1-6, default 3)",
+  },
   { category: "Time", syntax: "{{date}}", description: "Current real date in the user's timezone" },
   { category: "Time", syntax: "{{time}}", description: "Current real time in the user's timezone" },
   { category: "Time", syntax: "{{datetime}} / {{isotime}}", description: "Current timestamp in the user's timezone" },
@@ -1360,6 +1365,7 @@ function formatMacroDateTime(now: Date, requestedTimeZone?: string): MacroDateTi
  *  - {{chatId}} — current chat ID
  *  - {{lastGenerationType}} — current generation type label
  *  - {{idle_duration}} — time since the last chat activity
+ *  - {{gameStoryboardKeyframeCount}} — current Game Mode Keyframes per Turn target
  *  - {{// comment}} — removed (author comments)
  *  - {{trim}} — remove surrounding whitespace
  *  - {{trimStart}} / {{trimEnd}} — directional trim markers

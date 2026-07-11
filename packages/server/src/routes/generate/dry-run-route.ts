@@ -7,6 +7,7 @@ import {
   stripMacroComments,
   DEFAULT_CONVERSATION_PROMPT,
   DEFAULT_GAME_SYSTEM_PROMPT,
+  normalizeGameStoryboardKeyframeCount,
   type GenerationParameterSendMap,
   type LorebookEntryTimingState,
 } from "@marinara-engine/shared";
@@ -64,6 +65,7 @@ import {
   parseStoredGenerationParameters,
   prefixGroupIndividualHistorySpeakers,
   resolveActiveCharacterIds,
+  resolveActivePersonaCandidate,
   resolvePromptCharacterIdsForTarget,
   resolveCharacterNameMap,
   resolveRegenerationGameStateAnchor,
@@ -79,6 +81,7 @@ import { buildGenerationPromptPresetCandidates, type PromptPresetCandidateSource
 import { createGameStateStorage, type GameStateVisibleAnchor } from "../../services/storage/game-state.storage.js";
 import { buildCommittedTrackerContextBlock } from "../../services/generation/committed-tracker-context.js";
 import { logger } from "../../lib/logger.js";
+import { resolveGameGmPromptTemplate } from "../../services/generation/game-gm-prompt-runtime.js";
 
 type WrapFormat = "xml" | "markdown" | "none";
 type DryRunPromptMessage = {
@@ -711,9 +714,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
     let persona: any = null;
     try {
       const allPersonas = await chars.listPersonas();
-      persona =
-        ((chat as any).personaId ? allPersonas.find((p: any) => p.id === (chat as any).personaId) : null) ??
-        allPersonas.find((p: any) => p.isActive === "true");
+      persona = resolveActivePersonaCandidate(allPersonas, (chat as any).personaId, chatMode);
       if (persona) {
         personaId = persona.id as string;
         personaName = persona.name;
@@ -787,7 +788,11 @@ export async function registerDryRunRoute(app: FastifyInstance) {
       personaName,
       personaDescription,
       personaFields,
-      variables: {},
+      variables: {
+        gameStoryboardKeyframeCount: String(
+          normalizeGameStoryboardKeyframeCount(chatMeta.gameStoryboardKeyframeCount),
+        ),
+      },
       groupScenarioOverrideText:
         typeof chatMeta.groupScenarioText === "string" && (chatMeta.groupScenarioText as string).trim()
           ? (chatMeta.groupScenarioText as string).trim()
@@ -1320,10 +1325,13 @@ export async function registerDryRunRoute(app: FastifyInstance) {
       ];
     }
     if (chatMode === "game") {
-      const customPrompt =
-        typeof chatMeta.gameSystemPrompt === "string" && chatMeta.gameSystemPrompt.trim()
-          ? (chatMeta.gameSystemPrompt as string)
+      const setupConfig =
+        chatMeta.gameSetupConfig &&
+        typeof chatMeta.gameSetupConfig === "object" &&
+        !Array.isArray(chatMeta.gameSetupConfig)
+          ? (chatMeta.gameSetupConfig as Record<string, unknown>)
           : null;
+      const customPrompt = resolveGameGmPromptTemplate(chatMeta, setupConfig);
       const selectedGamePrompt = presetStringField(effectivePreset as Record<string, unknown> | null, "gamePrompt");
       const gamePromptTemplate = customPrompt ?? (selectedGamePrompt || DEFAULT_GAME_SYSTEM_PROMPT);
       const renderedGamePrompt = resolvePromptMacros(gamePromptTemplate);

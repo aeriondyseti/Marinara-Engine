@@ -179,10 +179,12 @@ import {
   DEFAULT_AGENT_TOOLS,
   DEFAULT_AGENT_MAX_TOKENS,
   DEFAULT_AGENT_PROMPTS,
+  GAME_GM_BUILT_IN_PROMPT_TEMPLATES,
   GAME_STORYBOARD_ANIMATION_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_DEFAULT,
   GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MAX,
   GAME_STORYBOARD_ANIMATION_DURATION_SECONDS_MIN,
+  GAME_STORYBOARD_ANIME_EPISODE_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_BW_MANGA_PROMPT_TEMPLATE_ID,
   GAME_STORYBOARD_BUILT_IN_PROMPT_TEMPLATES,
   GAME_STORYBOARD_COLORED_MANGA_PROMPT_TEMPLATE_ID,
@@ -202,6 +204,7 @@ import {
   includesTextForMatch,
   AGENT_COST_HIGH_CALLS,
   AGENT_COST_HIGH_TOKENS,
+  ANIME_GAME_VIDEO_PROMPT_TEMPLATE_ID,
   CONVERSATION_COMMAND_KEYS,
   getDefaultBuiltInAgentSettings,
   isAgentAvailableInChatMode,
@@ -654,7 +657,7 @@ const MODE_INTROS: Record<ChatMode, string> = {
   roleplay:
     "Plain roleplay surface — no built-in dice, combat, or GM pipeline; sprites, world-state tracking, and other helpers are available as optional agents below.",
   visual_novel:
-    "Sprite- and background-driven roleplay — expressions, world state, and CYOA choices are available as optional agents below.",
+    "Legacy roleplay chat — expressions, world state, and CYOA choices are available as optional agents below.",
   game: "Full Game Master with built-in dice, combat, encounters, world state, and session/map tracking — the Scene Analysis toggle below adds optional cinematic visuals (backgrounds, music, weather).",
 };
 
@@ -1613,6 +1616,18 @@ export function ChatSettingsDrawer({
   const gameStoryboardAutoAnimationsEnabled = metadata.gameStoryboardAutoGenerationEnabled === true;
   const gameStoryboardUseDirectScenePrompt = metadata.gameStoryboardUseDirectScenePrompt === true;
   const gameStoryboardUseNovelAiCharacterPrompts = metadata.gameStoryboardUseNovelAiCharacterPrompts !== false;
+  const selectedGameGmPromptTemplateId = useMemo(() => {
+    const selected = typeof metadata.gameGmPromptTemplateId === "string" ? metadata.gameGmPromptTemplateId.trim() : "";
+    return selected && GAME_GM_BUILT_IN_PROMPT_TEMPLATES.some((template) => template.id === selected)
+      ? selected
+      : null;
+  }, [metadata.gameGmPromptTemplateId]);
+  const updateGameGmPromptTemplateSelection = useCallback(
+    (templateId: string | null) => {
+      updateMeta.mutate({ id: chat.id, gameGmPromptTemplateId: templateId });
+    },
+    [chat.id, updateMeta],
+  );
   const gameStoryboardKeyframeCount = normalizeGameStoryboardKeyframeCount(metadata.gameStoryboardKeyframeCount);
   const gameStoryboardAnimationDurationConfigured = hasGameStoryboardAnimationDuration(
     metadata.gameStoryboardAnimationDurationSeconds,
@@ -1745,6 +1760,15 @@ export function ChatSettingsDrawer({
     () => resolveSelectedGameVideoPromptTemplateId(metadata.gameVideoPromptTemplateId, gameVideoPromptOptions),
     [gameVideoPromptOptions, metadata.gameVideoPromptTemplateId],
   );
+  const selectedGameStoryboardVideoPromptTemplateId = useMemo(() => {
+    const selected =
+      typeof metadata.gameStoryboardVideoPromptTemplateId === "string"
+        ? metadata.gameStoryboardVideoPromptTemplateId.trim()
+        : "";
+    return selected && gameVideoPromptOptions.some((option) => option.id === selected)
+      ? selected
+      : selectedGameVideoPromptTemplateId;
+  }, [gameVideoPromptOptions, metadata.gameStoryboardVideoPromptTemplateId, selectedGameVideoPromptTemplateId]);
   const updateGameVideoPromptSelection = useCallback(
     (promptTemplateId: string) => {
       updateMeta.mutate({
@@ -1753,6 +1777,16 @@ export function ChatSettingsDrawer({
       });
     },
     [chat.id, updateMeta],
+  );
+  const updateGameStoryboardVideoPromptSelection = useCallback(
+    (promptTemplateId: string) => {
+      updateMeta.mutate({
+        id: chat.id,
+        gameStoryboardVideoPromptTemplateId:
+          promptTemplateId === selectedGameVideoPromptTemplateId ? null : promptTemplateId,
+      });
+    },
+    [chat.id, selectedGameVideoPromptTemplateId, updateMeta],
   );
   const updateGameVideoPromptTemplates = useCallback(
     (templates: AgentPromptTemplateOption[]) => {
@@ -1765,9 +1799,12 @@ export function ChatSettingsDrawer({
         id: chat.id,
         gameVideoPromptTemplates: normalized,
         ...(availableIds.has(selectedGameVideoPromptTemplateId) ? {} : { gameVideoPromptTemplateId: null }),
+        ...(availableIds.has(selectedGameStoryboardVideoPromptTemplateId)
+          ? {}
+          : { gameStoryboardVideoPromptTemplateId: null }),
       });
     },
-    [chat.id, selectedGameVideoPromptTemplateId, updateMeta],
+    [chat.id, selectedGameStoryboardVideoPromptTemplateId, selectedGameVideoPromptTemplateId, updateMeta],
   );
   const addGameVideoPromptTemplate = useCallback(
     (sourceTemplateId: string) => {
@@ -3801,6 +3838,8 @@ export function ChatSettingsDrawer({
                 promptPresets={promptPresetOptions}
                 selectedPresetName={selectedModePromptPreset?.name ?? null}
                 selectedPresetPrompt={selectedModePromptPreset?.gamePrompt ?? ""}
+                gmPromptTemplateId={selectedGameGmPromptTemplateId}
+                gmPromptTemplates={GAME_GM_BUILT_IN_PROMPT_TEMPLATES}
                 onCommit={(gameSystemPrompt) => updateMeta.mutate({ id: chat.id, gameSystemPrompt })}
                 onSpecialInstructionsCommit={(gameSpecialInstructions) =>
                   updateMeta.mutate({ id: chat.id, gameSpecialInstructions })
@@ -3809,6 +3848,7 @@ export function ChatSettingsDrawer({
                 onValueChange={setGamePromptDraft}
                 onSpecialInstructionsChange={setGameSpecialInstructionsDraft}
                 onPromptPresetChange={handleModePromptPresetChange}
+                onGmPromptTemplateChange={updateGameGmPromptTemplateSelection}
                 onOpenPromptPreset={openSelectedModePromptPreset}
               />
             </div>
@@ -7839,6 +7879,14 @@ export function ChatSettingsDrawer({
                         }
                       />
                     </div>
+                    <GamePromptTemplateSelect
+                      label="Storyboard Video Prompt"
+                      description="Used only for storyboard keyframe clips. Manual scene videos keep the Game Video Prompt above."
+                      options={gameVideoPromptOptions}
+                      selectedId={selectedGameStoryboardVideoPromptTemplateId}
+                      fallbackId={selectedGameVideoPromptTemplateId}
+                      onChange={updateGameStoryboardVideoPromptSelection}
+                    />
                     <GameStoryboardPromptLibrary
                       customTemplates={gameStoryboardPromptTemplates}
                       onAddTemplate={addGameStoryboardPromptTemplate}
@@ -9505,6 +9553,14 @@ function GameStoryboardPromptLibrary({
             </button>
             <button
               type="button"
+              onClick={() => onAddTemplate(GAME_STORYBOARD_ANIME_EPISODE_PROMPT_TEMPLATE_ID)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+            >
+              <FilePlus2 size="0.6875rem" />
+              Add Anime Episode Copy
+            </button>
+            <button
+              type="button"
               onClick={() => onAddTemplate(GAME_STORYBOARD_NOVELAI_PROMPT_TEMPLATE_ID)}
               className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
             >
@@ -9645,6 +9701,14 @@ function GameVideoPromptLibrary({
             >
               <Plus size="0.6875rem" />
               Add Video Copy
+            </button>
+            <button
+              type="button"
+              onClick={() => onAddTemplate(ANIME_GAME_VIDEO_PROMPT_TEMPLATE_ID)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--secondary)] px-2.5 py-1.5 text-[0.625rem] font-medium text-[var(--foreground)] ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--accent)]"
+            >
+              <FilePlus2 size="0.6875rem" />
+              Add Anime Video Copy
             </button>
           </div>
           {customTemplates.length === 0 ? (

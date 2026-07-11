@@ -31,6 +31,7 @@ import type {
   ScenePromptPreferences,
   SceneFullPlan,
 } from "@marinara-engine/shared";
+import { resolveActivePersonaCandidate } from "./generate/generate-route-utils.js";
 
 const BG_DIR = join(DATA_DIR, "backgrounds");
 const ALLOWED_BG_EXTS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"]);
@@ -131,16 +132,27 @@ async function buildCharacterContext(chars: ReturnType<typeof createCharactersSt
   return ctx;
 }
 
-async function buildPersonaContext(chars: ReturnType<typeof createCharactersStorage>) {
+/**
+ * Build persona context. Prefers the chat-scoped persona (`chat.personaId`)
+ * before falling back to the globally active persona — the same resolution
+ * order used elsewhere (see `chats.routes.ts`). Game mode skips the fallback:
+ * persona must be explicitly selected in the setup wizard, so a persona-less
+ * game stays persona-less in scene prompts too.
+ */
+async function buildPersonaContext(
+  chars: ReturnType<typeof createCharactersStorage>,
+  chatPersonaId?: string | null,
+  chatMode?: string | null,
+) {
   const allPersonas = await chars.listPersonas();
-  const active = allPersonas.find((p) => p.isActive === "true");
-  if (!active) return { personaName: "User", personaCtx: "No persona information available." };
-  let ctx = `Name: ${active.name}\n`;
-  if (active.description) ctx += `${active.description}\n`;
-  if (active.personality) ctx += `${active.personality}\n`;
-  if (active.backstory) ctx += `${active.backstory}\n`;
-  if (active.appearance) ctx += `${active.appearance}\n`;
-  return { personaName: active.name, personaCtx: ctx };
+  const persona = resolveActivePersonaCandidate(allPersonas, chatPersonaId, chatMode);
+  if (!persona) return { personaName: "User", personaCtx: "No persona information available." };
+  let ctx = `Name: ${persona.name}\n`;
+  if (persona.description) ctx += `${persona.description}\n`;
+  if (persona.personality) ctx += `${persona.personality}\n`;
+  if (persona.backstory) ctx += `${persona.backstory}\n`;
+  if (persona.appearance) ctx += `${persona.appearance}\n`;
+  return { personaName: persona.name, personaCtx: ctx };
 }
 
 /** Get recent messages from a chat for context. */
@@ -296,7 +308,7 @@ export async function sceneRoutes(app: FastifyInstance) {
     if (!sceneChat) return reply.status(500).send({ error: "Failed to create scene chat" });
 
     // Build conversation transcript as hidden context (NOT displayed)
-    const { personaName } = await buildPersonaContext(chars);
+    const { personaName } = await buildPersonaContext(chars, originChat.personaId, originChat.mode);
     const initiatorName = initiatorCharId ? await getCharacterName(chars, initiatorCharId) : "User";
     const recentMsgs = await getRecentMessages(chats, originChatId, 30);
     const historyText = recentMsgs
@@ -376,6 +388,9 @@ export async function sceneRoutes(app: FastifyInstance) {
 
     const originChatId = typeof sceneMeta.sceneOriginChatId === "string" ? sceneMeta.sceneOriginChatId : null;
     if (!originChatId) return reply.status(400).send({ error: "Not a scene chat (no origin)" });
+    // Fetched only for the persona game guard — step 4 below re-fetches the
+    // origin fresh, since this snapshot is stale by the time the LLM returns.
+    const sceneOriginChat = await chats.getById(originChatId);
 
     // Resolve connection
     const { conn, baseUrl } = await resolveConnection(connections, connectionId, sceneChat.connectionId);
@@ -388,10 +403,11 @@ export async function sceneRoutes(app: FastifyInstance) {
       conn.maxTokensOverride,
     );
 
-    // Build context
+    // Build context — the scene chat inherits its personaId from the origin;
+    // the game guard has to come from the origin since scene chats are "roleplay"
     const characterIds = parseCharacterIds(sceneChat.characterIds);
     const characterCtx = await buildCharacterContext(chars, characterIds);
-    const { personaName, personaCtx } = await buildPersonaContext(chars);
+    const { personaName, personaCtx } = await buildPersonaContext(chars, sceneChat.personaId, sceneOriginChat?.mode);
 
     // Get all scene messages for the summary
     const sceneMessages = await getRecentMessages(chats, sceneChatId, 100);
@@ -761,7 +777,7 @@ export async function sceneRoutes(app: FastifyInstance) {
     const characterIds: string[] =
       typeof chat.characterIds === "string" ? JSON.parse(chat.characterIds) : (chat.characterIds as string[]);
     const characterCtx = await buildCharacterContext(chars, characterIds);
-    const { personaName, personaCtx } = await buildPersonaContext(chars);
+    const { personaName, personaCtx } = await buildPersonaContext(chars, chat.personaId, chat.mode);
 
     // Get available backgrounds
     const availableBackgrounds = listAvailableBackgrounds();

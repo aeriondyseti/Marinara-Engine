@@ -1481,6 +1481,10 @@ async function buildStoryboardGalleryAnimatePrompt(args: {
   const promptDraft = await loadGameVideoPrompt({
     promptOverridesStorage: args.promptOverridesStorage,
     meta: args.meta,
+    templateId:
+      typeof args.meta.gameStoryboardVideoPromptTemplateId === "string"
+        ? args.meta.gameStoryboardVideoPromptTemplateId
+        : null,
     debugMode: args.debugMode,
     ctx: {
       sceneTitle: compactVideoPromptText(
@@ -1589,6 +1593,16 @@ const gameSetupConfigSchema = z.object({
   videoConnectionId: z.string().optional(),
   gameStoryboardAutoIllustrationsEnabled: z.boolean().optional(),
   gameStoryboardAutoGenerationEnabled: z.boolean().optional(),
+  gameStoryboardKeyframeCount: z
+    .number()
+    .int()
+    .min(GAME_STORYBOARD_KEYFRAME_COUNT_MIN)
+    .max(GAME_STORYBOARD_KEYFRAME_COUNT_MAX)
+    .optional(),
+  gameGmPromptTemplateId: z.string().max(200).nullable().optional(),
+  gameStoryboardAnimationPromptTemplateId: z.string().max(200).nullable().optional(),
+  gameStoryboardVideoPromptTemplateId: z.string().max(200).nullable().optional(),
+  gameStoryboardUseDirectScenePrompt: z.boolean().optional(),
   artStylePrompt: z.string().max(500).optional(),
   imageStyleProfileId: z.string().nullable().optional(),
   activeLorebookIds: z.array(z.string()).optional(),
@@ -5850,6 +5864,9 @@ export async function gameRoutes(app: FastifyInstance) {
     const customHudWidgets = sanitizeGameHudWidgets(parsedCreateGameInput.setupConfig.customHudWidgets);
     const gameSystemPrompt = parsedCreateGameInput.setupConfig.gameSystemPrompt?.trim() || null;
     const gameSpecialInstructions = parsedCreateGameInput.setupConfig.gameSpecialInstructions?.trim() || null;
+    const storyboardKeyframeCount = normalizeStoryboardKeyframeCount(
+      parsedCreateGameInput.setupConfig.gameStoryboardKeyframeCount,
+    );
     const storyboardIllustrationsPreference =
       parsedCreateGameInput.setupConfig.gameStoryboardAutoIllustrationsEnabled !== false;
     const visualGenerationEnabled =
@@ -5871,6 +5888,7 @@ export async function gameRoutes(app: FastifyInstance) {
         ? storyboardIllustrationsEnabled
         : parsedCreateGameInput.setupConfig.gameStoryboardAutoIllustrationsEnabled,
       gameStoryboardAutoGenerationEnabled: storyboardAnimationsEnabled || undefined,
+      gameStoryboardKeyframeCount: storyboardKeyframeCount,
       enableCustomWidgets:
         parsedCreateGameInput.setupConfig.enableCustomWidgets !== false || customHudWidgets.length > 0,
       customHudWidgets: customHudWidgets.length > 0 ? customHudWidgets : undefined,
@@ -5961,6 +5979,11 @@ export async function gameRoutes(app: FastifyInstance) {
       gameVideoConnectionId: setupConfig.videoConnectionId || null,
       gameStoryboardAutoIllustrationsEnabled: setupConfig.gameStoryboardAutoIllustrationsEnabled !== false,
       gameStoryboardAutoGenerationEnabled: setupConfig.gameStoryboardAutoGenerationEnabled === true,
+      gameStoryboardKeyframeCount: storyboardKeyframeCount,
+      gameGmPromptTemplateId: setupConfig.gameGmPromptTemplateId || null,
+      gameStoryboardAnimationPromptTemplateId: setupConfig.gameStoryboardAnimationPromptTemplateId || null,
+      gameStoryboardVideoPromptTemplateId: setupConfig.gameStoryboardVideoPromptTemplateId || null,
+      gameStoryboardUseDirectScenePrompt: setupConfig.gameStoryboardUseDirectScenePrompt === true,
       gameLastSceneVideoId: null,
       activeLorebookIds: setupConfig.activeLorebookIds || [],
       enableCustomWidgets: setupConfig.enableCustomWidgets !== false,

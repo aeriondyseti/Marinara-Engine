@@ -39,6 +39,24 @@ export type SpeakerPrefixMessage = SimpleMessage & {
   providerMetadata?: Record<string, unknown>;
 };
 export type StoredGenerationParameters = Partial<GenerationParameters>;
+
+/**
+ * Resolve the persona visible to a chat. An explicit chat persona always wins;
+ * non-game chats may fall back to the globally active persona, while Game Mode
+ * deliberately remains persona-less unless setup selected one.
+ */
+export function resolveActivePersonaCandidate<T extends { id: string; isActive?: unknown }>(
+  personas: readonly T[],
+  chatPersonaId: string | null | undefined,
+  chatMode: string | null | undefined,
+): T | null {
+  return (
+    (chatPersonaId ? personas.find((persona) => persona.id === chatPersonaId) : null) ??
+    (chatMode !== "game" ? personas.find((persona) => persona.isActive === "true") : null) ??
+    null
+  );
+}
+
 export type LocalSidecarGenerationConnection = {
   id: typeof LOCAL_SIDECAR_CONNECTION_ID;
   name: string;

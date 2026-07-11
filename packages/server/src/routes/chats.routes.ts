@@ -72,6 +72,7 @@ import {
   isMessageHiddenFromAI,
   resolveBaseUrl,
   resolveActiveCharacterIds,
+  resolveActivePersonaCandidate,
   resolveVisibleGameStateAnchor,
   shouldEnableAgentsForGeneration,
   formatConversationInstructionsForWrap,
@@ -332,13 +333,16 @@ function cardPromptText(value: unknown): string {
   return typeof value === "string" ? stripMacroComments(value).trim() : "";
 }
 
-async function buildPersonaSnapshotForChat(app: FastifyInstance, chat: { personaId?: string | null } | null) {
+async function buildPersonaSnapshotForChat(
+  app: FastifyInstance,
+  chat: { personaId?: string | null; mode?: string | null } | null,
+) {
   const charactersStore = createCharactersStorage(app.db);
   const personas = await charactersStore.listPersonas();
   const chatPersonaId = chat?.personaId ?? null;
-  const persona =
-    (chatPersonaId ? personas.find((candidate) => candidate.id === chatPersonaId) : null) ??
-    personas.find((candidate) => candidate.isActive === "true");
+  // Game mode skips the active-persona fallback — persona must be explicitly
+  // selected in the setup wizard (mirrors generate.routes.ts persona resolution).
+  const persona = resolveActivePersonaCandidate(personas, chatPersonaId, chat?.mode);
 
   if (!persona) return null;
 
@@ -1545,9 +1549,7 @@ export async function chatsRoutes(app: FastifyInstance) {
     }
 
     const personas = await charactersStore.listPersonas();
-    const persona =
-      (chat.personaId ? personas.find((candidate) => candidate.id === chat.personaId) : null) ??
-      personas.find((candidate) => candidate.isActive === "true");
+    const persona = resolveActivePersonaCandidate(personas, chat.personaId, chat.mode);
     const userName = persona?.name ?? "User";
 
     const embeddingSource = await resolveMemoryRecallEmbeddingSource(app.db, {
@@ -2062,9 +2064,7 @@ export async function chatsRoutes(app: FastifyInstance) {
           let personaDescription = "";
           let personaFields: Record<string, string> = {};
           const allPersonas = await charStore.listPersonas();
-          const persona =
-            (chat.personaId ? allPersonas.find((p: any) => p.id === chat.personaId) : null) ??
-            allPersonas.find((p: any) => p.isActive === "true");
+          const persona = resolveActivePersonaCandidate(allPersonas, chat.personaId, chat.mode as string);
           if (persona) {
             personaId = persona.id as string;
             personaName = persona.name;

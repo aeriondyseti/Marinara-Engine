@@ -54,7 +54,7 @@ A small group of low-level settings are locked in when the server starts. Changi
 - `LOG_DISABLE_REQUEST_LOGGING`
 - The image, video, sprite, and ComfyUI timeout and poll settings (`IMAGE_GEN_TIMEOUT_MS`, `VIDEO_GEN_TIMEOUT_MS`, `VIDEO_GEN_MAX_RESPONSE_BYTES`, `SPRITE_GENERATION_TIMEOUT_MS`, `COMFYUI_GEN_TIMEOUT`, and the four `*_VIDEO_POLL_INTERVAL_MS` settings)
 
-When one of these changes, the log warns that a restart is required. The one exception is `SPRITE_GENERATION_TIMEOUT_MS`. It still needs a restart, but the log does not warn you. Access-control settings and secrets like `BASIC_AUTH_USER`, `BASIC_AUTH_PASS`, `IP_ALLOWLIST`, `ADMIN_SECRET`, and `CSRF_TRUSTED_ORIGINS` do not need a restart.
+When one of these changes, the log warns that a restart is required. Access-control settings and secrets like `BASIC_AUTH_USER`, `BASIC_AUTH_PASS`, `IP_ALLOWLIST`, `ADMIN_SECRET`, and `CSRF_TRUSTED_ORIGINS` do not need a restart.
 
 ## Access control
 
