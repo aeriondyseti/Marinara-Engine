@@ -19,7 +19,7 @@ export const DEFAULT_NOODLE_SETTINGS = {
   maxRepliesPerRefresh: 12,
   maxRepostsPerRefresh: 4,
   maxLikesPerRefresh: 18,
-  maxImagePromptsPerDay: 3,
+  maxImagesPerRefresh: 3,
   enableImagePrompts: false,
   imageGenerationConnectionId: null,
   imageGenerationPrompt:
@@ -53,7 +53,7 @@ export const noodleSettingsSchema = z.object({
   maxRepliesPerRefresh: z.number().int().min(0).max(200).default(DEFAULT_NOODLE_SETTINGS.maxRepliesPerRefresh),
   maxRepostsPerRefresh: z.number().int().min(0).max(100).default(DEFAULT_NOODLE_SETTINGS.maxRepostsPerRefresh),
   maxLikesPerRefresh: z.number().int().min(0).max(500).default(DEFAULT_NOODLE_SETTINGS.maxLikesPerRefresh),
-  maxImagePromptsPerDay: z.number().int().min(0).max(50).default(DEFAULT_NOODLE_SETTINGS.maxImagePromptsPerDay),
+  maxImagesPerRefresh: z.number().int().min(0).max(50).default(DEFAULT_NOODLE_SETTINGS.maxImagesPerRefresh),
   enableImagePrompts: z.boolean().default(DEFAULT_NOODLE_SETTINGS.enableImagePrompts),
   imageGenerationConnectionId: z
     .string()

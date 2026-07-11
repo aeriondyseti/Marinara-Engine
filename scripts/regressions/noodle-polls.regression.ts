@@ -3,7 +3,12 @@ import {
   noodleGeneratedRefreshSchema,
   noodlePollInputSchema,
 } from "../../packages/shared/src/schemas/noodle.schema.js";
-import { createNoodlePoll, readNoodlePollFromMetadata } from "../../packages/shared/src/utils/noodle-polls.js";
+import {
+  createNoodlePoll,
+  mergeNoodlePollVoteInteractions,
+  readNoodlePollFromMetadata,
+} from "../../packages/shared/src/utils/noodle-polls.js";
+import type { NoodleInteraction, NoodlePost } from "../../packages/shared/src/types/noodle.js";
 
 const poll = createNoodlePoll({ question: "  Best pasta? ", options: [" Penne ", "Farfalle", "Gnocchi"] });
 assert.ok(poll);
@@ -13,6 +18,38 @@ assert.deepEqual(
   ["option-1", "option-2", "option-3"],
 );
 assert.equal(readNoodlePollFromMetadata({ poll })?.options[1]?.label, "Farfalle");
+
+const pollPost = {
+  id: "older-poll",
+  metadata: { poll },
+} as NoodlePost;
+const persistedVote = {
+  id: "vote-1",
+  postId: pollPost.id,
+  parentInteractionId: null,
+  actorAccountId: "account-1",
+  type: "vote",
+  content: poll.options[1]?.id ?? null,
+  imageUrl: null,
+  actorSnapshot: null,
+  createdAt: "2026-07-01T00:00:00.000Z",
+} satisfies NoodleInteraction;
+assert.deepEqual(
+  mergeNoodlePollVoteInteractions([persistedVote], [pollPost], []),
+  [persistedVote],
+  "a temporarily incomplete refresh snapshot should retain a valid older poll vote",
+);
+const changedVote = { ...persistedVote, content: poll.options[2]?.id ?? null };
+assert.deepEqual(
+  mergeNoodlePollVoteInteractions([persistedVote], [pollPost], [changedVote]),
+  [changedVote],
+  "the server's newer vote for the same account should remain authoritative",
+);
+assert.deepEqual(
+  mergeNoodlePollVoteInteractions([persistedVote], [], []),
+  [],
+  "votes must not resurrect a poll removed from the new snapshot",
+);
 assert.equal(noodlePollInputSchema.safeParse({ question: "Pick", options: ["Same", "same"] }).success, false);
 assert.equal(noodlePollInputSchema.safeParse({ question: "Pick", options: ["Only one"] }).success, false);
 

@@ -31,7 +31,7 @@ export interface NoodleSettings {
   maxRepliesPerRefresh: number;
   maxRepostsPerRefresh: number;
   maxLikesPerRefresh: number;
-  maxImagePromptsPerDay: number;
+  maxImagesPerRefresh: number;
   enableImagePrompts: boolean;
   imageGenerationConnectionId: string | null;
   imageGenerationPrompt: string;

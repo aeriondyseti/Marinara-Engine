@@ -57,8 +57,10 @@ import {
   rescheduleNoodleRefreshTime,
 } from "../services/noodle/noodle-refresh-schedule.js";
 import { NOODLE_JSON_OUTPUT_HEADING, noodleResponseFormat } from "../services/noodle/noodle-response-format.js";
+import { generateNoodleImageWithRetry } from "../services/noodle/noodle-image-retry.js";
 import {
   canGenerateNoodleActivityForAccountKind,
+  collectNoodlePromptImageCandidates,
   formatNoodleTimelineForPrompt,
   noodlePastMemoryCutoff,
   noodlePastMemorySampleSize,
@@ -68,6 +70,11 @@ import {
   noodleTimelineFeatureInstructions,
   sampleNoodlePastMemories,
 } from "../services/noodle/noodle-prompt.js";
+import {
+  formatNoodleVisionManifest,
+  isUnsupportedNoodleVisionInputError,
+  prepareNoodleVisionAttachments,
+} from "../services/noodle/noodle-vision.js";
 
 const NOODLE_ROUTE_DIR = dirname(fileURLToPath(import.meta.url));
 const CLIENT_PUBLIC_DIR = resolve(NOODLE_ROUTE_DIR, "../../../client/public");
@@ -129,13 +136,6 @@ function getErrorMessage(error: unknown): string {
 
 const NOODLE_ADULT_PLATFORM_POLICY =
   "Noodle only accepts confirmed adult accounts and personas. Every participant on Noodle is 18+; minors are not allowed on the platform. NSFW content is allowed, anything goes, and adult in-character drama, flirtation, gossip, and explicit references may appear when they fit the accounts involved.";
-
-function dayStartIso(offsetDays = 0) {
-  const d = new Date();
-  d.setDate(d.getDate() + offsetDays);
-  d.setHours(0, 0, 0, 0);
-  return d.toISOString();
-}
 
 function sinceHoursIso(hours: number) {
   return new Date(Date.now() - Math.max(1, hours) * 60 * 60 * 1000).toISOString();
@@ -673,54 +673,72 @@ async function buildRefreshPrompt(input: {
     "- Return JSON only. No prose outside the JSON object.",
   ].join("\n");
 
-  const context = [
-    "# Active Noodle Accounts",
-    activeAccountList || "No active accounts.",
-    "",
-    "# User Persona",
-    personaContext,
-    "",
-    "# Character Profiles",
-    characterContext || "No character profiles.",
-    "",
-    "# Random User Profiles",
-    randomUserContext || "Random users are disabled for this refresh.",
-    "",
-    "# Opted-In Chat Context",
-    "Only chats whose Chat Settings allow Noodle references are included here.",
-    chatContext,
-    "",
-    "# Recent Noodle Timeline",
-    "Recent persona comments are especially relevant. Characters may naturally respond to them by using the comment replyId as parentInteractionId.",
-    formatNoodleTimelineForPrompt(recentPosts, recentInteractions, {
+  const visionAttachments = await prepareNoodleVisionAttachments([
+    ...collectNoodlePromptImageCandidates(recentPosts, recentInteractions, {
       priorityActorAccountId: input.personaAccount?.id,
     }),
-    ...(recalledPosts.length > 0
-      ? [
-          "",
-          "# Randomly Recalled Older Noodle Activity",
-          "These posts are more than 48 hours old and are optional long-term memories. Active accounts may naturally remember, revisit, like, repost, reply to, or build on them, but do not force a reference.",
-          formatNoodleTimelineForPrompt(recalledPosts, recalledInteractions, {
-            emptyMessage: "No older Noodle activity was recalled.",
-            includeTimestamp: true,
-            priorityActorAccountId: input.personaAccount?.id,
-          }),
-        ]
-      : []),
-    "",
-    "# Quotas",
-    `posts: at most ${input.settings.maxGeneratedPostsPerRefresh}`,
-    `replies: at most ${input.settings.maxRepliesPerRefresh}`,
-    `reposts: at most ${input.settings.maxRepostsPerRefresh}`,
-    `likes: at most ${input.settings.maxLikesPerRefresh}`,
-    "follows: optional; use sparingly when an account would naturally follow another active account after today's public activity.",
-    input.settings.enableImagePrompts
-      ? `image generation: at most ${input.settings.maxImagePromptsPerDay} images today; imagePrompt may request either a character image or a meme. For character images, describe concrete appearance, build, clothing, and scene composition. For memes, describe the meme format, visual gag, intended caption/text if any, and why it fits the author's personality.`
-      : "image generation: disabled; omit imagePrompt or return null.",
-    input.settings.allowGalleryImageAttachments
-      ? "gallery attachments: enabled; you may set attachGalleryImage true on posts that should reuse existing character/chat gallery media."
-      : "gallery attachments: disabled; set attachGalleryImage false or omit it.",
-  ].join("\n");
+    ...collectNoodlePromptImageCandidates(recalledPosts, recalledInteractions, {
+      priorityActorAccountId: input.personaAccount?.id,
+    }),
+  ]);
+  const attachedImageKeys = new Set(visionAttachments.map((attachment) => attachment.key));
+  const visionManifest = formatNoodleVisionManifest(visionAttachments);
+
+  const buildContext = (imageKeys: ReadonlySet<string>, imageManifest: string) =>
+    [
+      "# Active Noodle Accounts",
+      activeAccountList || "No active accounts.",
+      "",
+      "# User Persona",
+      personaContext,
+      "",
+      "# Character Profiles",
+      characterContext || "No character profiles.",
+      "",
+      "# Random User Profiles",
+      randomUserContext || "Random users are disabled for this refresh.",
+      "",
+      "# Opted-In Chat Context",
+      "Only chats whose Chat Settings allow Noodle references are included here.",
+      chatContext,
+      "",
+      "# Recent Noodle Timeline",
+      "Recent persona comments are especially relevant. Characters may naturally respond to them by using the comment replyId as parentInteractionId.",
+      formatNoodleTimelineForPrompt(recentPosts, recentInteractions, {
+        priorityActorAccountId: input.personaAccount?.id,
+        attachedImageKeys: imageKeys,
+      }),
+      ...(recalledPosts.length > 0
+        ? [
+            "",
+            "# Randomly Recalled Older Noodle Activity",
+            "These posts are more than 48 hours old and are optional long-term memories. Active accounts may naturally remember, revisit, like, repost, reply to, or build on them, but do not force a reference.",
+            formatNoodleTimelineForPrompt(recalledPosts, recalledInteractions, {
+              emptyMessage: "No older Noodle activity was recalled.",
+              includeTimestamp: true,
+              priorityActorAccountId: input.personaAccount?.id,
+              attachedImageKeys: imageKeys,
+            }),
+          ]
+        : []),
+      ...(imageManifest ? ["", imageManifest] : []),
+      "",
+      "# Quotas",
+      `posts: at most ${input.settings.maxGeneratedPostsPerRefresh}`,
+      `replies: at most ${input.settings.maxRepliesPerRefresh}`,
+      `reposts: at most ${input.settings.maxRepostsPerRefresh}`,
+      `likes: at most ${input.settings.maxLikesPerRefresh}`,
+      "follows: optional; use sparingly when an account would naturally follow another active account after today's public activity.",
+      input.settings.enableImagePrompts
+        ? `image generation: at most ${input.settings.maxImagesPerRefresh} images this refresh; imagePrompt may request either a character image or a meme. For character images, describe concrete appearance, build, clothing, and scene composition. For memes, describe the meme format, visual gag, intended caption/text if any, and why it fits the author's personality.`
+        : "image generation: disabled; omit imagePrompt or return null.",
+      input.settings.allowGalleryImageAttachments
+        ? "gallery attachments: enabled; you may set attachGalleryImage true on posts that should reuse existing character/chat gallery media."
+        : "gallery attachments: disabled; set attachGalleryImage false or omit it.",
+    ].join("\n");
+
+  const context = buildContext(attachedImageKeys, visionManifest);
+  const textOnlyContext = buildContext(new Set(), "");
 
   const outputFormat = [
     NOODLE_JSON_OUTPUT_HEADING,
@@ -759,13 +777,26 @@ async function buildRefreshPrompt(input: {
     ),
   ].join("\n");
 
+  const messages = [
+    { role: "system" as const, content: system },
+    {
+      role: "user" as const,
+      content: context,
+      ...(visionAttachments.length > 0 ? { images: visionAttachments.map((attachment) => attachment.dataUrl) } : {}),
+    },
+    { role: "user" as const, content: outputFormat },
+  ] satisfies ChatMessage[];
+  const textOnlyMessages = [
+    { role: "system" as const, content: system },
+    { role: "user" as const, content: textOnlyContext },
+    { role: "user" as const, content: outputFormat },
+  ] satisfies ChatMessage[];
   return {
-    messages: [
-      { role: "system" as const, content: system },
-      { role: "user" as const, content: context },
-      { role: "user" as const, content: outputFormat },
-    ] satisfies ChatMessage[],
-    promptForLog: `${system}\n\n${context}\n\n${outputFormat}`,
+    messages,
+    textOnlyMessages,
+    promptForLog: `${system}\n\n${context}\n\n${outputFormat}\n\n[${visionAttachments.length} Noodle timeline image input(s) attached]`,
+    textOnlyPromptForLog: `${system}\n\n${textOnlyContext}\n\n${outputFormat}`,
+    visionAttachmentCount: visionAttachments.length,
     recalledPostIds: recalledPosts.map((post) => post.id),
   };
 }
@@ -993,17 +1024,29 @@ async function generateNoodlePostImage(input: {
     };
   }
 
-  const image = await generateImage(imageSource, imageBaseUrl, input.imageConnection.apiKey || "", imageServiceHint, {
-    prompt: finalPrompt,
-    negativePrompt: finalNegativePrompt,
-    model: imageModel,
-    width: imageSettings.illustration.width,
-    height: imageSettings.illustration.height,
-    imageEndpointId: input.imageConnection.imageEndpointId || undefined,
-    comfyWorkflow: input.imageConnection.comfyuiWorkflow || undefined,
-    imageDefaults,
-    referenceImages,
-  });
+  const image = await generateNoodleImageWithRetry(
+    () =>
+      generateImage(imageSource, imageBaseUrl, input.imageConnection.apiKey || "", imageServiceHint, {
+        prompt: finalPrompt,
+        negativePrompt: finalNegativePrompt,
+        model: imageModel,
+        width: imageSettings.illustration.width,
+        height: imageSettings.illustration.height,
+        imageEndpointId: input.imageConnection.imageEndpointId || undefined,
+        comfyWorkflow: input.imageConnection.comfyuiWorkflow || undefined,
+        imageDefaults,
+        referenceImages,
+      }),
+    (error, attempt, maxAttempts) => {
+      logger.warn(
+        error,
+        "[noodle] Image generation attempt %d/%d failed for %s",
+        attempt,
+        maxAttempts,
+        input.account.displayName,
+      );
+    },
+  );
   const provider = input.imageConnection.provider ?? "image_generation";
   if (input.account.kind === "character") {
     const filePath = saveImageToDisk(`characters/${input.account.entityId}`, image.base64, image.ext);
@@ -1398,6 +1441,8 @@ export async function noodleRoutes(app: FastifyInstance) {
       } catch (error) {
         logger.warn(error, "[noodle] Failed to generate reviewed image for %s", account.displayName);
         await noodle.updatePostMedia(post.id, {
+          imageUrl: null,
+          imagePrompt: null,
           metadata: {
             imageGenerationFailed: true,
             imageGenerationError: getErrorMessage(error).slice(0, 500),
@@ -1481,7 +1526,14 @@ export async function noodleRoutes(app: FastifyInstance) {
       }
 
       const activeAccounts = [...selectedParticipants, ...(personaAccount ? [personaAccount] : [])];
-      const { messages, promptForLog, recalledPostIds } = await buildRefreshPrompt({
+      const {
+        messages,
+        textOnlyMessages,
+        promptForLog,
+        textOnlyPromptForLog,
+        visionAttachmentCount,
+        recalledPostIds,
+      } = await buildRefreshPrompt({
         noodle,
         characters,
         chats,
@@ -1490,6 +1542,13 @@ export async function noodleRoutes(app: FastifyInstance) {
         settings,
       });
       logDebugOverride(debugMode, "[debug/noodle] Prompt sent to model:\n%s", promptForLog);
+      if (visionAttachmentCount > 0) {
+        logDebugOverride(
+          debugMode,
+          "[debug/noodle] Attached %d timeline image input(s) to the refresh prompt",
+          visionAttachmentCount,
+        );
+      }
       run = await noodle.createRefreshRun({
         activeAccountIds: activeAccounts.map((account) => account.id),
         prompt: promptForLog,
@@ -1503,7 +1562,7 @@ export async function noodleRoutes(app: FastifyInstance) {
         ),
         maxTokensOverride: conn.maxTokensOverride,
       });
-      const result = await provider.chatComplete(messages, {
+      const completionOptions = {
         model: conn.model,
         maxTokens: timelineMaxTokens,
         temperature: 0.9,
@@ -1511,7 +1570,23 @@ export async function noodleRoutes(app: FastifyInstance) {
         stream: false,
         debugMode,
         responseFormat: noodleResponseFormat(conn.model, "timeline"),
-      });
+      } as const;
+      let result: Awaited<ReturnType<typeof provider.chatComplete>>;
+      try {
+        result = await provider.chatComplete(messages, completionOptions);
+      } catch (error) {
+        if (visionAttachmentCount === 0 || !isUnsupportedNoodleVisionInputError(error)) throw error;
+        logger.warn(
+          error,
+          "[noodle/vision] The selected timeline model rejected image input; retrying the refresh as text-only",
+        );
+        logDebugOverride(
+          debugMode,
+          "[debug/noodle] Text-only fallback prompt sent to model:\n%s",
+          textOnlyPromptForLog,
+        );
+        result = await provider.chatComplete(textOnlyMessages, completionOptions);
+      }
       const content = result.content ?? "";
       const generated = noodleGeneratedRefreshSchema.parse(parseGameJsonish(content));
       const entityToAccount = new Map(activeAccounts.map((account) => [account.entityId, account]));
@@ -1526,10 +1601,7 @@ export async function noodleRoutes(app: FastifyInstance) {
           interaction,
         ]),
       );
-      const todayPosts = await noodle.listPosts({ since: dayStartIso(), limit: 200 });
-      let remainingImagePrompts = settings.enableImagePrompts
-        ? Math.max(0, settings.maxImagePromptsPerDay - todayPosts.filter((post) => !!post.imagePrompt).length)
-        : 0;
+      let remainingImagePrompts = settings.enableImagePrompts ? settings.maxImagesPerRefresh : 0;
       const tempIdToPostId = new Map<string, string>();
       const createdPostIds: string[] = [];
       const imagePromptReviewItems: Array<{
@@ -1553,8 +1625,10 @@ export async function noodleRoutes(app: FastifyInstance) {
         const imagePrompt =
           remainingImagePrompts > 0 && generatedPost.imagePrompt?.trim() ? generatedPost.imagePrompt.trim() : null;
         if (imagePrompt) remainingImagePrompts -= 1;
+        let persistedImagePrompt = imagePrompt;
         let imageUrl: string | null = null;
         const mediaMetadata: Record<string, unknown> = {};
+        let imageGenerationFailed = false;
         let imagePromptPreview: Omit<(typeof imagePromptReviewItems)[number], "id"> | null = null;
         if (imagePrompt && imageConnection) {
           try {
@@ -1577,11 +1651,24 @@ export async function noodleRoutes(app: FastifyInstance) {
             imagePromptPreview = generatedImage.preview;
           } catch (err) {
             logger.warn(err, "[noodle] Failed to generate image for %s", account.displayName);
+            persistedImagePrompt = null;
+            imageGenerationFailed = true;
             mediaMetadata.imageGenerationFailed = true;
             mediaMetadata.imageGenerationError = getErrorMessage(err).slice(0, 500);
           }
+        } else if (imagePrompt) {
+          persistedImagePrompt = null;
+          imageGenerationFailed = true;
+          mediaMetadata.imageGenerationFailed = true;
+          mediaMetadata.imageGenerationError = "No image generation connection is configured.";
         }
-        if (!imageUrl && settings.allowGalleryImageAttachments && generatedPost.attachGalleryImage === true) {
+        if (
+          !imageUrl &&
+          !imagePromptPreview &&
+          !imageGenerationFailed &&
+          settings.allowGalleryImageAttachments &&
+          generatedPost.attachGalleryImage === true
+        ) {
           try {
             const attachment = await pickGalleryAttachmentForAccount({ account, chats, gallery, characterGallery });
             if (attachment) {
@@ -1597,7 +1684,7 @@ export async function noodleRoutes(app: FastifyInstance) {
         const post = await noodle.createPost({
           authorAccountId: account.id,
           content: generatedPost.content,
-          imagePrompt,
+          imagePrompt: persistedImagePrompt,
           imageUrl,
           source: "generated",
           metadata: {

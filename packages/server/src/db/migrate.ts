@@ -1397,6 +1397,15 @@ export async function runMigrations(db: DB) {
     sql.raw(`CREATE INDEX IF NOT EXISTS idx_noodle_posts_author ON noodle_posts(author_account_id, created_at DESC)`),
   );
   await db.run(
+    sql.raw(`
+      UPDATE noodle_posts
+      SET image_prompt = NULL
+      WHERE image_url IS NULL
+        AND image_prompt IS NOT NULL
+        AND metadata LIKE '%"imageGenerationFailed":true%'
+    `),
+  );
+  await db.run(
     sql.raw(`CREATE INDEX IF NOT EXISTS idx_noodle_interactions_post ON noodle_interactions(post_id, created_at ASC)`),
   );
   await db.run(sql.raw(`DROP INDEX IF EXISTS uniq_noodle_toggle_interactions`));

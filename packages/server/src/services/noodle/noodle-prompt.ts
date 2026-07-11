@@ -28,7 +28,14 @@ type NoodleTimelineFeatureSettings = Pick<
 type RandomSource = () => number;
 type NoodlePromptPost = Pick<
   NoodlePost,
-  "id" | "authorAccountId" | "authorSnapshot" | "content" | "imagePrompt" | "metadata" | "createdAt"
+  | "id"
+  | "authorAccountId"
+  | "authorSnapshot"
+  | "content"
+  | "imageUrl"
+  | "imagePrompt"
+  | "metadata"
+  | "createdAt"
 >;
 type NoodlePromptInteraction = Pick<
   NoodleInteraction,
@@ -44,6 +51,22 @@ type NoodlePromptInteraction = Pick<
 >;
 
 const NOODLE_PROMPT_REPLIES_PER_POST = 12;
+
+export interface NoodlePromptImageCandidate {
+  key: string;
+  imageUrl: string;
+  postId: string;
+  interactionId: string | null;
+  createdAt: string;
+}
+
+export function noodlePostImageKey(postId: string): string {
+  return `noodle-post-image:${postId}`;
+}
+
+export function noodleReplyImageKey(interactionId: string): string {
+  return `noodle-reply-image:${interactionId}`;
+}
 
 export function canGenerateNoodleActivityForAccountKind(kind: NoodleAccountKind): boolean {
   return kind === "character" || kind === "random_user";
@@ -83,10 +106,45 @@ function promptRepliesForPost(
   );
 }
 
+export function collectNoodlePromptImageCandidates(
+  posts: NoodlePromptPost[],
+  interactions: NoodlePromptInteraction[],
+  options: { priorityActorAccountId?: string } = {},
+): NoodlePromptImageCandidate[] {
+  const candidates: NoodlePromptImageCandidate[] = [];
+  for (const post of posts) {
+    if (post.imageUrl) {
+      candidates.push({
+        key: noodlePostImageKey(post.id),
+        imageUrl: post.imageUrl,
+        postId: post.id,
+        interactionId: null,
+        createdAt: post.createdAt,
+      });
+    }
+    for (const reply of promptRepliesForPost(interactions, post.id, options.priorityActorAccountId)) {
+      if (!reply.imageUrl) continue;
+      candidates.push({
+        key: noodleReplyImageKey(reply.id),
+        imageUrl: reply.imageUrl,
+        postId: post.id,
+        interactionId: reply.id,
+        createdAt: reply.createdAt,
+      });
+    }
+  }
+  return candidates;
+}
+
 export function formatNoodleTimelineForPrompt(
   posts: NoodlePromptPost[],
   interactions: NoodlePromptInteraction[],
-  options: { emptyMessage?: string; includeTimestamp?: boolean; priorityActorAccountId?: string } = {},
+  options: {
+    emptyMessage?: string;
+    includeTimestamp?: boolean;
+    priorityActorAccountId?: string;
+    attachedImageKeys?: ReadonlySet<string>;
+  } = {},
 ) {
   if (posts.length === 0) return options.emptyMessage ?? "No recent Noodle posts.";
   return posts
@@ -111,13 +169,29 @@ export function formatNoodleTimelineForPrompt(
         const replyAuthor = reply.actorSnapshot?.displayName ?? reply.actorAccountId;
         const replyHandle = reply.actorSnapshot?.handle ? ` (@${reply.actorSnapshot.handle})` : "";
         const parent = reply.parentInteractionId ? ` parentReplyId=${reply.parentInteractionId}` : "";
-        return `  - replyId=${reply.id}${parent} by ${replyAuthor}${replyHandle} at ${reply.createdAt}: ${
-          reply.content || (reply.imageUrl ? "[image reply]" : "[empty reply]")
+        const imageKey = noodleReplyImageKey(reply.id);
+        const imageAttached = options.attachedImageKeys?.has(imageKey) === true;
+        const replyBody =
+          reply.content || (imageAttached ? "[image]" : reply.imageUrl ? "[image reply]" : "[empty reply]");
+        return `  - replyId=${reply.id}${parent} by ${replyAuthor}${replyHandle} at ${reply.createdAt}: ${replyBody}${
+          imageAttached
+            ? ` [attached image: ${imageKey}]`
+            : reply.imageUrl && reply.content
+              ? " [image not attached]"
+              : ""
         }`;
       });
+      const postImageKey = noodlePostImageKey(post.id);
+      const postImageAttached = options.attachedImageKeys?.has(postImageKey) === true;
       return [
         `- ${post.id} by ${author}${timestamp}: ${post.content}${pollSummary}${
-          post.imagePrompt ? ` [image prompt: ${post.imagePrompt}]` : ""
+          postImageAttached
+            ? ` [attached image: ${postImageKey}]`
+            : post.imagePrompt
+              ? ` [image prompt: ${post.imagePrompt}]`
+              : post.imageUrl
+                ? " [image not attached]"
+                : ""
         }`,
         ...replyLines,
       ].join("\n");

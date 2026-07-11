@@ -6,6 +6,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Added
 
+- Added native multimodal Noodle timeline context: refresh models can now inspect images attached to recent posts and comments, with deterministic post/reply labels, bounded image inputs, and an automatic text-only fallback for models that reject vision content.
 - Added per-turn **Peek Prompt** actions to Game Mode Logs and **History Above Dialogue Box**, opening the exact cached prompt that was actually sent for that historical GM turn.
 - Added read-only replay for completed Game Mode sessions from Session History, including click-through narration, stored presentation cues, and deterministic choice forks that only permit the option selected during the original session (#3465).
 - Added a selectable **Comic Page Video** prompt for storyboard clips that interprets comic and manga panels as duration-aware ordered animation beats without changing the shared Game Video Prompt.
@@ -29,6 +30,7 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Changed
 
+- Changed Noodle's generated-image quota from a daily cap to **Images/refresh**, applied independently to every manual and automatic timeline refresh while preserving each user's saved limit.
 - Added a separate **Comic Page Animation** storyboard prompt with clip-duration panel budgets, causal panel order, continuity guidance, and timed motion direction while preserving the original **Comic Page** illustration prompt.
 - Refined comic storyboard animations from output review: Gemini Omni now receives complete untruncated prompt components, six-second pages may use a simple third beat without overcrowding, animation pages minimize lettering and repeated cast members, full-page establishes cannot reveal later consequences early, and clips reserve a final hold.
 - Changed storyboard videos to play once and hold on their final frame instead of looping. Background mode now starts each story beat's clip once with sound, lets narration display while it plays, waits before narration auto-advances, and exposes replay, play/pause, and mute controls in the desktop and mobile game toolbar.
@@ -42,6 +44,11 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Fixed
 
+- Fixed Noodle setting controls reverting to an earlier snapshot by serializing saves, keeping the edited value optimistic while the request completes, and returning the value re-read from persistent storage.
+- Preserved stored votes on older Noodle polls when manual or automatic refresh hydration briefly returns an incomplete interaction snapshot.
+
+- Fixed persona-authored Noodle comments bumping their target posts to the top of the timeline; a post now moves up only when another account directly responds to the active persona's comment.
+- Fixed failed Noodle image generations leaving a visible image prompt in place of the missing picture; Noodle now retries the image provider once, then publishes a clean text-only post if the second attempt also fails and clears orphan prompts from earlier failed posts.
 - Fixed provider concurrency-limit failures being reduced to generic agent errors or omitted from generation guidance; affected toasts now identify the concurrency limit and include the provider's message.
 - Fixed new Roleplay chats opening without character greetings because initial character assignment inserted a hidden join notice before greeting seeding (#3472).
 - Fixed the regex safety validator rejecting linear delimiter-bounded field patterns such as `([^|]+)\|([^|]+)\|([^|]+)` as polynomial backtracking risks while retaining rejection of overlapping broad-unbounded chains (#3471).

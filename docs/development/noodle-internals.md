@@ -13,6 +13,7 @@ Noodle currently has two inline text-generation prompts and one registered image
 | Generated post image prompt                                 | `packages/server/src/services/prompt-overrides/registry/noodle.ts` | `NOODLE_IMAGE_POST` (`noodle.imagePost`)        | Edit **Settings -> Generations -> Image Generation Prompt Overrides -> Noodle Post Image**, or change the registered default in code. |
 | Default Noodle-specific image instructions                  | `packages/shared/src/schemas/noodle.schema.ts`                     | `DEFAULT_NOODLE_SETTINGS.imageGenerationPrompt` | Change the Noodle setting in the UI or its schema default in code.                                                                    |
 | Opted-in chat context inserted into timeline generation     | `packages/server/src/routes/noodle.routes.ts`                      | `buildOptedInChatContext()`                     | Change the context assembly in code; user opt-in remains in each chat's settings.                                                     |
+| Timeline post and reply image inputs                        | `packages/server/src/services/noodle/noodle-vision.ts`             | `prepareNoodleVisionAttachments()`              | Change image selection, normalization, limits, or text-only compatibility fallback in code.                                          |
 | Noodle activity inserted into chat prompts                  | `packages/server/src/services/noodle/noodle-context.ts`            | `buildRecentSocialMediaActivityBlock()`         | Change filtering or block assembly in code; users control target modes and limits in Noodle Settings.                                 |
 | Generated JSON contract                                     | `packages/shared/src/schemas/noodle.schema.ts`                     | `noodleGeneratedRefreshSchema`                  | Change only alongside the prompt, route processing, shared types, and regression coverage.                                            |
 
@@ -27,7 +28,10 @@ A manual refresh requested with Debug Mode enabled logs the final profile and ti
 ```text
 [debug/noodle] Profile prompt sent to model
 [debug/noodle] Prompt sent to model
+[debug/noodle] Attached N timeline image input(s) to the refresh prompt
 ```
+
+Timeline image payloads are never written as base64 in debug logs. The logged text contains the same post/reply attachment keys sent to the model plus the number of native image inputs. Noodle normalizes and caps these inputs in `noodle-vision.ts`. If a provider explicitly rejects vision content, the route logs and sends the assembled text-only fallback prompt instead.
 
 For images, enable **Expose image prompts before sending** under **Settings -> Generations -> Image Generation** to inspect and edit the final compiled positive and negative prompts before the request is sent.
 
@@ -38,6 +42,7 @@ Prompt assembly is a high-risk compatibility boundary. When editing it, keep the
 ```bash
 pnpm check
 pnpm regression:prompt
+pnpm regression:noodle
 ```
 
 ## Related guides

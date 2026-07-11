@@ -487,6 +487,128 @@ test("Noodle interface icons consistently use Noodle blue", async ({ page }, tes
   expect(errors).toEqual([]);
 });
 
+test("Noodle settings persist through refetch and reload", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "Noodle settings persistence is covered on desktop.");
+
+  const initialResponse = await page.request.get("/api/noodle");
+  expect(initialResponse.ok()).toBe(true);
+  const initial = (await initialResponse.json()) as {
+    settings: {
+      enableImagePrompts: boolean;
+      maxImagesPerRefresh: number;
+      allowRandomUsers: boolean;
+      carryoverMaxItems: number;
+      refreshesPerDay: number;
+    };
+  };
+  const nextImageLimit = initial.settings.maxImagesPerRefresh === 9 ? 8 : 9;
+  const nextRandomUsers = !initial.settings.allowRandomUsers;
+  const nextCarryItems = initial.settings.carryoverMaxItems === 10 ? 9 : 10;
+  const nextRefreshesPerDay = initial.settings.refreshesPerDay === 3 ? 4 : 3;
+
+  const enableImagesResponse = await page.request.put("/api/noodle/settings", {
+    data: { enableImagePrompts: true },
+  });
+  expect(enableImagesResponse.ok()).toBe(true);
+  const enabledSettings = (await enableImagesResponse.json()) as typeof initial.settings;
+  expect(enabledSettings.enableImagePrompts).toBe(true);
+
+  try {
+    await page.goto("/");
+    await page.locator('[data-tour="noodle-tab"]').click();
+    const noodle = page.locator('[data-component="NoodleView"]');
+    await noodle.getByRole("button", { name: "Settings", exact: true }).click();
+
+    const imageLimitInput = noodle
+      .locator("label")
+      .filter({ hasText: "Images/refresh" })
+      .locator('input[type="number"]');
+    await expect(imageLimitInput).toBeVisible();
+    const imageSaveResponse = page.waitForResponse(
+      (response) => response.request().method() === "PUT" && new URL(response.url()).pathname === "/api/noodle/settings",
+    );
+    await imageLimitInput.fill(String(nextImageLimit));
+    await imageLimitInput.blur();
+    expect((await imageSaveResponse).ok()).toBe(true);
+    await expect(imageLimitInput).toHaveValue(String(nextImageLimit));
+
+    const randomUsersButton = noodle.getByRole("button", { name: /Random users/ });
+    const randomUsersSaveResponse = page.waitForResponse(
+      (response) => response.request().method() === "PUT" && new URL(response.url()).pathname === "/api/noodle/settings",
+    );
+    await randomUsersButton.click();
+    expect((await randomUsersSaveResponse).ok()).toBe(true);
+
+    await expect
+      .poll(async () => {
+        const response = await page.request.get("/api/noodle");
+        const bootstrap = (await response.json()) as typeof initial;
+        return {
+          maxImagesPerRefresh: bootstrap.settings.maxImagesPerRefresh,
+          allowRandomUsers: bootstrap.settings.allowRandomUsers,
+        };
+      })
+      .toEqual({ maxImagesPerRefresh: nextImageLimit, allowRandomUsers: nextRandomUsers });
+
+    await page.reload();
+    await page.locator('[data-tour="noodle-tab"]').click();
+    const reloadedNoodle = page.locator('[data-component="NoodleView"]');
+    await reloadedNoodle.getByRole("button", { name: "Settings", exact: true }).click();
+    await expect(
+      reloadedNoodle.locator("label").filter({ hasText: "Images/refresh" }).locator('input[type="number"]'),
+    ).toHaveValue(String(nextImageLimit));
+    await expect(reloadedNoodle.getByRole("button", { name: /Random users/ })).toContainText(
+      nextRandomUsers ? "Enabled" : "Ambient fake profiles",
+    );
+
+    const carryItemsInput = reloadedNoodle
+      .locator("label")
+      .filter({ hasText: "Carry items" })
+      .locator('input[type="number"]');
+    await carryItemsInput.fill(String(nextCarryItems));
+    await reloadedNoodle.getByRole("button", { name: "Home", exact: true }).click();
+    await reloadedNoodle.getByRole("button", { name: "Settings", exact: true }).click();
+    await expect(
+      reloadedNoodle.locator("label").filter({ hasText: "Carry items" }).locator('input[type="number"]'),
+    ).toHaveValue(String(nextCarryItems));
+    await expect
+      .poll(async () => {
+        const response = await page.request.get("/api/noodle");
+        const bootstrap = (await response.json()) as typeof initial;
+        return bootstrap.settings.carryoverMaxItems;
+      })
+      .toBe(nextCarryItems);
+
+    const refreshesPerDayInput = reloadedNoodle
+      .locator("label")
+      .filter({ hasText: "Refreshes/day" })
+      .locator('input[type="number"]');
+    await refreshesPerDayInput.fill(String(nextRefreshesPerDay));
+    await reloadedNoodle.getByRole("button", { name: /Notifications/ }).click();
+    await reloadedNoodle.getByRole("button", { name: "Settings", exact: true }).click();
+    await expect(
+      reloadedNoodle.locator("label").filter({ hasText: "Refreshes/day" }).locator('input[type="number"]'),
+    ).toHaveValue(String(nextRefreshesPerDay));
+    await expect
+      .poll(async () => {
+        const response = await page.request.get("/api/noodle");
+        const bootstrap = (await response.json()) as typeof initial;
+        return bootstrap.settings.refreshesPerDay;
+      })
+      .toBe(nextRefreshesPerDay);
+  } finally {
+    await page.request.put("/api/noodle/settings", {
+      data: {
+        enableImagePrompts: initial.settings.enableImagePrompts,
+        maxImagesPerRefresh: initial.settings.maxImagesPerRefresh,
+        allowRandomUsers: initial.settings.allowRandomUsers,
+        carryoverMaxItems: initial.settings.carryoverMaxItems,
+        refreshesPerDay: initial.settings.refreshesPerDay,
+      },
+    });
+  }
+});
+
 test("Noodle posts tag invited characters with @handle mentions", async ({ page }) => {
   const errors = collectUnexpectedErrors(page);
   const activePersonaResponse = await page.request.get("/api/characters/personas/active");
@@ -1243,6 +1365,102 @@ test("Noodle reply notifications focus the actionable timeline reply", async ({ 
     expect(errors).toEqual([]);
   } finally {
     await page.request.delete(`/api/noodle/posts/${post.id}`, { timeout: 5_000 }).catch(() => undefined);
+    if (createdPersonaId) {
+      await page.request
+        .delete(`/api/characters/personas/${createdPersonaId}`, { timeout: 5_000 })
+        .catch(() => undefined);
+    }
+  }
+});
+
+test("Noodle only bumps posts when another account replies to the persona's comment", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "Timeline bump ordering is covered on desktop.");
+
+  const errors = collectUnexpectedErrors(page);
+  const activePersonaResponse = await page.request.get("/api/characters/personas/active");
+  const activePersona = activePersonaResponse.ok()
+    ? ((await activePersonaResponse.json()) as { id?: string } | null)
+    : null;
+  let personaId = activePersona?.id ?? null;
+  let createdPersonaId: string | null = null;
+  if (!personaId) {
+    const personaResponse = await page.request.post("/api/characters/personas", {
+      data: { name: "Noodle Bump Regression", description: "Temporary browser regression persona." },
+    });
+    expect(personaResponse.ok()).toBe(true);
+    const createdPersona = (await personaResponse.json()) as { id: string };
+    personaId = createdPersona.id;
+    createdPersonaId = createdPersona.id;
+    const activateResponse = await page.request.put(`/api/characters/personas/${createdPersona.id}/activate`);
+    expect(activateResponse.ok()).toBe(true);
+  }
+
+  await page.request.get("/api/noodle");
+  const olderPostResponse = await page.request.post("/api/noodle/posts", {
+    data: {
+      authorKind: "character",
+      authorEntityId: "__professor_mari__",
+      content: `Older timeline bump regression ${Date.now()}`,
+    },
+  });
+  expect(olderPostResponse.ok()).toBe(true);
+  const olderPost = (await olderPostResponse.json()) as { id: string };
+  await page.waitForTimeout(10);
+  const newerPostResponse = await page.request.post("/api/noodle/posts", {
+    data: {
+      authorKind: "character",
+      authorEntityId: "__professor_mari__",
+      content: `Newer timeline bump regression ${Date.now()}`,
+    },
+  });
+  expect(newerPostResponse.ok()).toBe(true);
+  const newerPost = (await newerPostResponse.json()) as { id: string };
+
+  try {
+    const personaReplyResponse = await page.request.post(`/api/noodle/posts/${olderPost.id}/interactions`, {
+      data: {
+        actorKind: "persona",
+        actorEntityId: personaId,
+        type: "reply",
+        content: "My comment should not bump this post.",
+      },
+    });
+    expect(personaReplyResponse.ok()).toBe(true);
+    const personaReply = (await personaReplyResponse.json()) as { id: string };
+
+    const readRegressionOrder = async () =>
+      page.locator("[data-noodle-post-id]").evaluateAll(
+        (elements, postIds) =>
+          elements
+            .map((element) => element.getAttribute("data-noodle-post-id"))
+            .filter((postId): postId is string => Boolean(postId) && postIds.includes(postId)),
+        [olderPost.id, newerPost.id],
+      );
+
+    await page.goto("/");
+    await page.locator('[data-tour="noodle-tab"]').click();
+    await expect(page.locator(`[data-noodle-post-id="${olderPost.id}"]`)).toBeVisible();
+    await expect.poll(readRegressionOrder).toEqual([newerPost.id, olderPost.id]);
+
+    const characterReplyResponse = await page.request.post(`/api/noodle/posts/${olderPost.id}/interactions`, {
+      data: {
+        actorKind: "character",
+        actorEntityId: "__professor_mari__",
+        type: "reply",
+        content: "Professor Mari directly replied to the persona comment.",
+        parentInteractionId: personaReply.id,
+      },
+    });
+    expect(characterReplyResponse.ok()).toBe(true);
+
+    await page.reload();
+    await page.locator('[data-tour="noodle-tab"]').click();
+    await expect(page.locator(`[data-noodle-post-id="${olderPost.id}"]`)).toBeVisible();
+    await expect.poll(readRegressionOrder).toEqual([olderPost.id, newerPost.id]);
+    expect(errors).toEqual([]);
+  } finally {
+    await page.request.delete(`/api/noodle/posts/${olderPost.id}`, { timeout: 5_000 }).catch(() => undefined);
+    await page.request.delete(`/api/noodle/posts/${newerPost.id}`, { timeout: 5_000 }).catch(() => undefined);
     if (createdPersonaId) {
       await page.request
         .delete(`/api/characters/personas/${createdPersonaId}`, { timeout: 5_000 })

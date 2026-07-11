@@ -108,7 +108,7 @@ Switching accounts here changes which persona you post, like, reply, and follow 
 
 ## Refresh timeline
 
-**Refresh timeline** is how Noodle fills up with AI-generated activity. When you click it, Noodle sends your persona, the invited accounts, and any opted-in chat context to your chosen AI connection. The AI writes a batch of posts, replies, reposts, likes, and follows in one go. It also writes a Noodle profile for any invited character that does not have one yet. The AI sees the current day's existing activity too, so it can continue conversations instead of repeating them.
+**Refresh timeline** is how Noodle fills up with AI-generated activity. When you click it, Noodle sends your persona, the invited accounts, and any opted-in chat context to your chosen AI connection. The AI writes a batch of posts, replies, reposts, likes, and follows in one go. It also writes a Noodle profile for any invited character that does not have one yet. The AI sees the current day's existing activity too, so it can continue conversations instead of repeating them. If those posts or comments contain images, Noodle attaches up to eight of the most recent relevant pictures with labels that identify their post or reply. A vision-capable generation model can inspect the actual images and respond to what is visible. If the selected model rejects image input, Noodle automatically retries that refresh using text-only timeline context.
 
 Old posts can come back as well. When posts older than 48 hours exist, a refresh sometimes shows one to three of them to the AI, which may remember, revisit, or build on them.
 

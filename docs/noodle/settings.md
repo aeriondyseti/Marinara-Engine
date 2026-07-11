@@ -29,7 +29,7 @@ Inviting from a folder is a one-time bulk action. It is not a live sync. Charact
 
 The **Refresh** section controls the AI connection Noodle writes with, and how often Noodle refreshes on its own.
 
-- **Generation connection**: a dropdown. Pick the text connection Noodle uses to write posts, replies, reposts, likes, and profile text. It starts unset with the placeholder **Choose connection**. You must pick one before any refresh will run.
+- **Generation connection**: a dropdown. Pick the connection Noodle uses to write posts, replies, reposts, likes, and profile text. It starts unset with the placeholder **Choose connection**. You must pick one before any refresh will run. Vision-capable models also receive up to eight recent relevant images from Noodle posts and comments. Text-only models that reject those image inputs are retried automatically without the pictures.
 - **Refreshes/day**: a number, from 0 to 24, default **2**. This is how many automatic refreshes Marinara runs per day. Set it to 0 to turn automatic refreshes off. It does not limit how often you refresh by hand.
 
 ### Automatic schedule
@@ -72,10 +72,10 @@ The **Image Generation** section lets Noodle attach AI-made images to some posts
   - **Prompt instructions**: a text box with built-in default text, up to 4000 characters. These extra notes are merged into the image prompt.
   - **Use avatar references**: a toggle, default **on**. Sends the character's avatar or reference images to the image model.
   - **Include descriptions**: a toggle, default **on**. Adds the character's written appearance notes to the image prompt.
-  - **Images/day**: a number, 0 to 50, default **3**. This caps generated post images across the whole day, not per refresh.
+  - **Images/refresh**: a number, 0 to 50, default **3**. This caps generated post images separately for every manual or automatic refresh.
 - **Attach gallery images**: a separate toggle, default **off**. It stays visible even when **Image generation** is off. Instead of making a new image, it lets a post reuse an image from that character's gallery or from a chat they appear in.
 
-If you turn on **Image generation** but have no usable image connection, a refresh is blocked. You will see the message "Choose an image generation connection for Noodle first." A single failed image does not fail the whole refresh. The post is still created without an image.
+If you turn on **Image generation** but have no usable image connection, a refresh is blocked. You will see the message "Choose an image generation connection for Noodle first." A failed image is retried once. If the second attempt also fails, the refresh continues and publishes a clean text-only post instead of exposing the unused image prompt.
 
 The template Noodle uses to write these image prompts is called **Noodle Post Image**. You can edit it under **Settings** > **Generations** > **Image Generation Prompt Overrides**. Your **Prompt instructions** text is passed into that template, and the result then goes through your normal image style profile. See [Prompt Overrides for Image and Video](../prompts/prompt-overrides.md) and [Image Style Profiles](../media/style-profiles.md). Professor Mari has no character card, so her image posts use her built-in avatar and reference art instead.
 
@@ -121,7 +121,7 @@ To make Noodle activity appear in a chat, turn on the matching **Carryover to ch
 - **Automatic refreshes are not happening**: set **Refreshes/day** above 0, keep the Marinara server running, and check the planned times and timezone under **Automatic schedule**. If the schedule shows an error, fix the connection or rate limit problem and let the retry run.
 - **Posts do not mention a recent chat**: turn on **Allow Noodle references** in that chat's settings, and make sure the character is invited. Chat context is guidance for the AI, not a guarantee.
 - **Noodle activity does not show in chats**: turn on the matching **Carryover to chats** mode, and raise **Carry hours** if the activity is too old.
-- **Posts have no images**: turn on **Image generation**, pick a working image connection, and check the **Images/day** limit.
+- **Posts have no images**: turn on **Image generation**, pick a working image connection, and check the **Images/refresh** limit.
 
 ## Settings and defaults
 
@@ -144,7 +144,7 @@ This table lists every Noodle setting with its default and range.
 | **Prompt instructions** | built-in text | up to 4000 characters |
 | **Use avatar references** | on | on or off |
 | **Include descriptions** | on | on or off |
-| **Images/day** | 3 | 0 to 50 |
+| **Images/refresh** | 3 | 0 to 50 |
 | **Attach gallery images** | off | on or off |
 | **Carryover: Conversations** | off | on or off |
 | **Carryover: Roleplays** | off | on or off |

@@ -174,11 +174,14 @@ function isUniqueConstraintError(error: unknown) {
   return /SQLITE_CONSTRAINT|unique constraint failed|constraint failed/i.test(message);
 }
 
-function normalizeSettings(raw: unknown): NoodleSettings {
+export function normalizeNoodleSettings(raw: unknown): NoodleSettings {
   const rawRecord = parseRecord(raw);
+  const migratedMaxImagesPerRefresh =
+    rawRecord.maxImagesPerRefresh ?? rawRecord.maxImagePromptsPerDay ?? DEFAULT_NOODLE_SETTINGS.maxImagesPerRefresh;
   const parsed = noodleSettingsSchema.safeParse({
     ...DEFAULT_NOODLE_SETTINGS,
     ...rawRecord,
+    maxImagesPerRefresh: migratedMaxImagesPerRefresh,
   });
   if (!parsed.success) return noodleSettingsSchema.parse(DEFAULT_NOODLE_SETTINGS);
   const min = Math.min(parsed.data.participantMin, parsed.data.participantMax);
@@ -295,17 +298,17 @@ export function createNoodleStorage(db: DB) {
   return {
     async getSettings(): Promise<NoodleSettings> {
       const raw = await settingsStore.get(NOODLE_SETTINGS_KEY);
-      return normalizeSettings(raw);
+      return normalizeNoodleSettings(raw);
     },
 
     async updateSettings(input: NoodleSettingsUpdateInput): Promise<NoodleSettings> {
       const current = await this.getSettings();
-      const next = normalizeSettings({ ...current, ...input });
+      const next = normalizeNoodleSettings({ ...current, ...input });
       await settingsStore.set(NOODLE_SETTINGS_KEY, JSON.stringify(next));
       const currentSchedule = await this.getRefreshSchedule();
       const reconciled = reconcileNoodleRefreshSchedule(currentSchedule, next.refreshesPerDay, new Date());
       await this.saveRefreshSchedule(clearNoodleRefreshFailure(reconciled));
-      return next;
+      return this.getSettings();
     },
 
     async getRefreshSchedule(): Promise<PersistedNoodleRefreshSchedule | null> {
