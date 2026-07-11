@@ -50,6 +50,8 @@ import {
 } from "../../packages/server/src/services/agents/agent-executor.js";
 import type { ResolvedAgent } from "../../packages/server/src/services/agents/agent-pipeline.js";
 import { loadGameVideoPrompt } from "../../packages/server/src/services/video/game-video-prompt.js";
+import { formatAgentFailuresToast, toAgentFailure } from "../../packages/client/src/lib/agent-failures.js";
+import { formatGenerationParameterError } from "../../packages/client/src/lib/generation-parameter-errors.js";
 import {
   compactVideoPromptText,
   getSceneVideoPromptLimits,
@@ -788,6 +790,9 @@ const cases: RegressionCase[] = [
       assert.equal(isPatternSafe(".*.*.*Q"), false);
       assert.equal(isPatternSafe(".*foo.*bar.*baz"), false);
       assert.equal(isPatternSafe(String.raw`.*\*[^*]+\*.*\*[^*]+\*.*`), false);
+      assert.equal(isPatternSafe(String.raw`([^|]+)\|([^|]+)\|([^|]+)`), true);
+      assert.equal(isPatternSafe(String.raw`([^\\|]+)\|([^\\|]+)\|([^\\|]+)`), true);
+      assert.equal(isPatternSafe(String.raw`[^|]+x[^|]+y[^|]+`), false);
     },
   },
   {
@@ -798,6 +803,25 @@ const cases: RegressionCase[] = [
       assert.equal(applyRegexReplacement("x", /x/, String.raw`C:\Users\bob`), String.raw`C:\Users\bob`);
       assert.equal(applyRegexReplacement("bob", /(\w+)/, String.raw`\U$1\E`), "BOB");
       assert.equal(applyRegexReplacement("bob", /(\w+)/, String.raw`\u$1`), "Bob");
+    },
+  },
+  {
+    name: "provider concurrency failures remain visible in generation and agent messages",
+    run() {
+      const providerMessage = "Provider concurrency limit exceeded for this account";
+      assert.match(formatGenerationParameterError(providerMessage), /Provider message: Provider concurrency limit/);
+      assert.match(formatGenerationParameterError("Too many parallel requests"), /concurrency limit was reached/);
+      assert.match(formatGenerationParameterError("Simultaneous generations limit reached"), /concurrency limit was reached/);
+      assert.equal(
+        formatAgentFailuresToast([
+          toAgentFailure({ agentType: "illustrator", agentName: "Illustrator", error: providerMessage }),
+        ]),
+        "Illustrator failed: Concurrency limit: Provider concurrency limit exceeded for this account. Use Retry Failed Agents in the Agents menu to try again.",
+      );
+      assert.equal(
+        toAgentFailure({ agentType: "illustrator", error: "Too many parallel generations" }).reasonLabel,
+        "Concurrency limit",
+      );
     },
   },
   {

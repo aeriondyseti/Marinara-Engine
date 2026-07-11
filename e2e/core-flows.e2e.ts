@@ -47,6 +47,276 @@ test.beforeEach(async ({ page }) => {
   await prepareFreshClient(page);
 });
 
+test("initial Roleplay character assignment does not block greeting seeding", async ({ request }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "Roleplay setup regression is covered on desktop.");
+
+  const createCharacter = async (name: string) => {
+    const response = await request.post("/api/characters", {
+      data: { data: { name, first_mes: `Hello from ${name}.` } },
+    });
+    expect(response.ok()).toBeTruthy();
+    return (await response.json()) as { id: string };
+  };
+
+  const firstCharacter = await createCharacter("Greeting Seed One");
+  const secondCharacter = await createCharacter("Greeting Seed Two");
+  const chatResponse = await request.post("/api/chats", {
+    data: { name: "Roleplay Greeting Seed Smoke", mode: "roleplay", characterIds: [] },
+  });
+  expect(chatResponse.ok()).toBeTruthy();
+  const chat = (await chatResponse.json()) as { id: string };
+
+  try {
+    const initialAssignment = await request.patch(`/api/chats/${chat.id}`, {
+      data: { characterIds: [firstCharacter.id] },
+    });
+    expect(initialAssignment.ok()).toBeTruthy();
+    const messagesAfterSetup = (await (await request.get(`/api/chats/${chat.id}/messages`)).json()) as Array<{
+      role: string;
+      content: string;
+    }>;
+    expect(messagesAfterSetup).toEqual([]);
+
+    const laterAssignment = await request.patch(`/api/chats/${chat.id}`, {
+      data: { characterIds: [firstCharacter.id, secondCharacter.id] },
+    });
+    expect(laterAssignment.ok()).toBeTruthy();
+    const messagesAfterLaterJoin = (await (await request.get(`/api/chats/${chat.id}/messages`)).json()) as Array<{
+      role: string;
+      content: string;
+    }>;
+    expect(messagesAfterLaterJoin).toHaveLength(1);
+    expect(messagesAfterLaterJoin[0]).toMatchObject({
+      role: "system",
+      content: "Greeting Seed Two has joined the chat.",
+    });
+  } finally {
+    await request.delete(`/api/chats/${chat.id}`);
+    await request.delete(`/api/characters/${firstCharacter.id}`);
+    await request.delete(`/api/characters/${secondCharacter.id}`);
+  }
+});
+
+test("provider concurrency errors appear in generation toasts", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "Generation error toast regression is covered on desktop.");
+
+  const chatResponse = await page.request.post("/api/chats", {
+    data: {
+      name: "Provider Concurrency Toast Smoke",
+      mode: "roleplay",
+      characterIds: [],
+      connectionId: "concurrency-test-connection",
+    },
+  });
+  expect(chatResponse.ok()).toBeTruthy();
+  const chat = (await chatResponse.json()) as { id: string };
+
+  try {
+    await page.route("**/api/generate", async (route) => {
+      await route.fulfill({
+        status: 429,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "Provider concurrency limit exceeded for this account" }),
+      });
+    });
+    await page.addInitScript((chatId) => {
+      localStorage.setItem("marinara-active-chat-id", chatId);
+    }, chat.id);
+    await page.goto("/");
+    await page.locator("textarea.mari-chat-input-textarea").fill("Test the provider limit");
+    await page.locator("button.mari-chat-send-btn").click();
+    await expect(
+      page.getByText(
+        "The provider's concurrency limit was reached. Wait for another generation to finish, then try again. Provider message: Provider concurrency limit exceeded for this account",
+      ),
+    ).toBeVisible();
+  } finally {
+    await page.request.delete(`/api/chats/${chat.id}`);
+  }
+});
+
+test("historical Game Peek Prompt returns the exact selected turn request", async ({ request }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "Historical prompt API regression is covered on desktop.");
+
+  const chatResponse = await request.post("/api/chats", {
+    data: { name: "Historical Game Prompt Smoke", mode: "game", characterIds: [] },
+  });
+  expect(chatResponse.ok()).toBeTruthy();
+  const chat = (await chatResponse.json()) as { id: string };
+
+  try {
+    const firstMessageResponse = await request.post(`/api/chats/${chat.id}/messages`, {
+      data: {
+        role: "assistant",
+        content: "First game turn",
+        extra: {
+          cachedPrompt: [
+            { role: "system", content: "Exact first system prompt" },
+            { role: "user", content: "Exact first player input" },
+          ],
+          chatSummaryFingerprint: "historical-summary",
+          generationInfo: { model: "test-game-model", provider: "custom" },
+        },
+      },
+    });
+    expect(firstMessageResponse.ok()).toBeTruthy();
+    const firstMessage = (await firstMessageResponse.json()) as { id: string };
+
+    const secondMessageResponse = await request.post(`/api/chats/${chat.id}/messages`, {
+      data: {
+        role: "assistant",
+        content: "Second game turn",
+        extra: {
+          cachedPrompt: [{ role: "user", content: "Exact second player input" }],
+          generationInfo: { model: "test-game-model", provider: "custom" },
+        },
+      },
+    });
+    expect(secondMessageResponse.ok()).toBeTruthy();
+
+    const peekResponse = await request.post(`/api/chats/${chat.id}/peek-prompt`, {
+      data: { messageId: firstMessage.id },
+    });
+    expect(peekResponse.ok()).toBeTruthy();
+    const peek = (await peekResponse.json()) as {
+      source: string;
+      exact: boolean;
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(peek.source).toBe("cached");
+    expect(peek.exact).toBe(true);
+    expect(peek.messages).toEqual([
+      { role: "system", content: "Exact first system prompt" },
+      { role: "user", content: "Exact first player input" },
+    ]);
+  } finally {
+    await request.delete(`/api/chats/${chat.id}`);
+  }
+});
+
+test("failed Game Lorebook Keeper run exposes a retry action", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "Game session recovery regression is covered on desktop.");
+
+  const chatResponse = await page.request.post("/api/chats", {
+    data: { name: "Lorebook Retry Smoke", mode: "game", characterIds: [] },
+  });
+  expect(chatResponse.ok()).toBeTruthy();
+  const chat = (await chatResponse.json()) as { id: string };
+
+  try {
+    const metadataResponse = await page.request.patch(`/api/chats/${chat.id}/metadata`, {
+      data: {
+        gameId: "lorebook-retry-smoke-game",
+        gameSessionStatus: "concluded",
+        gameLorebookKeeperEnabled: true,
+        gamePreviousSessionSummaries: [
+          {
+            summary: "The party escaped the test dungeon.",
+            resumePoint: "Outside the dungeon gate.",
+            partyDynamics: "Relieved.",
+            keyDiscoveries: [],
+            characterMoments: [],
+            littleDetails: [],
+            npcUpdates: [],
+            statsSnapshot: {},
+            timestamp: new Date().toISOString(),
+          },
+        ],
+        gameLorebookKeeperLastRun: {
+          sessionNumber: 1,
+          status: "failed",
+          updatedAt: new Date().toISOString(),
+          error: "Structured lorebook output was invalid.",
+        },
+      },
+    });
+    expect(metadataResponse.ok()).toBeTruthy();
+    const messageResponse = await page.request.post(`/api/chats/${chat.id}/messages`, {
+      data: { role: "assistant", content: "The session has concluded." },
+    });
+    expect(messageResponse.ok()).toBeTruthy();
+
+    await page.addInitScript((chatId) => {
+      localStorage.setItem("marinara-active-chat-id", chatId);
+    }, chat.id);
+    await page.goto("/");
+    await page.getByRole("button", { name: "Session" }).click();
+    const failure = page.locator('[data-component="GameSessionHistory.LorebookKeeperFailure"]');
+    await expect(failure).toContainText("Lorebook Keeper failed");
+    await expect(failure.getByRole("button", { name: "Retry Lorebook Keeper" })).toBeVisible();
+  } finally {
+    await page.request.delete(`/api/chats/${chat.id}`);
+  }
+});
+
+test("Game history above the dialogue box opens a historical Peek Prompt", async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.includes("desktop"), "Game historical prompt UI regression is covered on desktop.");
+
+  const chatResponse = await page.request.post("/api/chats", {
+    data: { name: "Game Prompt History Smoke", mode: "game", characterIds: [] },
+  });
+  expect(chatResponse.ok()).toBeTruthy();
+  const chat = (await chatResponse.json()) as { id: string };
+
+  try {
+    await page.request.patch(`/api/chats/${chat.id}/metadata`, {
+      data: { gameId: "prompt-history-smoke-game", gameSessionStatus: "active", gameSessionNumber: 1 },
+    });
+    await page.request.post(`/api/chats/${chat.id}/messages`, {
+      data: { role: "user", content: "Open the old gate." },
+    });
+    const historicalTurnResponse = await page.request.post(`/api/chats/${chat.id}/messages`, {
+      data: {
+        role: "assistant",
+        content: "The old gate opens with a groan.",
+        extra: {
+          cachedPrompt: [
+            { role: "system", content: "Exact historical Game Master prompt" },
+            { role: "user", content: "Open the old gate." },
+          ],
+        },
+      },
+    });
+    expect(historicalTurnResponse.ok()).toBeTruthy();
+    await page.request.post(`/api/chats/${chat.id}/messages`, {
+      data: { role: "user", content: "Step through." },
+    });
+    await page.request.post(`/api/chats/${chat.id}/messages`, {
+      data: {
+        role: "assistant",
+        content: "Beyond it waits a moonlit hall.",
+        extra: { cachedPrompt: [{ role: "user", content: "Step through." }] },
+      },
+    });
+
+    await page.addInitScript((chatId) => {
+      localStorage.setItem("marinara-active-chat-id", chatId);
+      localStorage.setItem(
+        "marinara-engine-ui",
+        JSON.stringify({
+          state: {
+            hasCompletedOnboarding: true,
+            rightPanelOpen: false,
+            sidebarOpen: false,
+            gameDialogueDisplayMode: "stacked",
+          },
+          version: 65,
+        }),
+      );
+    }, chat.id);
+    await page.goto("/");
+    const peekButton = page.locator('[data-component="GameNarration.PeekPrompt"]').first();
+    await expect(peekButton).toBeVisible();
+    await peekButton.click();
+    await expect(page.getByRole("heading", { name: "Assembled Prompt" })).toBeVisible();
+    await expect(page.getByText("This is the exact cached text prompt sent for the selected Game Mode turn.")).toBeVisible();
+    await page.getByRole("button", { name: /System/ }).click();
+    await expect(page.getByText("Exact historical Game Master prompt")).toBeVisible();
+  } finally {
+    await page.request.delete(`/api/chats/${chat.id}`);
+  }
+});
+
 test("home shell and primary topbar panels open without client errors", async ({ page }) => {
   const errors = collectUnexpectedErrors(page);
   await page.goto("/");
@@ -272,6 +542,7 @@ test("Noodle posts tag invited characters with @handle mentions", async ({ page 
       metadata: { mentionedAccountIds?: string[] };
     };
     createdPostId = post.id;
+    await expect(textarea).toHaveValue("");
     expect(post.metadata.mentionedAccountIds).toContain(professorMariAccount!.id);
 
     const postArticle = noodle.locator(`[data-noodle-post-id="${post.id}"]`);

@@ -271,6 +271,7 @@ function mapDigest(row: DigestRow): NoodleDigestEntry {
     content: row.content ?? "",
     sourceRunId: row.sourceRunId ?? null,
     sourcePostId: row.sourcePostId ?? null,
+    sourceInteractionId: row.sourceInteractionId ?? null,
     createdAt: row.createdAt,
   };
 }
@@ -599,7 +600,12 @@ export function createNoodleStorage(db: DB) {
         }
       }
       const deletedRows = rows.filter((row) => deletedIds.has(row.id));
-      await db.delete(noodleInteractions).where(inArray(noodleInteractions.id, [...deletedIds]));
+      await db.transaction(async (tx) => {
+        await tx
+          .delete(noodleActivityDigests)
+          .where(inArray(noodleActivityDigests.sourceInteractionId, [...deletedIds]));
+        await tx.delete(noodleInteractions).where(inArray(noodleInteractions.id, [...deletedIds]));
+      });
       return deletedRows.map(mapInteraction);
     },
 
@@ -714,7 +720,12 @@ export function createNoodleStorage(db: DB) {
         );
       const existing = rows[0];
       if (!existing) return null;
-      await db.delete(noodleInteractions).where(eq(noodleInteractions.id, existing.id));
+      await db.transaction(async (tx) => {
+        await tx
+          .delete(noodleActivityDigests)
+          .where(eq(noodleActivityDigests.sourceInteractionId, existing.id));
+        await tx.delete(noodleInteractions).where(eq(noodleInteractions.id, existing.id));
+      });
       return mapInteraction(existing);
     },
 
@@ -723,16 +734,25 @@ export function createNoodleStorage(db: DB) {
       content: string;
       sourceRunId?: string | null;
       sourcePostId?: string | null;
+      sourceInteractionId?: string | null;
     }): Promise<NoodleDigestEntry> {
       const id = newId();
       const uniqueAccountIds = Array.from(new Set(input.accountIds.filter(Boolean)));
-      await db.insert(noodleActivityDigests).values({
-        id,
-        accountIds: JSON.stringify(uniqueAccountIds),
-        content: input.content.trim().slice(0, 1200),
-        sourceRunId: input.sourceRunId ?? null,
-        sourcePostId: input.sourcePostId ?? null,
-        createdAt: now(),
+      await db.transaction(async (tx) => {
+        if (input.sourceInteractionId) {
+          await tx
+            .delete(noodleActivityDigests)
+            .where(eq(noodleActivityDigests.sourceInteractionId, input.sourceInteractionId));
+        }
+        await tx.insert(noodleActivityDigests).values({
+          id,
+          accountIds: JSON.stringify(uniqueAccountIds),
+          content: input.content.trim().slice(0, 1200),
+          sourceRunId: input.sourceRunId ?? null,
+          sourcePostId: input.sourcePostId ?? null,
+          sourceInteractionId: input.sourceInteractionId ?? null,
+          createdAt: now(),
+        });
       });
       const rows = await db.select().from(noodleActivityDigests).where(eq(noodleActivityDigests.id, id));
       return mapDigest(rows[0]!);
@@ -756,15 +776,52 @@ export function createNoodleStorage(db: DB) {
 
     async listDigests(options: { limit?: number; since?: string } = {}): Promise<NoodleDigestEntry[]> {
       const limit = Math.max(1, Math.min(200, Math.floor(options.limit ?? 80)));
+      const fetchLimit = 200;
       const rows = options.since
         ? await db
             .select()
             .from(noodleActivityDigests)
             .where(gt(noodleActivityDigests.createdAt, options.since))
             .orderBy(desc(noodleActivityDigests.createdAt))
-            .limit(limit)
-        : await db.select().from(noodleActivityDigests).orderBy(desc(noodleActivityDigests.createdAt)).limit(limit);
-      return rows.map(mapDigest);
+            .limit(fetchLimit)
+        : await db
+            .select()
+            .from(noodleActivityDigests)
+            .orderBy(desc(noodleActivityDigests.createdAt))
+            .limit(fetchLimit);
+
+      const sourcePostIds = Array.from(new Set(rows.flatMap((row) => (row.sourcePostId ? [row.sourcePostId] : []))));
+      const sourceInteractionIds = Array.from(
+        new Set(rows.flatMap((row) => (row.sourceInteractionId ? [row.sourceInteractionId] : []))),
+      );
+      const [sourcePosts, sourceInteractions] = await Promise.all([
+        sourcePostIds.length > 0
+          ? db.select().from(noodlePosts).where(inArray(noodlePosts.id, sourcePostIds))
+          : Promise.resolve([]),
+        sourceInteractionIds.length > 0
+          ? db.select().from(noodleInteractions).where(inArray(noodleInteractions.id, sourceInteractionIds))
+          : Promise.resolve([]),
+      ]);
+      const sourcePostById = new Map(sourcePosts.map((post) => [post.id, post]));
+      const liveInteractionIds = new Set(sourceInteractions.map((interaction) => interaction.id));
+
+      return rows
+        .filter((row) => {
+          if (row.sourceInteractionId) return liveInteractionIds.has(row.sourceInteractionId);
+          // Older model-authored summaries had only a refresh-run reference,
+          // so there is no way to invalidate them when their source post or
+          // comment is deleted. Deterministic event digests supersede them.
+          if (row.sourceRunId && !row.sourcePostId) return false;
+          if (!row.sourcePostId) return true;
+          const sourcePost = sourcePostById.get(row.sourcePostId);
+          if (!sourcePost) return false;
+          // Digests created before source_interaction_id existed cannot be tied
+          // safely to a still-live comment. Keep only the post's canonical digest;
+          // stale legacy comment digests must never re-enter generation context.
+          return parseRecord(sourcePost.metadata).activityDigestId === row.id;
+        })
+        .slice(0, limit)
+        .map(mapDigest);
     },
 
     async createRefreshRun(input: { activeAccountIds: string[]; prompt: string }): Promise<NoodleRefreshRun> {

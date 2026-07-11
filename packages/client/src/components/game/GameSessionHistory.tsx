@@ -631,6 +631,25 @@ export function GameSessionHistory({
                     </span>
                   </button>
 
+                  {canRegenerateLorebook && lorebookRun?.status === "failed" && (
+                    <div
+                      data-component="GameSessionHistory.LorebookKeeperFailure"
+                      className="flex items-center gap-2 border-t border-[var(--border)] px-4 py-2"
+                    >
+                      <AlertTriangle size={14} className="shrink-0 text-[var(--destructive)]" />
+                      <span className="mr-auto text-xs font-semibold text-[var(--foreground)]">Lorebook Keeper failed</span>
+                      <button
+                        type="button"
+                        onClick={() => void onRegenerateLorebook?.(session.sessionNumber)}
+                        disabled={isRegeneratingLorebook}
+                        className="inline-flex items-center gap-1.5 rounded-md bg-[var(--primary)]/14 px-2 py-1 text-xs font-semibold text-[var(--primary)] hover:bg-[var(--primary)]/22 disabled:opacity-50"
+                      >
+                        <RefreshCw size={12} className={isRegeneratingLorebook ? "animate-spin" : undefined} />
+                        {isRegeneratingLorebook ? "Retrying..." : "Retry Lorebook Keeper"}
+                      </button>
+                    </div>
+                  )}
+
                   {isExpanded && (
                     <div className="border-t border-[var(--border)] px-4 py-3">
                       <div className="mb-3">
@@ -652,26 +671,22 @@ export function GameSessionHistory({
                                   Replay Session
                                 </button>
                               )}
-                              {canRegenerateLorebook && lorebookRun && (
+                              {canRegenerateLorebook && lorebookRun && lorebookRun.status !== "failed" && (
                                 <span
                                   title={lorebookRun.error}
                                   className="inline-flex items-center gap-1 rounded-md bg-[var(--secondary)] px-2 py-1 text-[0.6875rem] font-medium text-[var(--muted-foreground)] ring-1 ring-[var(--border)]"
                                 >
-                                  {lorebookRun.status === "failed" ? (
-                                    <AlertTriangle size={11} className="text-[var(--destructive)]" />
-                                  ) : lorebookRun.status === "success" ? (
+                                  {lorebookRun.status === "success" ? (
                                     <CheckCircle2 size={11} className="text-emerald-500" />
                                   ) : (
                                     <RefreshCw size={11} className="animate-spin" />
                                   )}
-                                  {lorebookRun.status === "failed"
-                                    ? "Lorebook failed"
-                                    : lorebookRun.status === "success"
-                                      ? `Lorebook ${lorebookRun.entryCount ?? 0}`
-                                      : "Lorebook running"}
+                                  {lorebookRun.status === "success"
+                                    ? `Lorebook ${lorebookRun.entryCount ?? 0}`
+                                    : "Lorebook running"}
                                 </span>
                               )}
-                              {canRegenerateLorebook && (
+                              {canRegenerateLorebook && lorebookRun?.status !== "failed" && (
                                 <button
                                   onClick={() => void onRegenerateLorebook?.(session.sessionNumber)}
                                   disabled={isRegeneratingLorebook}

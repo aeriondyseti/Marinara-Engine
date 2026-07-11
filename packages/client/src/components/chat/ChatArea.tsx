@@ -1938,9 +1938,9 @@ export function ChatArea() {
   // Peek prompt state
   const [peekPromptData, setPeekPromptData] = useState<PeekPromptData | null>(null);
 
-  const handlePeekPrompt = useCallback(() => {
+  const handlePeekPrompt = useCallback((messageId?: string) => {
     if (!activeChatId) return;
-    peekPrompt.mutate(activeChatId, {
+    peekPrompt.mutate(messageId ? { chatId: activeChatId, messageId } : activeChatId, {
       onSuccess: (data) => setPeekPromptData(data),
       onError: (error) => {
         const message =
@@ -2821,6 +2821,7 @@ export function ChatArea() {
             onCloseSettings={handleCloseSettingsPanel}
             onSwitchChat={chat.connectedChatId ? () => setActiveChatId(chat.connectedChatId!) : undefined}
             onDeleteMessage={handleDelete}
+            onPeekPrompt={handlePeekPrompt}
             multiSelectMode={multiSelectMode}
             selectedMessageIds={selectedMessageIds}
           />

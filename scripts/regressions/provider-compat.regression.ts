@@ -8,6 +8,7 @@ import {
   NOODLE_JSON_OUTPUT_HEADING,
   noodleResponseFormat,
 } from "../../packages/server/src/services/noodle/noodle-response-format.js";
+import { normalizeOpenAIChatCompletionsResponseFormat } from "../../packages/server/src/services/llm/providers/openai.provider.js";
 
 function assertStrictObjects(value: unknown): void {
   if (!value || typeof value !== "object") return;
@@ -26,6 +27,17 @@ assert.equal(solTimelineFormat.type, "json_schema");
 assert.equal(solTimelineFormat.name, "noodle_timeline");
 assert.equal(solTimelineFormat.strict, true);
 assertStrictObjects(solTimelineFormat.schema);
+assert.deepEqual(normalizeOpenAIChatCompletionsResponseFormat(solTimelineFormat), {
+  type: "json_schema",
+  json_schema: {
+    name: "noodle_timeline",
+    schema: solTimelineFormat.schema,
+    strict: true,
+  },
+});
+assert.deepEqual(normalizeOpenAIChatCompletionsResponseFormat({ type: "json_object" }), {
+  type: "json_object",
+});
 const solProfileFormat = noodleResponseFormat("gpt-5.6-sol", "profiles");
 assert.equal(solProfileFormat.name, "noodle_profiles");
 assertStrictObjects(solProfileFormat.schema);

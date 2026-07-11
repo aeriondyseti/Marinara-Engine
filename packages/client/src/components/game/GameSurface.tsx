@@ -2277,6 +2277,7 @@ interface GameSurfaceProps {
   onCloseSettings: () => void;
   onSwitchChat?: () => void;
   onDeleteMessage: (messageId: string) => void;
+  onPeekPrompt?: (messageId: string) => void;
   multiSelectMode?: boolean;
   selectedMessageIds?: Set<string>;
 }
@@ -2296,6 +2297,7 @@ function GameSurfaceComponent({
   onCloseSettings,
   onSwitchChat,
   onDeleteMessage,
+  onPeekPrompt,
   multiSelectMode = false,
   selectedMessageIds,
   isMessagesLoading,
@@ -11044,6 +11046,7 @@ function GameSurfaceComponent({
                           combatGenerationFailed={combatGenerationFailedAtGate}
                           onRetryCombatGeneration={retryCombatGeneration}
                           onDeleteMessage={onDeleteMessage}
+                          onPeekPrompt={onPeekPrompt}
                           onBranchMessage={handleBranchMessage}
                           multiSelectMode={multiSelectMode}
                           selectedMessageIds={selectedMessageIds}
@@ -11130,6 +11133,7 @@ function GameSurfaceComponent({
                       combatGenerationFailed={combatGenerationFailedAtGate}
                       onRetryCombatGeneration={retryCombatGeneration}
                       onDeleteMessage={onDeleteMessage}
+                      onPeekPrompt={onPeekPrompt}
                       onBranchMessage={handleBranchMessage}
                       multiSelectMode={multiSelectMode}
                       selectedMessageIds={selectedMessageIds}

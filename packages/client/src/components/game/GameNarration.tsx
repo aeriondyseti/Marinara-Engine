@@ -8,6 +8,8 @@ import {
   useState,
   useCallback,
   useRef,
+  lazy,
+  Suspense,
   type ReactNode,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
@@ -63,6 +65,7 @@ import { useGameModeStore } from "../../stores/game-mode.store";
 import { useUIStore } from "../../stores/ui.store";
 import { useChatStore } from "../../stores/chat.store";
 import { parseChatMetadata } from "../../lib/chat-display";
+import { parseMessageExtraRecord } from "../../lib/chat-message-extra";
 import { createMessageMacroResolver, findCharacterByName } from "../../lib/chat-macros";
 import { animateTextHtml } from "./AnimatedText";
 import { ttsService } from "../../lib/tts-service";
@@ -83,6 +86,8 @@ import {
   type SkillCheckResult,
 } from "@marinara-engine/shared";
 import type { CharacterMap, PersonaInfo } from "../chat/chat-area.types";
+
+const GamePeekPromptButton = lazy(() => import("./GamePeekPromptButton"));
 
 /** Build inline style for a color that may be a plain color or a CSS gradient. */
 function nameColorStyle(color?: string): CSSProperties | undefined {
@@ -337,6 +342,11 @@ function isSyntheticGameStartMessage(message: Pick<NarrationMessage, "role" | "c
   return message.role === "user" && SYNTHETIC_GAME_START_MESSAGE_RE.test(message.content || "");
 }
 
+function hasExactCachedPrompt(message: Pick<Message, "extra"> | null): boolean {
+  const cachedPrompt = parseMessageExtraRecord(message?.extra).cachedPrompt;
+  return Array.isArray(cachedPrompt) && cachedPrompt.length > 0;
+}
+
 interface GameVoiceAudioJob {
   cacheKey: string;
   textCacheKey: string;
@@ -427,6 +437,8 @@ interface GameNarrationProps {
   onRetryCombatGeneration?: () => void;
   /** Open the standard delete-message flow for a backing chat message. */
   onDeleteMessage?: (messageId: string) => void;
+  /** Show the exact provider prompt cached for a generated Game Mode turn. */
+  onPeekPrompt?: (messageId: string) => void;
   /** Create a chat branch ending at a game log message or the current decision beat. */
   onBranchMessage?: (messageId: string) => void;
   /** Whether the global multi-delete bar is active. */
@@ -959,6 +971,7 @@ export function GameNarration({
   combatGenerationFailed,
   onRetryCombatGeneration,
   onDeleteMessage,
+  onPeekPrompt,
   onBranchMessage,
   multiSelectMode = false,
   selectedMessageIds,
@@ -3458,6 +3471,8 @@ export function GameNarration({
     "absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--foreground)] px-0.5 text-[0.55rem] font-bold text-[var(--background)] ring-1 ring-[var(--background)]/20 dark:bg-white/90 dark:text-black dark:ring-black/20";
   const ACTIVE_SEGMENT_ACTION_BTN =
     "inline-flex items-center justify-center rounded p-1 text-[var(--muted-foreground)]/40 transition-colors hover:bg-[var(--muted)]/30 hover:text-[var(--muted-foreground)] dark:text-white/20 dark:hover:bg-white/10 dark:hover:text-white/60";
+  const LOG_SEGMENT_ACTION_BTN =
+    "rounded p-1 text-white/45 opacity-100 transition-all hover:bg-white/10 hover:text-white/60 md:text-white/20 md:opacity-0 md:group-hover/logseg:opacity-100";
   const combatMetaButton = onRequestCombatStart ? (
     <button
       type="button"
@@ -3766,7 +3781,13 @@ export function GameNarration({
       </div>
     ) : null;
 
-  const renderStackedLogSegment = (seg: NarrationSegment, entryMessageId: string) => {
+  const renderPeekPromptButton = (messageId: string, className: string) => (
+    <Suspense fallback={null}>
+      <GamePeekPromptButton messageId={messageId} className={className} onPeekPrompt={onPeekPrompt!} />
+    </Suspense>
+  );
+
+  const renderStackedLogSegment = (seg: NarrationSegment, entryMessageId: string, showMessageActions: boolean) => {
     const sourceMessageId = seg.sourceMessageId ?? entryMessageId;
     const hasSourceSegmentIndex = seg.sourceSegmentIndex != null;
     const sourceSegmentIndex = seg.sourceSegmentIndex ?? 0;
@@ -3786,6 +3807,13 @@ export function GameNarration({
     const canDeleteMessage =
       !!onDeleteMessage && !!sourceMessageId && (isUserAuthoredSource || sourceRole === "system");
     const canBranchMessage = !!onBranchMessage && !!sourceMessageId && isUserAuthoredSource;
+    const sourceMessage = sourceMessageId ? (sourceMessagesById.get(sourceMessageId) ?? null) : null;
+    const canPeekPrompt =
+      showMessageActions &&
+      !!onPeekPrompt &&
+      !!sourceMessageId &&
+      (sourceMessageRole === "assistant" || sourceMessageRole === "narrator") &&
+      hasExactCachedPrompt(sourceMessage);
     const canDeleteThisSegment =
       !!onDeleteSegment &&
       !!sourceMessageId &&
@@ -3832,6 +3860,9 @@ export function GameNarration({
         <GitBranch size={11} />
       </button>
     ) : null;
+    const peekPromptButton = canPeekPrompt
+      ? renderPeekPromptButton(sourceMessageId, stackedActionButtonClass)
+      : null;
     const deleteButton = showDeleteButton ? (
       <button
         type="button"
@@ -3908,13 +3939,14 @@ export function GameNarration({
       </>
     ) : null;
     const actionButtons =
-      deleteButton || branchButton || copyButton || editButtons ? (
+      deleteButton || branchButton || peekPromptButton || copyButton || editButtons ? (
         <div
           onPointerDown={stopLogActionPointerDown}
           onClick={(event) => event.stopPropagation()}
           className="absolute right-1.5 top-1.5 z-10 flex items-center gap-0.5"
         >
           {branchButton}
+          {peekPromptButton}
           {deleteButton}
           {copyButton}
           {editButtons}
@@ -4260,7 +4292,7 @@ export function GameNarration({
               >
                 {stackedLogEntries.map((entry) => (
                   <div key={entry.messageId} className="space-y-1.5">
-                    {entry.segments.map((seg) => renderStackedLogSegment(seg, entry.messageId))}
+                    {entry.segments.map((seg, index) => renderStackedLogSegment(seg, entry.messageId, index === 0))}
                   </div>
                 ))}
               </div>
@@ -4922,7 +4954,7 @@ export function GameNarration({
                 const entryIsTranslating = sourceMessage ? !!translating[entry.messageId] : false;
                 return (
                   <div key={entry.messageId} className="space-y-1.5">
-                    {entry.segments.map((seg) => {
+                    {entry.segments.map((seg, entrySegmentIndex) => {
                       const sourceMessageId = seg.sourceMessageId ?? entry.messageId;
                       const hasSourceSegmentIndex = seg.sourceSegmentIndex != null;
                       const sourceSegmentIndex = seg.sourceSegmentIndex ?? 0;
@@ -4980,6 +5012,15 @@ export function GameNarration({
                       const canDeleteMessage =
                         !!onDeleteMessage && !!sourceMessageId && (isUserAuthoredSource || sourceRole === "system");
                       const canBranchMessage = !!onBranchMessage && !!sourceMessageId && isUserAuthoredSource;
+                      const promptSourceMessage = sourceMessageId
+                        ? (sourceMessagesById.get(sourceMessageId) ?? null)
+                        : null;
+                      const canPeekPrompt =
+                        entrySegmentIndex === 0 &&
+                        !!onPeekPrompt &&
+                        !!sourceMessageId &&
+                        (sourceMessageRole === "assistant" || sourceMessageRole === "narrator") &&
+                        hasExactCachedPrompt(promptSourceMessage);
                       const canDeleteThisSegment =
                         !!onDeleteSegment &&
                         !!sourceMessageId &&
@@ -5008,7 +5049,7 @@ export function GameNarration({
                           type="button"
                           onPointerDown={stopLogActionPointerDown}
                           onClick={(event) => handleLogCopyButtonClick(event, copyKey, copyText)}
-                          className="rounded p-1 text-white/45 opacity-100 transition-all hover:bg-white/10 hover:text-white/60 md:text-white/20 md:opacity-0 md:group-hover/logseg:opacity-100"
+                          className={LOG_SEGMENT_ACTION_BTN}
                           title="Copy"
                         >
                           {copiedMessageKey === copyKey ? <Check size={11} /> : <Copy size={11} />}
@@ -5024,13 +5065,16 @@ export function GameNarration({
                             onBranchMessage?.(sourceMessageId);
                             setLogsOpen(false);
                           }}
-                          className="rounded p-1 text-white/45 opacity-100 transition-all hover:bg-white/10 hover:text-white/60 md:text-white/20 md:opacity-0 md:group-hover/logseg:opacity-100"
+                          className={LOG_SEGMENT_ACTION_BTN}
                           title="Branch from here"
                           aria-label="Branch from here"
                         >
                           <GitBranch size={11} />
                         </button>
                       ) : null;
+                      const peekPromptButton = canPeekPrompt
+                        ? renderPeekPromptButton(sourceMessageId, LOG_SEGMENT_ACTION_BTN)
+                        : null;
                       const deleteButton = showDeleteButton ? (
                         <button
                           type="button"
@@ -5164,7 +5208,7 @@ export function GameNarration({
                                 });
                                 restoreLogScrollTop(scrollTop);
                               }}
-                              className="rounded p-1 text-white/45 opacity-100 transition-all hover:bg-white/10 hover:text-white/60 md:text-white/20 md:opacity-0 md:group-hover/logseg:opacity-100"
+                              className={LOG_SEGMENT_ACTION_BTN}
                               title="Edit"
                             >
                               <Pencil size={11} />
@@ -5197,13 +5241,14 @@ export function GameNarration({
                       );
 
                       const actionButtons =
-                        deleteButton || branchButton || copyButton || editButtons ? (
+                        deleteButton || branchButton || peekPromptButton || copyButton || editButtons ? (
                           <div
                             onPointerDown={stopLogActionPointerDown}
                             onClick={(event) => event.stopPropagation()}
                             className="absolute right-1.5 top-1.5 z-10 flex items-center gap-0.5"
                           >
                             {branchButton}
+                            {peekPromptButton}
                             {deleteButton}
                             {copyButton}
                             {editButtons}

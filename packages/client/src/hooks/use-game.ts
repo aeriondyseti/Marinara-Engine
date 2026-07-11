@@ -312,6 +312,14 @@ export function useConcludeSession() {
       });
       qc.invalidateQueries({ queryKey: chatKeys.detail(variables.chatId) });
       qc.invalidateQueries({ queryKey: chatKeys.messages(variables.chatId) });
+      // Game Lorebook Keeper finishes in the background after the conclusion
+      // response. Refresh the chat at bounded intervals so its running/failure
+      // state and retry action appear without requiring a page reload.
+      for (const delay of [1_500, 5_000, 15_000, 30_000, 60_000, 120_000]) {
+        window.setTimeout(() => {
+          void qc.invalidateQueries({ queryKey: chatKeys.detail(variables.chatId) });
+        }, delay);
+      }
     },
     onError: (err, variables) => {
       console.error("[game/session/conclude] Error:", err);

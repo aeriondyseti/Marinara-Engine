@@ -197,6 +197,7 @@ const CREATE_TABLES: string[] = [
     content TEXT NOT NULL DEFAULT '',
     source_run_id TEXT,
     source_post_id TEXT,
+    source_interaction_id TEXT,
     created_at TEXT NOT NULL
   )`,
   `CREATE TABLE IF NOT EXISTS noodle_refresh_runs (
@@ -1206,6 +1207,11 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
     column: "image_url",
     definition: "TEXT",
   },
+  {
+    table: "noodle_activity_digests",
+    column: "source_interaction_id",
+    definition: "TEXT",
+  },
 ];
 
 /**
@@ -1406,6 +1412,11 @@ export async function runMigrations(db: DB) {
   );
   await db.run(
     sql.raw(`CREATE INDEX IF NOT EXISTS idx_noodle_digests_created ON noodle_activity_digests(created_at DESC)`),
+  );
+  await db.run(
+    sql.raw(
+      `CREATE INDEX IF NOT EXISTS idx_noodle_digests_interaction ON noodle_activity_digests(source_interaction_id)`,
+    ),
   );
   await db.run(sql.raw(`CREATE INDEX IF NOT EXISTS idx_custom_themes_active ON custom_themes(is_active)`));
   await db.run(sql.raw(`CREATE INDEX IF NOT EXISTS idx_chat_presets_mode_active ON chat_presets(mode, is_active)`));

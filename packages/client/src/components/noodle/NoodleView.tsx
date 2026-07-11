@@ -874,6 +874,10 @@ export function NoodleView() {
   const inlineComposerRef = useRef<HTMLTextAreaElement | null>(null);
   const modalComposerRef = useRef<HTMLTextAreaElement | null>(null);
   const replyComposerRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerValueRef = useRef("");
+  const composerHasTextRef = useRef(false);
+  const replyValueRef = useRef("");
+  const replyHasTextRef = useRef(false);
   const replyImageFileRef = useRef<HTMLInputElement | null>(null);
   const avatarFileRef = useRef<HTMLInputElement | null>(null);
   const bannerFileRef = useRef<HTMLInputElement | null>(null);
@@ -915,6 +919,7 @@ export function NoodleView() {
 
   const [selectedPersonaId, setSelectedPersonaId] = useState("");
   const [composer, setComposer] = useState("");
+  const [composerHasText, setComposerHasText] = useState(false);
   const [activeMention, setActiveMention] = useState<ActiveComposerMention | null>(null);
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const [postSearch, setPostSearch] = useState("");
@@ -938,6 +943,7 @@ export function NoodleView() {
   const [replyPostId, setReplyPostId] = useState<string | null>(null);
   const [replyParentInteractionId, setReplyParentInteractionId] = useState<string | null>(null);
   const [replyText, setReplyText] = useState("");
+  const [replyHasText, setReplyHasText] = useState(false);
   const [activeReplyMention, setActiveReplyMention] = useState<ActiveComposerMention | null>(null);
   const [activeReplyMentionIndex, setActiveReplyMentionIndex] = useState(0);
   const [replyImageUrl, setReplyImageUrl] = useState("");
@@ -1188,14 +1194,19 @@ export function NoodleView() {
 
   const appendToComposer = (text: string) => {
     const textarea = composeOpen ? modalComposerRef.current : inlineComposerRef.current;
-    const source = textarea?.value ?? composer;
+    const source = textarea?.value ?? composerValueRef.current;
     const inserted = insertAtSelection(
       source,
       text,
       textarea?.selectionStart ?? source.length,
       textarea?.selectionEnd ?? textarea?.selectionStart ?? source.length,
     );
+    composerValueRef.current = inserted.value;
+    const hasText = Boolean(inserted.value.trim());
+    composerHasTextRef.current = hasText;
+    setComposerHasText(hasText);
     setComposer(inserted.value);
+    if (textarea) textarea.value = inserted.value;
     setActiveMention(null);
     setActiveMentionIndex(0);
     window.requestAnimationFrame(() => {
@@ -1239,14 +1250,19 @@ export function NoodleView() {
 
   const appendToReply = (text: string) => {
     const textarea = replyComposerRef.current;
-    const source = textarea?.value ?? replyText;
+    const source = textarea?.value ?? replyValueRef.current;
     const inserted = insertAtSelection(
       source,
       text,
       textarea?.selectionStart ?? source.length,
       textarea?.selectionEnd ?? textarea?.selectionStart ?? source.length,
     );
+    replyValueRef.current = inserted.value;
+    const hasText = Boolean(inserted.value.trim());
+    replyHasTextRef.current = hasText;
+    setReplyHasText(hasText);
     setReplyText(inserted.value);
+    if (textarea) textarea.value = inserted.value;
     setActiveReplyMention(null);
     setActiveReplyMentionIndex(0);
     window.requestAnimationFrame(() => {
@@ -1291,6 +1307,10 @@ export function NoodleView() {
     setReplyPostId(null);
     setReplyParentInteractionId(null);
     setReplyText("");
+    replyValueRef.current = "";
+    replyHasTextRef.current = false;
+    setReplyHasText(false);
+    if (replyComposerRef.current) replyComposerRef.current.value = "";
     setActiveReplyMention(null);
     setActiveReplyMentionIndex(0);
     setReplyImageUrl("");
@@ -1306,6 +1326,9 @@ export function NoodleView() {
     setReplyPostId(postId);
     setReplyParentInteractionId(parentInteractionId);
     setReplyText("");
+    replyValueRef.current = "";
+    replyHasTextRef.current = false;
+    setReplyHasText(false);
     setActiveReplyMention(null);
     setActiveReplyMentionIndex(0);
     setReplyImageUrl("");
@@ -1382,7 +1405,7 @@ export function NoodleView() {
       </section>
     ) : null;
 
-  const canSubmitPost = Boolean(personaAccount && (composer.trim() || attachedImageUrl.trim() || draftPoll));
+  const canSubmitPost = Boolean(personaAccount && (composerHasText || attachedImageUrl.trim() || draftPoll));
   const confirmActionPending =
     confirmAction?.kind === "delete-post"
       ? deletePost.isPending
@@ -1811,21 +1834,32 @@ export function NoodleView() {
 
   const handleComposerChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
     const value = event.target.value;
-    setComposer(value);
-    setActiveMention(activeComposerMention(value, event.target.selectionStart ?? value.length));
-    setActiveMentionIndex(0);
+    composerValueRef.current = value;
+    const hasText = Boolean(value.trim());
+    if (hasText !== composerHasTextRef.current) {
+      composerHasTextRef.current = hasText;
+      setComposerHasText(hasText);
+    }
+    const nextMention = activeComposerMention(value, event.target.selectionStart ?? value.length);
+    if (nextMention || activeMention) setActiveMention(nextMention);
+    if (activeMentionIndex !== 0) setActiveMentionIndex(0);
   };
 
   const selectComposerMention = (account: NoodleAccount) => {
     if (!activeMention) return;
     const insertedMention = `@${account.handle} `;
-    const nextComposer = composer.slice(0, activeMention.start) + insertedMention + composer.slice(activeMention.end);
+    const source = composerValueRef.current;
+    const nextComposer = source.slice(0, activeMention.start) + insertedMention + source.slice(activeMention.end);
     const nextCaret = activeMention.start + insertedMention.length;
+    composerValueRef.current = nextComposer;
+    composerHasTextRef.current = Boolean(nextComposer.trim());
+    setComposerHasText(composerHasTextRef.current);
     setComposer(nextComposer);
     setActiveMention(null);
     setActiveMentionIndex(0);
     window.requestAnimationFrame(() => {
       const textarea = composeOpen ? modalComposerRef.current : inlineComposerRef.current;
+      if (textarea) textarea.value = nextComposer;
       textarea?.focus();
       textarea?.setSelectionRange(nextCaret, nextCaret);
     });
@@ -1867,21 +1901,31 @@ export function NoodleView() {
 
   const handleReplyChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
     const value = event.target.value;
-    setReplyText(value);
-    setActiveReplyMention(activeComposerMention(value, event.target.selectionStart ?? value.length));
-    setActiveReplyMentionIndex(0);
+    replyValueRef.current = value;
+    const hasText = Boolean(value.trim());
+    if (hasText !== replyHasTextRef.current) {
+      replyHasTextRef.current = hasText;
+      setReplyHasText(hasText);
+    }
+    const nextMention = activeComposerMention(value, event.target.selectionStart ?? value.length);
+    if (nextMention || activeReplyMention) setActiveReplyMention(nextMention);
+    if (activeReplyMentionIndex !== 0) setActiveReplyMentionIndex(0);
   };
 
   const selectReplyMention = (account: NoodleAccount) => {
     if (!activeReplyMention) return;
     const insertedMention = `@${account.handle} `;
-    const nextReply =
-      replyText.slice(0, activeReplyMention.start) + insertedMention + replyText.slice(activeReplyMention.end);
+    const source = replyValueRef.current;
+    const nextReply = source.slice(0, activeReplyMention.start) + insertedMention + source.slice(activeReplyMention.end);
     const nextCaret = activeReplyMention.start + insertedMention.length;
+    replyValueRef.current = nextReply;
+    replyHasTextRef.current = Boolean(nextReply.trim());
+    setReplyHasText(replyHasTextRef.current);
     setReplyText(nextReply);
     setActiveReplyMention(null);
     setActiveReplyMentionIndex(0);
     window.requestAnimationFrame(() => {
+      if (replyComposerRef.current) replyComposerRef.current.value = nextReply;
       replyComposerRef.current?.focus();
       replyComposerRef.current?.setSelectionRange(nextCaret, nextCaret);
     });
@@ -1939,7 +1983,7 @@ export function NoodleView() {
 
   const submitPost = () => {
     if (!personaAccount || !canSubmitPost) return;
-    const content = composer.trim() || draftPoll?.question || "Shared an image.";
+    const content = composerValueRef.current.trim() || draftPoll?.question || "Shared an image.";
     createPost.mutate(
       {
         authorKind: "persona",
@@ -1950,7 +1994,12 @@ export function NoodleView() {
       },
       {
         onSuccess: () => {
+          composerValueRef.current = "";
+          composerHasTextRef.current = false;
+          if (inlineComposerRef.current) inlineComposerRef.current.value = "";
+          if (modalComposerRef.current) modalComposerRef.current.value = "";
           setComposer("");
+          setComposerHasText(false);
           setActiveMention(null);
           setAttachedImageUrl("");
           setDraftPoll(null);
@@ -2011,14 +2060,15 @@ export function NoodleView() {
   };
 
   const submitReply = (post: NoodlePost) => {
-    if (!personaAccount || (!replyText.trim() && !replyImageUrl.trim())) return;
+    const replyContent = replyValueRef.current.trim();
+    if (!personaAccount || (!replyContent && !replyImageUrl.trim())) return;
     createInteraction.mutate(
       {
         postId: post.id,
         actorKind: "persona",
         actorEntityId: personaAccount.entityId,
         type: "reply",
-        content: replyText.trim() || null,
+        content: replyContent || null,
         imageUrl: replyImageUrl.trim() || null,
         parentInteractionId: replyParentInteractionId,
       },
@@ -2248,6 +2298,7 @@ export function NoodleView() {
   };
 
   const closeComposeModal = useCallback(() => {
+    setComposer(composerValueRef.current);
     setComposeOpen(false);
     setActiveMention(null);
     setActiveComposerTool(null);
@@ -3065,8 +3116,9 @@ export function NoodleView() {
         )}
         <textarea
           ref={replyComposerRef}
-          value={replyText}
+          defaultValue={replyText}
           onChange={handleReplyChange}
+          onBlur={() => setReplyText(replyValueRef.current)}
           onKeyDown={handleReplyKeyDown}
           className={cn(textareaClass, "min-h-16 resize-none bg-transparent")}
           placeholder="Leave a comment…"
@@ -3142,7 +3194,7 @@ export function NoodleView() {
             <button
               type="button"
               className="h-8 rounded-full bg-[var(--noodle-blue)] px-4 text-xs font-bold text-zinc-950 transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={(!replyText.trim() && !replyImageUrl.trim()) || postReplyPending}
+              disabled={(!replyHasText && !replyImageUrl.trim()) || postReplyPending}
               onClick={() => submitReply(post)}
             >
               {postReplyPending ? "Replying…" : "Reply"}
@@ -4111,6 +4163,7 @@ export function NoodleView() {
                 <button
                   type="button"
                   onClick={() => {
+                    setComposer(composerValueRef.current);
                     setComposeOpen(true);
                     setActiveComposerTool(null);
                     setMobileDrawerOpen(false);
@@ -4257,6 +4310,7 @@ export function NoodleView() {
               <button
                 type="button"
                 onClick={() => {
+                  setComposer(composerValueRef.current);
                   setComposeOpen(true);
                   setActiveComposerTool(null);
                 }}
@@ -4399,7 +4453,7 @@ export function NoodleView() {
                   </div>
                 ))}
 
-              {activeNoodleView === "home" && !isAccountSearch && (
+              {activeNoodleView === "home" && !isAccountSearch && !composeOpen && (
                 <div
                   className="border-b border-[var(--noodle-divider)] px-4 py-3"
                   data-component="NoodleView.InlineComposer"
@@ -4413,8 +4467,9 @@ export function NoodleView() {
                     <div className="min-w-0">
                       <textarea
                         ref={inlineComposerRef}
-                        value={composer}
+                        defaultValue={composer}
                         onChange={handleComposerChange}
+                        onBlur={() => setComposer(composerValueRef.current)}
                         onKeyDown={handleComposerKeyDown}
                         disabled={!personaAccount}
                         placeholder="What's simmering?"
@@ -5026,8 +5081,9 @@ export function NoodleView() {
                   <textarea
                     ref={modalComposerRef}
                     autoFocus
-                    value={composer}
+                    defaultValue={composer}
                     onChange={handleComposerChange}
+                    onBlur={() => setComposer(composerValueRef.current)}
                     onKeyDown={handleComposerKeyDown}
                     disabled={!personaAccount}
                     placeholder="What's simmering?"

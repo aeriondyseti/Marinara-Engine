@@ -62,6 +62,7 @@ export const noodleActivityDigests = sqliteTable("noodle_activity_digests", {
   content: text("content").notNull().default(""),
   sourceRunId: text("source_run_id"),
   sourcePostId: text("source_post_id"),
+  sourceInteractionId: text("source_interaction_id"),
   createdAt: text("created_at").notNull(),
 });
 

@@ -106,6 +106,7 @@ export interface NoodleDigestEntry {
   content: string;
   sourceRunId: string | null;
   sourcePostId: string | null;
+  sourceInteractionId: string | null;
   createdAt: string;
 }
 

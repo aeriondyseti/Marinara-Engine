@@ -2,10 +2,11 @@
 
 This file is the release-notes source of truth for Marinara Engine. Reuse these entries when publishing GitHub Releases for tags in the `vX.Y.Z` format.
 
-## [Unreleased]
+## [2.2.0]
 
 ### Added
 
+- Added per-turn **Peek Prompt** actions to Game Mode Logs and **History Above Dialogue Box**, opening the exact cached prompt that was actually sent for that historical GM turn.
 - Added read-only replay for completed Game Mode sessions from Session History, including click-through narration, stored presentation cues, and deterministic choice forks that only permit the option selected during the original session (#3465).
 - Added a selectable **Comic Page Video** prompt for storyboard clips that interprets comic and manga panels as duration-aware ordered animation beats without changing the shared Game Video Prompt.
 - Added an Anime Episode presentation for Game Mode with coordinated **Anime Game Prompt**, **Comic Page Animation**, and **Comic Page Video** defaults; setup-time keyframe targeting; a `{{gameStoryboardKeyframeCount}}` GM macro; and independent storyboard prompt selectors that keep **Anime Episode Director** plus **Anime Game Video** available as the alternative still-shot combination.
@@ -41,6 +42,10 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Fixed
 
+- Fixed provider concurrency-limit failures being reduced to generic agent errors or omitted from generation guidance; affected toasts now identify the concurrency limit and include the provider's message.
+- Fixed new Roleplay chats opening without character greetings because initial character assignment inserted a hidden join notice before greeting seeding (#3472).
+- Fixed the regex safety validator rejecting linear delimiter-bounded field patterns such as `([^|]+)\|([^|]+)\|([^|]+)` as polynomial backtracking risks while retaining rejection of overlapping broad-unbounded chains (#3471).
+- Fixed failed Game Mode Lorebook Keeper runs leaving no obvious recovery path: Session History now surfaces the failure immediately, keeps its background status fresh, and provides a dedicated **Retry Lorebook Keeper** action.
 - Fixed Game Mode status readouts written as standalone `<...>` lines being sanitized into empty narration steps, and removed segments made empty by display regex or macro processing.
 - Fixed Background storyboard playback state leaking between keyframes, which could rapidly pause, restart, or appear to fast-forward animations.
 - Fixed Grok CLI subscription requests failing to spawn (`E2BIG` / "Argument list too long") on long or multibyte-heavy transcripts by delivering the prompt via `--prompt-file` instead of a single inline `-p` argument; with the transport limit gone, an explicitly configured Max Context Window is now honored instead of being silently capped at 32k (the conservative 32k default is unchanged).
@@ -76,9 +81,9 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Fixed the about-me profile popout on mobile (now a full-height sheet so the keyboard and emoji picker no longer overlap the field) and its overflow on desktop when the source panel is opened.
 - Fixed help tooltips stacking — opening one now closes any other.
 
-## [2.1.2]
+### Additional release scope
 
-### Added
+#### Added
 
 - Added Conversation-mode profiles for characters and personas: a separate Convo display name, an "about me" profile (editable by hand or drafted by an AI-write button), and a Convo behavior directive with configurable insertion strategy, all Conversation-mode-only and never sent to the model in Roleplay, Visual Novel, or Game mode (#3368).
 - Added per-chat "about me" overrides (Discord per-server-profile style): click a participant's avatar in Conversation mode to view their effective profile and set, edit, or clear a chat-specific override that supersedes their default about-me in that conversation.
@@ -91,15 +96,15 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 - Added a connected-chat shortcut to Game mode so connected Conversation and Game chats can switch back and forth like Conversation/Roleplay links.
 - Added a scene prompt setup dialog for user- and character-initiated scenes, remembering POV, tense, and optional prompt wishes for the next scene generation.
 
-### Changed
+#### Changed
 
-- Bumped release metadata to v2.1.2 across packages, the PWA manifest, README release pointer, Windows installer sources, Android APK metadata, and the home-page-visible app version.
-- Android `versionName` is `2.1.2` with `versionCode 31`.
+- Bumped release metadata to v2.2.0 across packages, the PWA manifest, README release pointer, Windows installer sources, Android APK metadata, and the home-page-visible app version.
+- Android `versionName` is `2.2.0` with `versionCode 32`.
 - Reworked Settings with search-first navigation, compact pinned controls, fixed top-level categories, and finer section shortcuts for faster navigation.
 - Updated the default Illustrator prompt rules so generated image prompts carry available character builds, clothing/outfits, and appearance details instead of relying on the image model to infer them.
 - Changed custom Roleplay Chat Summary prompts to apply globally across roleplay chats instead of only the currently open chat.
 
-### Fixed
+#### Fixed
 
 - Fixed manual agent retry/rerun requests so only agents currently added to the chat can be resolved, preventing removed agents from being prompted by stale retry requests.
 - Fixed agent prompt assembly so the required output format is appended to the terminal user message after chat history using the selected chat prompt preset wrapper (`<output_format>`, `## Output Format`, or raw text).

@@ -722,7 +722,10 @@ export async function chatsRoutes(app: FastifyInstance) {
             },
           }));
         }
-        for (const id of addedIds) {
+        // An empty chat is still being configured by the setup wizard. Its
+        // character greetings are the opening messages, so do not insert a
+        // hidden join notice that makes the chat appear non-empty first.
+        for (const id of previousIds.length > 0 ? addedIds : []) {
           await storage.createMessage({
             chatId: req.params.id,
             role: "system",
@@ -1903,12 +1906,20 @@ export async function chatsRoutes(app: FastifyInstance) {
     return reply.status(204).send();
   });
 
-  // Peek prompt — assemble the prompt for this chat as if generating right now
-  app.post<{ Params: { id: string } }>("/:id/peek-prompt", async (req, reply) => {
+  // Peek prompt — return an exact saved turn prompt when available, otherwise
+  // assemble the prompt for this chat as if generating right now.
+  app.post<{ Params: { id: string }; Body: { messageId?: unknown } }>("/:id/peek-prompt", async (req, reply) => {
     const chat = await storage.getById(req.params.id);
     if (!chat) return reply.status(404).send({ error: "Chat not found" });
 
     const chatMessages = await storage.listMessages(req.params.id);
+    const requestedMessageId = typeof req.body?.messageId === "string" ? req.body.messageId.trim() : "";
+    const requestedMessage = requestedMessageId
+      ? (chatMessages.find((message) => message.id === requestedMessageId) ?? null)
+      : null;
+    if (requestedMessageId && !requestedMessage) {
+      return reply.status(404).send({ error: "Message not found in this chat" });
+    }
     const chatMeta = typeof chat.metadata === "string" ? JSON.parse(chat.metadata) : (chat.metadata ?? {});
     const chatMode = (chat.mode as string) ?? "roleplay";
     const chatSummaryFingerprint = fingerprintChatSummary(chatMeta.summary);
@@ -1917,6 +1928,7 @@ export async function chatsRoutes(app: FastifyInstance) {
 
     const readCachedPrompt = (
       extra: Record<string, unknown>,
+      allowHistoricalCache = false,
     ): { messages: Array<{ role: string; content: string }>; generationInfo?: Record<string, unknown> } | null => {
       const cachedPrompt = Array.isArray(extra.cachedPrompt)
         ? extra.cachedPrompt
@@ -1934,6 +1946,7 @@ export async function chatsRoutes(app: FastifyInstance) {
       // Older v1.6.1-era caches did not; those are still exact debug-log prompts,
       // so prefer them over the live best-effort fallback.
       if (
+        !allowHistoricalCache &&
         Object.prototype.hasOwnProperty.call(extra, "chatSummaryFingerprint") &&
         !chatSummaryFingerprintMatches(extra, chatSummaryFingerprint)
       ) {
@@ -1957,21 +1970,22 @@ export async function chatsRoutes(app: FastifyInstance) {
       }
       return null;
     })();
+    const promptSourceMessage = requestedMessage ?? latestVisibleMessage;
 
-    if (latestVisibleMessage?.role === "assistant") {
-      const extra = parseExtra(latestVisibleMessage.extra) as Record<string, unknown>;
-      let cached = readCachedPrompt(extra);
+    if (promptSourceMessage?.role === "assistant") {
+      const extra = parseExtra(promptSourceMessage.extra) as Record<string, unknown>;
+      let cached = readCachedPrompt(extra, Boolean(requestedMessage));
 
       // If message-level extra doesn't have it (swipe overwrite), check swipes.
-      if (!cached && latestVisibleMessage.id) {
-        const swipes = await storage.getSwipes(latestVisibleMessage.id);
-        const activeSwipe = swipes.find((s: any) => s.index === latestVisibleMessage.activeSwipeIndex);
+      if (!cached && promptSourceMessage.id) {
+        const swipes = await storage.getSwipes(promptSourceMessage.id);
+        const activeSwipe = swipes.find((s: any) => s.index === promptSourceMessage.activeSwipeIndex);
         if (activeSwipe) {
-          cached = readCachedPrompt(parseExtra(activeSwipe.extra) as Record<string, unknown>);
+          cached = readCachedPrompt(parseExtra(activeSwipe.extra) as Record<string, unknown>, Boolean(requestedMessage));
         }
         if (!cached) {
           for (const sw of swipes) {
-            cached = readCachedPrompt(parseExtra(sw.extra) as Record<string, unknown>);
+            cached = readCachedPrompt(parseExtra(sw.extra) as Record<string, unknown>, Boolean(requestedMessage));
             if (cached) break;
           }
         }
@@ -1984,9 +1998,15 @@ export async function chatsRoutes(app: FastifyInstance) {
           source: "cached",
           exact: true,
           generationInfo: cached.generationInfo ?? null,
-          agentNote: "This is the cached text prompt saved after provider preparation for the active assistant swipe.",
+          agentNote: requestedMessage
+            ? "This is the exact cached text prompt sent for the selected Game Mode turn."
+            : "This is the cached text prompt saved after provider preparation for the active assistant swipe.",
         };
       }
+    }
+
+    if (requestedMessage) {
+      return reply.status(404).send({ error: "No exact saved prompt is available for this game turn" });
     }
 
     // ── Fallback: live assembly preview (no generation has happened yet) ──

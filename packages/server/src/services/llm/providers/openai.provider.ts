@@ -23,7 +23,7 @@ import {
   shouldSuppressUnknownModelParameters,
 } from "@marinara-engine/shared";
 import { logger } from "../../../lib/logger.js";
-import { applyGlmThinkingParameters, isNativeGlmEndpoint } from "./glm-request-compat.js";
+import { applyGlmThinkingParameters } from "./glm-request-compat.js";
 
 /**
  * Models that ONLY support the Responses API (`/responses`) and not Chat Completions.
@@ -75,6 +75,32 @@ type OpenAIProviderKind =
   | "custom"
   | "openai-chatgpt"
   | "local-sidecar";
+
+export function normalizeOpenAIChatCompletionsResponseFormat(
+  responseFormat: { type: string; [key: string]: unknown } | undefined,
+): unknown | undefined {
+  if (!responseFormat) return undefined;
+
+  if (responseFormat.type === "json_schema") {
+    if (responseFormat.json_schema && typeof responseFormat.json_schema === "object") return responseFormat;
+    if (
+      typeof responseFormat.name === "string" &&
+      responseFormat.schema &&
+      typeof responseFormat.schema === "object"
+    ) {
+      return {
+        type: "json_schema",
+        json_schema: {
+          name: responseFormat.name,
+          schema: responseFormat.schema,
+          strict: responseFormat.strict === true,
+        },
+      };
+    }
+  }
+
+  return responseFormat;
+}
 
 /**
  * Handles OpenAI, OpenRouter, Mistral, Cohere, and any OpenAI-compatible endpoint.
@@ -246,17 +272,7 @@ export class OpenAIProvider extends BaseLLMProvider {
   }
 
   private normalizeChatCompletionsResponseFormat(responseFormat?: { type: string }): unknown | undefined {
-    if (!responseFormat) return undefined;
-
-    if (
-      this.isGenericCustomProvider() &&
-      !isNativeGlmEndpoint(this.baseUrl) &&
-      responseFormat.type === "json_object"
-    ) {
-      return { type: "json_schema", json_schema: { name: "response", schema: { type: "object" }, strict: true } };
-    }
-
-    return responseFormat;
+    return normalizeOpenAIChatCompletionsResponseFormat(responseFormat);
   }
 
   /**

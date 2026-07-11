@@ -190,7 +190,7 @@ The Music DJ agent's Spotify mode uses OAuth. OAuth is a login handoff where Spo
 - If HTTPS is terminated upstream and the host does not match, set `SPOTIFY_REDIRECT_URI` in `.env` to your public callback address.
 - On a plain-HTTP network install, the popup cannot load, but the address bar still holds a valid code. Copy the full URL from the popup. Then expand **Browser couldn't reach the callback?** under the Connect button and paste it. The pasted URL is valid for 10 minutes.
 
-The cleanest long-term fix is to put the server behind HTTPS. Last checked against Marinara Engine 2.1.2. Spotify tightened these rules in February 2025.
+The cleanest long-term fix is to put the server behind HTTPS. Last checked against Marinara Engine 2.2.0. Spotify tightened these rules in February 2025.
 
 ## Storage and data
 
@@ -248,7 +248,7 @@ If a Docker or Podman container fails with permission errors on the data volume:
 
 If the lite container restarts whenever it sends an AI request on a Raspberry Pi 4 or similar ARM device, check the exit code. Exit 132 or SIGILL points to a known upstream problem in the lite image's Node build on some ARM chips. SIGILL means the program hit an instruction the CPU cannot run.
 
-The regular (non-lite) image is not affected. Until the upstream fix ships, use the regular image on that device. Known affected lite images include `1.5.7-lite` and `1.5.8-lite`. Last checked against Marinara Engine 2.1.2.
+The regular (non-lite) image is not affected. Until the upstream fix ships, use the regular image on that device. Known affected lite images include `1.5.7-lite` and `1.5.8-lite`. Last checked against Marinara Engine 2.2.0.
 
 ## Getting more help
 

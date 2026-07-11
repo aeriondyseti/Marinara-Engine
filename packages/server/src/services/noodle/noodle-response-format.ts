@@ -76,20 +76,8 @@ const timelineSchema = {
         additionalProperties: false,
       },
     },
-    digests: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          accountEntityIds: { type: "array", items: { type: "string" } },
-          content: { type: "string" },
-        },
-        required: ["accountEntityIds", "content"],
-        additionalProperties: false,
-      },
-    },
   },
-  required: ["posts", "interactions", "follows", "digests"],
+  required: ["posts", "interactions", "follows"],
   additionalProperties: false,
 } as const;
 

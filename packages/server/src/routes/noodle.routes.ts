@@ -753,12 +753,6 @@ async function buildRefreshPrompt(input: {
             targetEntityId: "exact entityId from Active Noodle Accounts",
           },
         ],
-        digests: [
-          {
-            accountEntityIds: ["entity ids affected by this event"],
-            content: "short durable summary suitable for later chat context",
-          },
-        ],
       },
       null,
       2,
@@ -1261,6 +1255,7 @@ export async function noodleRoutes(app: FastifyInstance) {
         ),
         content: `${actor.displayName} ${interactionDigestVerb(parsed.data.type)} a Noodle post: ${interactionSummary}`,
         sourcePostId: post.id,
+        sourceInteractionId: interaction.id,
       });
     }
     return interaction;
@@ -1294,6 +1289,30 @@ export async function noodleRoutes(app: FastifyInstance) {
     if (!content && !imageUrl) return reply.code(400).send({ error: "Comments need text or an image." });
     const updated = await noodle.updateInteraction(interactionId, { content, imageUrl });
     if (!updated) return reply.code(404).send({ error: "Noodle comment not found" });
+    const [post, accounts] = await Promise.all([noodle.getPostById(postId), noodle.listAccounts()]);
+    if (post && interactionActor) {
+      const directReplyTarget = updated.parentInteractionId
+        ? (await noodle.getInteractionById(updated.parentInteractionId))
+        : null;
+      const mentionedAccounts = mentionedCharacterAccounts(accounts, updated.content ?? "");
+      await noodle.createDigest({
+        accountIds: Array.from(
+          new Set(
+            [
+              interactionActor.id,
+              post.authorAccountId,
+              directReplyTarget?.actorAccountId,
+              ...mentionedAccounts.map((account) => account.id),
+            ].filter(Boolean) as string[],
+          ),
+        ),
+        content: `${interactionActor.displayName} replied to a Noodle post: ${
+          updated.content || (updated.imageUrl ? "shared an image" : post.content)
+        }`,
+        sourcePostId: post.id,
+        sourceInteractionId: updated.id,
+      });
+    }
     return updated;
   });
 
@@ -1661,6 +1680,7 @@ export async function noodleRoutes(app: FastifyInstance) {
             )} a Noodle post: ${interactionSummary}`,
             sourceRunId: runId,
             sourcePostId: targetPostId,
+            sourceInteractionId: interaction.id,
           });
         }
       }
@@ -1697,14 +1717,6 @@ export async function noodleRoutes(app: FastifyInstance) {
           content: `${actor.displayName} followed ${target.displayName} on Noodle.`,
           sourceRunId: runId,
         });
-      }
-
-      for (const digest of generated.digests) {
-        const accountIds = digest.accountEntityIds
-          .map((entityId) => entityToAccount.get(entityId)?.id)
-          .filter((id): id is string => !!id);
-        if (accountIds.length === 0) continue;
-        await noodle.createDigest({ accountIds, content: digest.content, sourceRunId: runId });
       }
 
       await noodle.finishRefreshRun(runId, { status: "completed", result: content });
