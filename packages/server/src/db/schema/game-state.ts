@@ -15,6 +15,8 @@ export const gameStateSnapshots = sqliteTable("game_state_snapshots", {
   location: text("location"),
   weather: text("weather"),
   temperature: text("temperature"),
+  /** JSON array of user-defined world fields */
+  worldCustomFields: text("world_custom_fields").notNull().default("[]"),
 
   /** JSON array of PresentCharacter objects */
   presentCharacters: text("present_characters").notNull().default("[]"),

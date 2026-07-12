@@ -14,14 +14,14 @@ A widget only appears when its tracker agent is turned on for the chat. You turn
 
 There are six tracker widgets. Each one needs its own agent enabled to appear.
 
-| Widget | Needs this agent | Shows |
-|---|---|---|
-| **World State** | World State | Location, date, time, weather, and temperature |
-| **Persona Stats** | Persona Stats | Your persona's status bars and a status line |
-| **Present Characters** | Character Tracker | Who is in the scene, with mood and appearance |
-| **Inventory** | Persona Stats | Items you are carrying, with quantities |
-| **Active Quests** | Quest Tracker | Your current objective |
-| **Custom Tracker** | Custom Tracker | Your own named fields, such as counters or currency |
+| Widget                 | Needs this agent  | Shows                                                                            |
+| ---------------------- | ----------------- | -------------------------------------------------------------------------------- |
+| **World State**        | World State       | Location, date, time, weather, temperature, and your custom world fields         |
+| **Persona Stats**      | Persona Stats     | Your persona's status bars and a status line                                     |
+| **Present Characters** | Character Tracker | Who is in the scene, with mood, appearance, and character-specific custom fields |
+| **Inventory**          | Persona Stats     | Items you are carrying, with quantities                                          |
+| **Active Quests**      | Quest Tracker     | Your current objective                                                           |
+| **Custom Tracker**     | Custom Tracker    | Your own named fields, such as counters or currency                              |
 
 Note that the **Inventory** widget is driven by the same **Persona Stats** agent that powers the **Persona Stats** widget. Turn on **Persona Stats** to get both.
 
@@ -33,9 +33,9 @@ Click any widget to open its popover. A popover is a small floating panel. Every
 
 Here is what each popover lets you edit:
 
-- **World State**: the **Location**, **Date**, **Time**, **Weather**, and **Temperature** rows.
+- **World State**: the **Location**, **Date**, **Time**, **Weather**, **Temperature**, and custom world-field rows.
 - **Persona Stats**: a **Status** line, plus named stat bars with a current value and a max value. You can add or remove bars.
-- **Present Characters**: add or remove characters, and edit each one's emoji, name, **Mood**, **Look**, **Outfit**, and **Thinks** (private thoughts). You can upload an avatar per character. An **Auto** button toggles "Auto-generate avatars: ON" or "Auto-generate avatars: OFF".
+- **Present Characters**: add or remove characters, and edit each one's emoji, name, **Mood**, **Look**, **Outfit**, **Thinks** (private thoughts), and custom field values. You can upload an avatar per character. An **Auto** button toggles "Auto-generate avatars: ON" or "Auto-generate avatars: OFF".
 - **Inventory**: add or remove items, and edit each item's name and quantity.
 - **Active Quests**: add or remove quests. Each quest has named objectives with completion checkboxes.
 - **Custom Tracker**: add, remove, or edit name and value fields.
@@ -68,6 +68,14 @@ The sparkle icon at the start of the HUD row opens the **Agents & Actions** menu
 ## The Tracker Panel
 
 The **Tracker Panel** is a larger side panel that shows the same tracker data as the compact HUD widgets. It gives the tracker cards more room and adds portrait and thought features. You set it up in **Settings**, under the **Appearance** tab, in the **Tracker Panel** section.
+
+The controls in the panel header also let you customize tracker structure:
+
+- Click **+** to enter add mode. The World section gains **Add world field**, and each present-character card gains **Add custom field**. Field names remain visible in normal mode so their values are always understandable.
+- Click the trash icon to enter delete mode, then remove custom world or character fields. Removing a field also removes its saved field locks.
+- Click the lock icon to enter lock mode. Custom field values follow the same lock behavior as built-in tracker values.
+
+Custom field names define the structure and remain stable across tracker runs. Tracker agents update their values when the story changes them, while omitted agent output does not erase fields you created.
 
 These settings control it:
 

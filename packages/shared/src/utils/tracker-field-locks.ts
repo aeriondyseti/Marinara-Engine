@@ -7,7 +7,12 @@ import type {
   PresentCharacter,
   QuestProgress,
   TrackerFieldLocks,
+  WorldCustomField,
 } from "../types/game-state.js";
+import {
+  DEFAULT_WORLD_CUSTOM_FIELD_ICON,
+  normalizeWorldCustomFields,
+} from "../constants/tracker-custom-field-icons.js";
 
 type WorldTrackerField = "date" | "time" | "location" | "weather" | "temperature";
 type TextCharacterField = "emoji" | "name" | "mood" | "appearance" | "outfit" | "thoughts";
@@ -223,6 +228,21 @@ function shiftIndexedReferenceLocks(
 
 export function worldTrackerLockKey(field: WorldTrackerField) {
   return `world.${field}`;
+}
+
+export function worldCustomFieldTrackerLockKey(
+  fieldOrIndex: Pick<WorldCustomField, "name"> | number | null | undefined,
+  field: CustomTrackerFieldKey,
+  index?: number,
+) {
+  return `${worldCustomFieldTrackerLockPrefix(fieldOrIndex, index)}.${field}`;
+}
+
+export function worldCustomFieldTrackerLockPrefix(
+  fieldOrIndex: Pick<WorldCustomField, "name"> | number | null | undefined,
+  index?: number,
+) {
+  return `world.custom.${namedRowLockRef(fieldOrIndex, index)}`;
 }
 
 export function personaStatusTrackerLockKey() {
@@ -476,6 +496,12 @@ export function normalizeTrackerFieldLocksForState(
         );
       }
     });
+  });
+
+  state.worldCustomFields?.forEach((field, index) => {
+    for (const key of ["name", "value"] as const) {
+      replaceLockKey(next, `world.custom.${index}.${key}`, worldCustomFieldTrackerLockKey(field, key, index));
+    }
   });
 
   const playerStats = getPlayerStats(state);
@@ -792,7 +818,7 @@ function mergeCharacterCustomFieldsWithLocks(
   character: PresentCharacter,
   characterIndex: number,
 ): Record<string, string> | undefined {
-  let next = nextFields ? { ...nextFields } : null;
+  let next = nextFields ? { ...(currentFields ?? {}), ...nextFields } : currentFields ? { ...currentFields } : null;
   const current = currentFields ?? {};
   let hasLockedField = false;
   for (const [name, value] of Object.entries(current)) {
@@ -810,7 +836,42 @@ function mergeCharacterCustomFieldsWithLocks(
       (next ??= {})[name] = valueLocked ? value : typeof nextValue === "string" ? nextValue : value;
     }
   }
-  return nextFields || hasLockedField ? (next ?? undefined) : undefined;
+  return nextFields || hasLockedField || Object.keys(current).length > 0 ? (next ?? undefined) : undefined;
+}
+
+function mergeWorldCustomFieldsWithLocks(
+  nextFields: WorldCustomField[],
+  currentFields: WorldCustomField[] | null | undefined,
+  locks: TrackerFieldLocks,
+) {
+  const current = normalizeWorldCustomFields(currentFields);
+  const nextNormalizedFields = normalizeWorldCustomFields(nextFields);
+  const nextByName = new Map<string, WorldCustomField>();
+  nextNormalizedFields.forEach((field) => {
+    const key = normalizeComparableText(field.name);
+    if (key) nextByName.set(key, field);
+  });
+
+  const currentNames = new Set(current.map((field) => normalizeComparableText(field.name)));
+  const merged = current.map((field, index) => {
+    const next = nextByName.get(normalizeComparableText(field.name));
+    if (!next) return field;
+    const valueLocked = isTrackerFieldLocked(locks, worldCustomFieldTrackerLockKey(field, "value", index));
+    return {
+      name: field.name,
+      value: valueLocked ? field.value : next.value,
+      icon:
+        field.icon && field.icon !== DEFAULT_WORLD_CUSTOM_FIELD_ICON
+          ? field.icon
+          : (next.icon ?? DEFAULT_WORLD_CUSTOM_FIELD_ICON),
+    };
+  });
+
+  nextNormalizedFields.forEach((field) => {
+    if (!currentNames.has(normalizeComparableText(field.name))) merged.push(field);
+  });
+
+  return merged;
 }
 
 function mergeCharactersWithLocks(
@@ -867,13 +928,21 @@ export function applyTrackerFieldLocksToGameStatePatch<T extends Record<string, 
   fieldLocks: TrackerFieldLocks | null | undefined = currentState?.fieldLocks,
 ): T {
   const locks = normalizeEffectiveTrackerFieldLocks(fieldLocks, currentState);
-  if (trackerFieldLocksAreEmpty(locks) || !currentState) return patch;
+  if (!currentState) return patch;
 
   const next = { ...patch } as Record<string, unknown>;
   for (const field of ["date", "time", "location", "weather", "temperature"] as const) {
     if (field in next && isTrackerFieldLocked(locks, worldTrackerLockKey(field))) {
       next[field] = currentState[field];
     }
+  }
+
+  if (Array.isArray(next.worldCustomFields)) {
+    next.worldCustomFields = mergeWorldCustomFieldsWithLocks(
+      next.worldCustomFields as WorldCustomField[],
+      currentState.worldCustomFields,
+      locks,
+    );
   }
 
   if (Array.isArray(next.presentCharacters)) {

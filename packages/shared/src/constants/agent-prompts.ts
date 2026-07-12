@@ -32,19 +32,29 @@ Return only valid JSON:
 
 export const DEFAULT_AGENT_PROMPTS: Record<string, string> = {
   /* ────────────────────────────────────────── */
-  "world-state": `Track the scene's current date, time, location, weather, and temperature after the latest assistant message. Respond ONLY with valid JSON.
+  "world-state": `Track the scene's current date, time, location, weather, temperature, and existing user-defined world fields after the latest assistant message. Current custom fields live in <current_game_state> under worldCustomFields. Respond ONLY with valid JSON.
 Schema:
 {
   "date": "string|null",
   "time": "string|null",
   "location": "string|null",
   "weather": "string|null",
-  "temperature": "string|null"
+  "temperature": "string|null",
+  "worldCustomFields": [
+    {
+      "name": "string (exact existing field name)",
+      "value": "string (current value)",
+      "icon": "string (supported kebab-case Lucide icon name)"
+    }
+  ]
 }
 Instructions:
 1. Preserve previous state unless the latest narrative explicitly changes it or strongly implies a change. A rainy scene stays rainy until the text shows clearing weather, sun, shelter, a time skip, or similar.
 2. Infer sensible values from genre, setting, and context when needed. Use null only when there is genuinely no way to infer a value.
-3. Do not move location, time, weather, or temperature forward just because a new message arrived.`,
+3. Do not move location, time, weather, or temperature forward just because a new message arrived.
+4. Output every existing worldCustomFields entry, including unchanged ones. Keep each exact name and do not add, rename, reorder, or remove fields.
+5. Update a custom field's value only when the latest narrative changes it. Values are always strings.
+6. Preserve an existing specific icon. When an existing icon is missing or "tag", choose a stable matching icon such as moon, flame, heart, crown, map-pin, users, clock, cloud, or tag.`,
 
   /* ────────────────────────────────────────── */
   "prose-guardian": `You are Prose Guardian, a post-processing editor. Rewrite only <assistant_response>.
@@ -288,6 +298,7 @@ Schema:
       "appearance": "string|null — brief persistent physical traits (build, hair, eyes, distinguishing features).",
       "outfit": "string|null — brief traits (up to five), describing what they're currently wearing, including accessories",
       "thoughts": "string|null — one sentence of internal thoughts or feelings they haven't voiced out loud",
+      "customFields": { "exact existing field name": "string value" },
       "stats": [{ "name": "string", "value": number, "max": number, "color": "string (hex)" }]
     }
   ]
@@ -297,7 +308,8 @@ Instructions:
 2. Preserve mood, appearance, outfit, thoughts, and stats unless the latest narrative changes them. Clothing stays the same unless someone changes, removes, damages, or gains clothing.
 3. Fill appearance/outfit from character cards or prior tracker state when not repeated. Do not set them null just because this message omitted them.
 4. Track HP, MP, and other card pools/stats realistically; use card initial values as maximums.
-5. Add new arrivals immediately with full details; remove characters only when the story clearly removes them.`,
+5. Add new arrivals immediately with full details; remove characters only when the story clearly removes them.
+6. For each character's existing customFields, output every field under the exact same name. Update only values changed by the latest narrative. Do not add, rename, or remove custom fields, and keep all values as strings.`,
 
   /* ────────────────────────────────────────── */
   "persona-stats": `Track the PLAYER PERSONA's needs, condition bars, status, and inventory after the latest assistant message. These are physical/mental well-being stats, not combat stats.

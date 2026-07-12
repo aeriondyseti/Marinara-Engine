@@ -26,6 +26,7 @@ import {
   normalizeAgentPromptTemplateSelectionMap,
   normalizeThinkingTagPairs,
   applyTrackerFieldLocksToGameStatePatch,
+  normalizeWorldCustomFields,
   normalizeTrackerFieldLocksForState,
   trackerFieldLocksAreEmpty,
   customAgentHasCapability,
@@ -2860,7 +2861,6 @@ export async function generateRoutes(app: FastifyInstance) {
               `- Since this is a group chat, wrap each character's dialogue in <speaker="name"> tags. Tags can appear inline with narration, they don't need to be on separate lines. Example: <speaker="${charNames[0] ?? "John"}">"Hello there,"</speaker> [action beat/dialogue tag].`,
             );
           }
-
 
           if (groupInstructions.length > 0) {
             const rawBlock = groupInstructions.join("\n");
@@ -6773,8 +6773,8 @@ export async function generateRoutes(app: FastifyInstance) {
                 let newTemperature =
                   coerceGameStateTextValue(gs.temperature) ?? coerceGameStateTextValue(prevSnap?.temperature);
 
-                // The world-state agent ONLY produces date/time/location/weather/temperature
-                // (and optionally recentEvents).  In batch mode the model often cross-
+                // The world-state agent produces date/time/location/weather/temperature,
+                // user-defined world fields, and optionally recentEvents. In batch mode the model often cross-
                 // contaminates the world-state result with fields from other agent task
                 // schemas (presentCharacters, personaStats, playerStats).  Even a partial
                 // cross-contaminated playerStats (e.g. { status: "...", activeQuests: [] })
@@ -6784,11 +6784,18 @@ export async function generateRoutes(app: FastifyInstance) {
                 // (character-tracker, persona-stats, quest, custom-tracker) will update
                 // them with authoritative data in their own handler blocks below.
                 const snapshotChars = parseJsonField<any[]>(prevSnap?.presentCharacters, []);
+                const snapshotWorldCustomFields = normalizeWorldCustomFields(
+                  parseJsonField<unknown[]>(prevSnap?.worldCustomFields, []),
+                );
                 const snapshotPersonaStats = parseJsonField<any[] | null>(prevSnap?.personaStats, null);
                 const snapshotPlayerStats = parseJsonField<PlayerStats | null>(prevSnap?.playerStats, null);
                 const currentGameStateForLocks = prevSnap
                   ? parseGameStateRow(prevSnap as Record<string, unknown>)
                   : null;
+                const nextWorldCustomFields =
+                  gs.worldCustomFields !== undefined
+                    ? normalizeWorldCustomFields(gs.worldCustomFields)
+                    : snapshotWorldCustomFields;
                 const lockedWorldStatePatch = applyTrackerFieldLocksToGameStatePatch(
                   {
                     date: newDate,
@@ -6796,6 +6803,7 @@ export async function generateRoutes(app: FastifyInstance) {
                     location: newLocation,
                     weather: newWeather,
                     temperature: newTemperature,
+                    worldCustomFields: nextWorldCustomFields,
                   },
                   currentGameStateForLocks,
                 );
@@ -6804,6 +6812,7 @@ export async function generateRoutes(app: FastifyInstance) {
                 newLocation = coerceGameStateTextValue(lockedWorldStatePatch.location);
                 newWeather = coerceGameStateTextValue(lockedWorldStatePatch.weather);
                 newTemperature = coerceGameStateTextValue(lockedWorldStatePatch.temperature);
+                const newWorldCustomFields = normalizeWorldCustomFields(lockedWorldStatePatch.worldCustomFields);
                 logger.info(
                   `[generate] world-state snapshot: chars=${snapshotChars.length} (prev), personaStats=${snapshotPersonaStats ? "present" : "null"} (prev)`,
                 );
@@ -6817,6 +6826,7 @@ export async function generateRoutes(app: FastifyInstance) {
                     location: newLocation,
                     weather: newWeather,
                     temperature: newTemperature,
+                    worldCustomFields: newWorldCustomFields,
                     presentCharacters: snapshotChars,
                     recentEvents: (gs.recentEvents as string[]) ?? [],
                     playerStats: snapshotPlayerStats,
@@ -6829,7 +6839,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   null, // manual overrides are one-shot — never carry forward
                 );
                 // Send game state to client so HUD updates live
-                // ONLY send the fields world-state actually produces (date/time/location/weather/temperature).
+                // ONLY send the fields world-state actually produces.
                 // Do NOT spread the whole `gs` — in batch mode the model may cross-contaminate
                 // fields like presentCharacters:[] from other agent tasks, clobbering the HUD.
                 const worldStatePatch = {
@@ -6838,6 +6848,7 @@ export async function generateRoutes(app: FastifyInstance) {
                   location: newLocation,
                   weather: newWeather,
                   temperature: newTemperature,
+                  ...(gs.worldCustomFields !== undefined ? { worldCustomFields: newWorldCustomFields } : {}),
                 };
                 logger.debug("[game_state_patch] world-state: %j", worldStatePatch);
                 reply.raw.write(`data: ${JSON.stringify({ type: "game_state_patch", data: worldStatePatch })}\n\n`);

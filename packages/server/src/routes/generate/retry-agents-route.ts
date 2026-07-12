@@ -14,6 +14,7 @@ import {
   isAgentConfigDeleted,
   isBuiltInAgentRuntimeDisabled,
   isRetiredBuiltInAgentId,
+  normalizeWorldCustomFields,
   normalizeAgentPhaseValue,
   normalizeAgentPromptTemplateSelectionMap,
   resolveAgentPromptTemplate,
@@ -2542,6 +2543,8 @@ async function applyRetryResultEffects(args: {
         if (gs.location != null) worldStatePatch.location = gs.location as string;
         if (gs.weather != null) worldStatePatch.weather = gs.weather as string;
         if (gs.temperature != null) worldStatePatch.temperature = gs.temperature as string;
+        if (gs.worldCustomFields !== undefined)
+          worldStatePatch.worldCustomFields = normalizeWorldCustomFields(gs.worldCustomFields);
         const lockSnapshot = (await loadRetryTargetGameStateSnapshot()) ?? (await loadRetryBaseGameStateSnapshot());
         const lockedWorldStatePatch = applyTrackerFieldLocksToGameStatePatch(
           worldStatePatch,

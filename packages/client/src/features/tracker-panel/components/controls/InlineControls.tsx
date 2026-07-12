@@ -85,6 +85,7 @@ export function InlineEdit({
   className,
   style,
   title,
+  ariaLabel,
   fullPreview = false,
   scrollOnHover = false,
   showEditHint = true,
@@ -106,6 +107,7 @@ export function InlineEdit({
   className?: string;
   style?: CSSProperties;
   title?: string;
+  ariaLabel?: string;
   fullPreview?: boolean;
   scrollOnHover?: boolean;
   showEditHint?: boolean;
@@ -191,6 +193,7 @@ export function InlineEdit({
         )}
         style={style}
         placeholder={placeholder}
+        aria-label={ariaLabel}
       />
     );
   }
@@ -211,7 +214,9 @@ export function InlineEdit({
       onBlur={resetScrollOverflow}
       title={lockToggleActive ? (locked ? "Unlock field" : "Lock field") : (title ?? currentValue)}
       aria-label={
-        lockToggleActive ? `${locked ? "Unlock" : "Lock"} ${(title ?? currentValue) || placeholder}` : undefined
+        lockToggleActive
+          ? `${locked ? "Unlock" : "Lock"} ${(ariaLabel ?? title ?? currentValue) || placeholder}`
+          : ariaLabel
       }
       aria-pressed={lockToggleActive ? locked : undefined}
       className={cn(

@@ -18,6 +18,8 @@ export interface GameState {
   location: string | null;
   weather: string | null;
   temperature: string | null;
+  /** User-defined world tracker fields displayed alongside the built-in scene fields. */
+  worldCustomFields?: WorldCustomField[];
 
   // ── Characters ──
   presentCharacters: PresentCharacter[];
@@ -80,6 +82,14 @@ export interface CharacterStat {
   value: number;
   max: number;
   color: string;
+}
+
+/** A user-defined world tracker field. */
+export interface WorldCustomField {
+  name: string;
+  value: string;
+  /** Supported lucide icon name for display. */
+  icon?: string | null;
 }
 
 /** A user-defined custom tracker field. */

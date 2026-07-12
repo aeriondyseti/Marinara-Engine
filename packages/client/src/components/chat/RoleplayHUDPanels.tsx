@@ -44,9 +44,11 @@ import type {
   InventoryItem,
   PresentCharacter,
   QuestProgress,
+  WorldCustomField,
 } from "@marinara-engine/shared";
 import {
   characterStatTrackerLockKey,
+  characterCustomFieldTrackerLockKey,
   characterTrackerLockKey,
   characterTrackerLockPrefix,
   customTrackerFieldLockPrefix,
@@ -64,9 +66,11 @@ import {
   removeTrackerFieldLockPrefix,
   removeTrackerQuestLocks,
   renameTrackerFieldLockPrefix,
+  worldCustomFieldTrackerLockKey,
   worldTrackerLockKey,
 } from "@marinara-engine/shared";
 import { useTrackerLockContext } from "../../features/tracker-panel/components/TrackerLockContext";
+import { WorldCustomFieldIcon } from "../../features/tracker-panel/lib/world-custom-field-icons";
 
 interface CombinedPlayerPanelProps {
   showPersona: boolean;
@@ -501,6 +505,24 @@ export function CombinedPlayerPanel({
                       locked={thoughtsLock.locked}
                       onToggleLock={thoughtsLock.onToggle}
                     />
+                    {Object.entries(char.customFields ?? {}).map(([name, value]) => {
+                      const valueLock = lockFor(characterCustomFieldTrackerLockKey(char, idx, name, "value"));
+                      return (
+                        <LabeledEdit
+                          key={name}
+                          label={name}
+                          value={value}
+                          onSave={(nextValue) =>
+                            updateCharacter(idx, {
+                              ...char,
+                              customFields: { ...(char.customFields ?? {}), [name]: nextValue },
+                            })
+                          }
+                          locked={valueLock.locked}
+                          onToggleLock={valueLock.onToggle}
+                        />
+                      );
+                    })}
                   </div>
                   {Array.isArray(char.stats) && char.stats.length > 0 && (
                     <div className="space-y-1 pt-1 border-t border-[var(--border)]">
@@ -1021,6 +1043,24 @@ export function CharactersPanel({
                 locked={thoughtsLock.locked}
                 onToggleLock={thoughtsLock.onToggle}
               />
+              {Object.entries(char.customFields ?? {}).map(([name, value]) => {
+                const valueLock = lockFor(characterCustomFieldTrackerLockKey(char, idx, name, "value"));
+                return (
+                  <LabeledEdit
+                    key={name}
+                    label={name}
+                    value={value}
+                    onSave={(nextValue) =>
+                      updateCharacter(idx, {
+                        ...char,
+                        customFields: { ...(char.customFields ?? {}), [name]: nextValue },
+                      })
+                    }
+                    locked={valueLock.locked}
+                    onToggleLock={valueLock.onToggle}
+                  />
+                );
+              })}
             </div>
             {Array.isArray(char.stats) && char.stats.length > 0 && (
               <div className="space-y-1 pt-1 border-t border-[var(--border)]">
@@ -1362,11 +1402,13 @@ interface CombinedWorldPanelProps {
   time: string;
   weather: string;
   temperature: string;
+  worldCustomFields: WorldCustomField[];
   onSaveLocation: (v: string) => void;
   onSaveDate: (v: string) => void;
   onSaveTime: (v: string) => void;
   onSaveWeather: (v: string) => void;
   onSaveTemperature: (v: string) => void;
+  onUpdateWorldCustomFields: (fields: WorldCustomField[]) => void;
   weatherEmoji: string;
   pinColor: string;
   dateColor: string;
@@ -1384,11 +1426,13 @@ export function CombinedWorldPanel({
   time,
   weather,
   temperature,
+  worldCustomFields,
   onSaveLocation,
   onSaveDate,
   onSaveTime,
   onSaveWeather,
   onSaveTemperature,
+  onUpdateWorldCustomFields,
   weatherEmoji,
   pinColor,
   dateColor,
@@ -1480,6 +1524,26 @@ export function CombinedWorldPanel({
           locked={temperatureLock.locked}
           onToggleLock={temperatureLock.onToggle}
         />
+        {worldCustomFields.map((field, index) => {
+          const name = field.name?.trim() || "Field";
+          const valueLock = lockFor(worldCustomFieldTrackerLockKey(field, "value", index));
+          return (
+            <WorldFieldRow
+              key={`${name}-${index}`}
+              icon={<WorldCustomFieldIcon icon={field.icon} />}
+              label={name}
+              value={field.value ?? ""}
+              onSave={(value) => {
+                const next = [...worldCustomFields];
+                next[index] = { ...field, value };
+                onUpdateWorldCustomFields(next);
+              }}
+              accent="text-[var(--foreground)]/80"
+              locked={valueLock.locked}
+              onToggleLock={valueLock.onToggle}
+            />
+          );
+        })}
       </div>
     </>
   );

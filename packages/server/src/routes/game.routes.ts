@@ -118,6 +118,7 @@ import {
   scoreAmbient,
   serializeResolvedSkillCheckTag,
   applyTrackerFieldLocksToGameStatePatch,
+  normalizeWorldCustomFields,
   parseTrackerFieldLocks,
   normalizeRpgStatPools,
   type RPGStatsConfig,
@@ -5831,8 +5832,7 @@ export async function gameRoutes(app: FastifyInstance) {
   app.post("/create", async (req) => {
     logger.info("[game/create] Received request");
     const parsedCreateGameInput = createGameSchema.parse(req.body);
-    const { name, connectionId, promptPresetId, chatId, preferences, shareLabels } =
-      parsedCreateGameInput;
+    const { name, connectionId, promptPresetId, chatId, preferences, shareLabels } = parsedCreateGameInput;
     const selectedPromptPresetId = promptPresetId || parsedCreateGameInput.setupConfig.promptPresetId || null;
     const customHudWidgets = sanitizeGameHudWidgets(parsedCreateGameInput.setupConfig.customHudWidgets);
     const gameSystemPrompt = parsedCreateGameInput.setupConfig.gameSystemPrompt?.trim() || null;
@@ -6645,6 +6645,9 @@ export async function gameRoutes(app: FastifyInstance) {
       const stateStore = createGameStateStorage(app.db);
       const previousState = await stateStore.getLatest(latestSession.id);
       const previousPresentCharacters = parseJsonField<any[]>(previousState?.presentCharacters, []);
+      const previousWorldCustomFields = normalizeWorldCustomFields(
+        parseJsonField<unknown[]>(previousState?.worldCustomFields, []),
+      );
       const previousRecentEvents = parseJsonField<string[]>(previousState?.recentEvents, []);
       const previousPlayerStats = parseJsonField<Record<string, unknown> | null>(previousState?.playerStats, null);
       const previousPersonaStats = parseJsonField<any[] | null>(previousState?.personaStats, null);
@@ -6766,6 +6769,7 @@ export async function gameRoutes(app: FastifyInstance) {
             location: previousState.location,
             weather: previousState.weather,
             temperature: previousState.temperature,
+            worldCustomFields: previousWorldCustomFields,
             presentCharacters: previousPresentCharacters,
             recentEvents: previousRecentEvents,
             playerStats: previousPlayerStats as any,
@@ -9688,7 +9692,6 @@ export async function gameRoutes(app: FastifyInstance) {
               }
             }
 
-
             // ── NPC portrait generation ──
             // First, try to resolve avatars from the character library (cheap, in-memory).
             // Actual image generation for NPCs missing portraits is deferred to the client's
@@ -11618,6 +11621,7 @@ export async function gameRoutes(app: FastifyInstance) {
         location: snapshot.location,
         weather: snapshot.weather,
         temperature: snapshot.temperature,
+        worldCustomFields: normalizeWorldCustomFields(parseJsonField(snapshot.worldCustomFields, [])),
         presentCharacters: parseJsonField(snapshot.presentCharacters, []),
         recentEvents: parseJsonField(snapshot.recentEvents, []),
         playerStats: parseJsonField(snapshot.playerStats, null),

@@ -15,10 +15,24 @@ type GameStateSnapshotLike = {
   location?: string | null;
   weather?: string | null;
   temperature?: string | null;
+  worldCustomFields?: unknown;
   presentCharacters?: unknown;
   personaStats?: unknown;
   playerStats?: unknown;
 };
+
+export const MAX_WORLD_CUSTOM_FIELDS_IN_COMMITTED_CONTEXT = 64;
+
+const WORLD_RESERVED_CUSTOM_FIELD_NAMES = new Set(["date", "time", "location", "weather", "temperature"]);
+const CHARACTER_RESERVED_CUSTOM_FIELD_NAMES = new Set([
+  "emoji",
+  "name",
+  "mood",
+  "appearance",
+  "outfit",
+  "thoughts",
+  "stats",
+]);
 
 function parseMaybeJson(value: unknown): unknown {
   if (typeof value !== "string") return value;
@@ -62,6 +76,19 @@ function formatStatSummary(stat: any): string | null {
   return `${name}: ${formatStatValue(stat?.value, stat?.max)}`;
 }
 
+function normalizeTrackerFieldName(value: string) {
+  return value.normalize("NFKC").trim().toLocaleLowerCase("en-US").replace(/\s+/gu, " ");
+}
+
+function formatNamedValueLine(field: unknown, reservedNames?: ReadonlySet<string>): string | null {
+  if (!field || typeof field !== "object" || Array.isArray(field)) return null;
+  const record = field as Record<string, unknown>;
+  const name = asText(record.name);
+  if (!name || reservedNames?.has(normalizeTrackerFieldName(name))) return null;
+  const value = asText(record.value);
+  return value ? `${name}: ${value}` : null;
+}
+
 function formatCharacterLine(character: any): string | null {
   if (typeof character === "string") {
     const name = asText(character);
@@ -75,6 +102,15 @@ function formatCharacterLine(character: any): string | null {
   if (character.appearance) details.push(`appearance: ${character.appearance}`);
   if (character.outfit) details.push(`outfit: ${character.outfit}`);
   if (character.thoughts) details.push(`thoughts: ${character.thoughts}`);
+  if (character.customFields && typeof character.customFields === "object" && !Array.isArray(character.customFields)) {
+    for (const [fieldName, fieldValue] of Object.entries(character.customFields)) {
+      const line = formatNamedValueLine(
+        { name: fieldName, value: fieldValue },
+        CHARACTER_RESERVED_CUSTOM_FIELD_NAMES,
+      );
+      if (line) details.push(line);
+    }
+  }
   if (Array.isArray(character.stats) && character.stats.length > 0) {
     const statStr = (character.stats as unknown[]).map(formatStatSummary).filter(isNonEmptyLine).join(", ");
     if (statStr) details.push(`stats: ${statStr}`);
@@ -91,9 +127,9 @@ function formatQuestLine(quest: any): string | null {
   const objectives = Array.isArray(quest.objectives)
     ? quest.objectives
         .map((objective: any) => {
-      const text = asText(objective?.text);
-      return text ? `  ${objective.completed ? "[x]" : "[ ]"} ${text}` : null;
-    })
+          const text = asText(objective?.text);
+          return text ? `  ${objective.completed ? "[x]" : "[ ]"} ${text}` : null;
+        })
         .filter(isNonEmptyLine)
         .join("\n")
     : "";
@@ -137,6 +173,17 @@ export function buildCommittedTrackerContextBlock(args: {
     if (snap.location) wsParts.push(`Location: ${snap.location}`);
     if (snap.weather) wsParts.push(`Weather: ${snap.weather}`);
     if (snap.temperature) wsParts.push(`Temperature: ${snap.temperature}`);
+    const worldCustomFields = parseMaybeJson(snap.worldCustomFields);
+    if (Array.isArray(worldCustomFields)) {
+      const customLines: string[] = [];
+      for (const field of worldCustomFields) {
+        const line = formatNamedValueLine(field, WORLD_RESERVED_CUSTOM_FIELD_NAMES);
+        if (!line) continue;
+        customLines.push(line);
+        if (customLines.length >= MAX_WORLD_CUSTOM_FIELDS_IN_COMMITTED_CONTEXT) break;
+      }
+      wsParts.push(...customLines);
+    }
     if (wsParts.length > 0) trackerParts.push(wrapContent(wsParts.join("\n"), "World", args.wrapFormat));
   }
 
@@ -144,7 +191,8 @@ export function buildCommittedTrackerContextBlock(args: {
     const presentChars = parseMaybeJson(snap.presentCharacters);
     if (Array.isArray(presentChars) && presentChars.length > 0) {
       const charLines = presentChars.map(formatCharacterLine).filter(isNonEmptyLine);
-      if (charLines.length > 0) trackerParts.push(wrapContent(charLines.join("\n"), "Present Characters", args.wrapFormat));
+      if (charLines.length > 0)
+        trackerParts.push(wrapContent(charLines.join("\n"), "Present Characters", args.wrapFormat));
     }
   }
 
@@ -188,7 +236,8 @@ export function buildCommittedTrackerContextBlock(args: {
     }
   }
 
-  const playerNotes = typeof args.chatMetadata.gamePlayerNotes === "string" ? args.chatMetadata.gamePlayerNotes.trim() : "";
+  const playerNotes =
+    typeof args.chatMetadata.gamePlayerNotes === "string" ? args.chatMetadata.gamePlayerNotes.trim() : "";
   if (playerNotes) {
     trackerParts.push(
       wrapContent(

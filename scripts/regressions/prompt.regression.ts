@@ -6,6 +6,7 @@ import {
   ANIME_GAME_VIDEO_PROMPT_TEMPLATE_ID,
   COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE,
   COMIC_PAGE_GAME_VIDEO_PROMPT_TEMPLATE_ID,
+  applyTrackerFieldLocksToGameStatePatch,
   applyRegexReplacement,
   buildNarratorInstructionMessage,
   compileChatSummaryEntries,
@@ -15,6 +16,7 @@ import {
   getDefaultBuiltInAgentSettings,
   isPatternSafe,
   normalizeChatSummaryEntries,
+  normalizeWorldCustomFields,
   resolveRegexPatternLiteralMacros,
   resolveMacros,
   resolveAgentPromptTemplate,
@@ -86,6 +88,7 @@ import {
   appendReadableAttachmentsToContent,
   buildGenerationGuideInstruction,
   appendSeparateAgentInjectionMessage,
+  preserveTrackerCharacterUiFields,
   shouldEnableAgentsForGeneration,
   shouldInjectIdentityFallback,
   type SimpleMessage,
@@ -102,6 +105,14 @@ import {
   listPromptOverrideKeys,
 } from "../../packages/server/src/services/prompt-overrides/index.js";
 import { buildElevenLabsTextInput } from "../../packages/server/src/routes/tts.routes.js";
+import {
+  buildCommittedTrackerContextBlock,
+  MAX_WORLD_CUSTOM_FIELDS_IN_COMMITTED_CONTEXT,
+} from "../../packages/server/src/services/generation/committed-tracker-context.js";
+import {
+  makeUniqueCharacterCustomFieldName,
+  resolveCharacterCustomFieldName,
+} from "../../packages/client/src/features/tracker-panel/lib/character-custom-field-names.js";
 import type { LLMToolCall } from "../../packages/server/src/services/llm/base-provider.js";
 import {
   cleanTTSInputText,
@@ -2231,6 +2242,111 @@ Use HTML sparingly and diegetically. Do not replace normal prose/dialogue unless
       assert.equal(compiled.prompt, "1girl, blue dress");
       assert.equal(compiled.negativePrompt, "");
       assert.equal(compiled.profile.id, "off");
+    },
+  },
+  {
+    name: "tracker custom fields remain part of the model contract and survive omitted agent output",
+    run() {
+      assert.match(DEFAULT_AGENT_PROMPTS["world-state"] ?? "", /worldCustomFields/);
+      assert.match(DEFAULT_AGENT_PROMPTS["world-state"] ?? "", /do not add, rename, reorder, or remove fields/i);
+      assert.match(DEFAULT_AGENT_PROMPTS["character-tracker"] ?? "", /customFields/);
+      assert.match(DEFAULT_AGENT_PROMPTS["character-tracker"] ?? "", /Do not add, rename, or remove custom fields/i);
+
+      assert.deepEqual(
+        normalizeWorldCustomFields([
+          { name: " Moon Phase ", value: "Waxing", icon: "Moon" },
+          { name: "moon   phase", value: "Duplicate", icon: "flame" },
+          { name: "Tension", value: 3, icon: "not-a-real-icon" },
+        ]),
+        [
+          { name: "Moon Phase", value: "Waxing", icon: "moon" },
+          { name: "Tension", value: "3", icon: "tag" },
+        ],
+      );
+
+      const currentState = {
+        id: "state-1",
+        chatId: "chat-1",
+        messageId: "message-1",
+        swipeIndex: 0,
+        date: null,
+        time: null,
+        location: null,
+        weather: null,
+        temperature: null,
+        worldCustomFields: [
+          { name: "Moon Phase", value: "Waxing", icon: "moon" },
+          { name: "Tension", value: "Low", icon: "flame" },
+        ],
+        presentCharacters: [],
+        recentEvents: [],
+        playerStats: null,
+        personaStats: null,
+        fieldLocks: null,
+        createdAt: "",
+      };
+      const mergedPatch = applyTrackerFieldLocksToGameStatePatch(
+        { worldCustomFields: [{ name: "Tension", value: "High", icon: "flame" }] },
+        currentState,
+      );
+      assert.deepEqual(mergedPatch.worldCustomFields, [
+        { name: "Moon Phase", value: "Waxing", icon: "moon" },
+        { name: "Tension", value: "High", icon: "flame" },
+      ]);
+
+      const nextCharacters: Array<Record<string, unknown>> = [
+        {
+          characterId: "mira",
+          name: "Mira",
+          customFields: { Goal: "Find the atlas" },
+        },
+      ];
+      preserveTrackerCharacterUiFields(nextCharacters, [
+        {
+          characterId: "mira",
+          name: "Mira",
+          customFields: { "Mental State": "Calm", Goal: "Old goal" },
+        },
+      ]);
+      assert.deepEqual(nextCharacters[0]?.customFields, {
+        "Mental State": "Calm",
+        Goal: "Find the atlas",
+      });
+
+      assert.equal(resolveCharacterCustomFieldName("  ", "Goal"), "Goal");
+      assert.equal(makeUniqueCharacterCustomFieldName({ "New Field": "", "new   field 2": "" }), "New Field 3");
+
+      const promptBlock = buildCommittedTrackerContextBlock({
+        chatEnableAgents: true,
+        activeAgentIds: ["world-state", "character-tracker"],
+        latestGameState: {
+          date: "12 July",
+          location: "The lab",
+          worldCustomFields: [
+            ...currentState.worldCustomFields,
+            { name: "location", value: "Duplicate lab" },
+            ...Array.from({ length: MAX_WORLD_CUSTOM_FIELDS_IN_COMMITTED_CONTEXT }, (_, index) => ({
+              name: `Field ${index + 1}`,
+              value: `${index + 1}`,
+            })),
+          ],
+          presentCharacters: [
+            {
+              name: "Mira",
+              mood: "Calm",
+              customFields: { Goal: "Find the atlas", mood: "Duplicate mood" },
+            },
+          ],
+        },
+        chatMetadata: {},
+        wrapFormat: "markdown",
+      });
+      assert.match(promptBlock ?? "", /Moon Phase: Waxing/);
+      assert.match(promptBlock ?? "", /Goal: Find the atlas/);
+      assert.doesNotMatch(promptBlock ?? "", /Duplicate lab/);
+      assert.doesNotMatch(promptBlock ?? "", /Duplicate mood/);
+      assert.match(promptBlock ?? "", /Field 62: 62/);
+      assert.doesNotMatch(promptBlock ?? "", /Field 63: 63/);
     },
   },
   {

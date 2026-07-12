@@ -8,6 +8,7 @@ import {
   generationParametersSchema,
   localAuthProviderBaseUrl,
   normalizeTextForMatch,
+  normalizeWorldCustomFields,
   normalizeThinkingTagPairs,
   parseTrackerFieldLocks,
   resolveMacros,
@@ -1405,6 +1406,13 @@ export function preserveTrackerCharacterUiFields(
     const previousPortraitZoom = previous?.portraitZoom;
     const previousAvatarPath = previous?.avatarPath;
     const previousAvatarCrop = previous?.avatarCrop;
+    const previousCustomFields = isPlainRecord(previous?.customFields) ? previous.customFields : null;
+    const nextCustomFields = isPlainRecord(character.customFields) ? character.customFields : null;
+    if (previousCustomFields) {
+      // Character custom fields are user-defined tracker structure. Merge model
+      // values over it so an omitted field cannot erase the user's configuration.
+      character.customFields = { ...previousCustomFields, ...(nextCustomFields ?? {}) };
+    }
     if (
       (typeof character.avatarPath !== "string" || !character.avatarPath.trim()) &&
       isNpcTrackerAvatarPath(previousAvatarPath)
@@ -1462,6 +1470,7 @@ export function parseGameStateRow(row: Record<string, unknown>): GameState {
     location: row.location as string | null,
     weather: row.weather as string | null,
     temperature: row.temperature as string | null,
+    worldCustomFields: normalizeWorldCustomFields(parseJsonField<unknown[]>(row.worldCustomFields, [])),
     presentCharacters: parseJsonField<any[]>(row.presentCharacters, []),
     recentEvents: parseJsonField<string[]>(row.recentEvents, []),
     playerStats: parseJsonField<PlayerStats | null>(row.playerStats, null),

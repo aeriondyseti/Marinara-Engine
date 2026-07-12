@@ -185,6 +185,8 @@ export function TrackerSectionList({
             trackerTemperatureUnit={trackerTemperatureUnit}
             action={renderRerunAction("world")}
             onSaveField={patchField}
+            deleteMode={deleteMode}
+            addMode={addMode}
             collapsed={isPanelCollapsed("world")}
             onToggleCollapsed={() => toggleTrackerPanelSectionCollapsed("world")}
           />
