@@ -4088,7 +4088,7 @@ export function GameNarration({
             seg.partyType === "thought"
               ? "border-purple-400/10 bg-purple-950/15"
               : seg.partyType === "whisper"
-                ? "border-rose-400/10 bg-rose-950/15"
+                ? "border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-highlight-bg)]"
                 : seg.partyType === "side" || seg.partyType === "extra"
                   ? "border-sky-400/10 bg-sky-950/15"
                   : "border-[var(--border)] bg-[var(--muted)]/20 dark:border-white/5 dark:bg-black/20",
@@ -4581,7 +4581,7 @@ export function GameNarration({
                             active.partyType === "thought"
                               ? "border-purple-400/10 bg-purple-950/20"
                               : active.partyType === "whisper"
-                                ? "border-rose-400/10 bg-rose-950/20"
+                                ? "border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-highlight-bg)]"
                                 : "border-[var(--border)] bg-[var(--muted)]/20 dark:border-white/10 dark:bg-black/35",
                             activeSegmentActionButtons && "pr-16",
                           )}
@@ -5313,7 +5313,7 @@ export function GameNarration({
                               seg.partyType === "thought"
                                 ? "border-purple-400/10 bg-purple-950/15"
                                 : seg.partyType === "whisper"
-                                  ? "border-rose-400/10 bg-rose-950/15"
+                                  ? "border-[var(--marinara-chat-chrome-panel-border)] bg-[var(--marinara-chat-chrome-highlight-bg)]"
                                   : seg.partyType === "side" || seg.partyType === "extra"
                                     ? "border-sky-400/10 bg-sky-950/15"
                                     : "border-white/5 bg-black/20",

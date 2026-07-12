@@ -2654,6 +2654,18 @@ strong {
   color: #facc15;
 }
 
+/* Docs-viewer search-match highlight (injected marks + sidebar snippets).
+   Primary-tinted so it reads in both themes and stays visually distinct from
+   the markdown ==highlight== yellow above. Only the docs viewer emits this
+   class, so it can't leak into chat despite the shared .mari-message-content. */
+.docs-search-mark {
+  background-color: color-mix(in srgb, var(--primary) 24%, transparent);
+  color: var(--foreground);
+  border-radius: 2px;
+  padding: 0 0.1em;
+  font-weight: 500;
+}
+
 /* Task lists */
 .mari-message-content .mari-md-task-list {
   list-style: none;
@@ -3287,8 +3299,9 @@ strong {
 }
 
 .pastel-gradient {
-  background: linear-gradient(90deg, #ff69b4, #ff8c42, #ff6b9d, #ff6f61, #ff69b4, #ff8c42, #ff6b9d, #ff6f61, #ff69b4) 0
-    0 / 400% 100%;
+  background-image: var(--marinara-app-accent-gradient);
+  background-position: 0;
+  background-size: 400% 100%;
   animation: pastel-gradient-cycle 25s linear infinite;
 }
 
@@ -3403,7 +3416,7 @@ strong {
 }
 
 .os-window-btn.close {
-  background: linear-gradient(135deg, #ff6b9d, #ff8fab);
+  background: var(--destructive);
 }
 .os-window-btn.minimize {
   background: linear-gradient(135deg, #ffd88a, #ffe4a8);

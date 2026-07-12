@@ -376,17 +376,18 @@ export function TopBar() {
           className={cn(
             TOPBAR_PANEL_BUTTON_CLASS,
             isCharactersPanelActive
-              ? cn(TOPBAR_ACTIVE_BUTTON_CLASS, "text-rose-300")
+              ? TOPBAR_ACTIVE_BUTTON_CLASS
               : cn(
-                  "text-[var(--muted-foreground)] hover:text-rose-300",
-                  isTopbarHovered("characters") && cn(TOPBAR_FORCE_HOVER_CLASS, "text-rose-300"),
+                  "text-[var(--muted-foreground)] hover:text-[var(--marinara-chat-chrome-button-text-hover)]",
+                  isTopbarHovered("characters") &&
+                    cn(TOPBAR_FORCE_HOVER_CLASS, "text-[var(--marinara-chat-chrome-button-text-hover)]"),
                 ),
           )}
           title="Characters"
         >
           <Users size={15} className={TOPBAR_ACCENT_ICON_CLASS} />
           {isCharactersPanelActive && (
-            <span className="absolute -bottom-0.5 left-1/2 h-0.5 w-3 -translate-x-1/2 rounded-full bg-gradient-to-r from-pink-400 to-rose-500" />
+            <span className="mari-topbar-active-underline absolute -bottom-0.5 left-1/2 h-0.5 w-3 -translate-x-1/2 rounded-full" />
           )}
         </button>
 

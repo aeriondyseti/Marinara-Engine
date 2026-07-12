@@ -3077,7 +3077,9 @@ function CombatantCard({
                 title={`${effect.name} (${effect.turnsLeft} turns)`}
                 className={cn(
                   "relative flex h-5 min-w-5 items-center justify-center rounded-full border px-0.5 text-[0.65rem] shadow-[0_4px_12px_rgba(0,0,0,0.35)] backdrop-blur-sm",
-                  effect.modifier > 0 ? "border-emerald-300/35 bg-emerald-500/25" : "border-rose-300/35 bg-rose-500/25",
+                  effect.modifier > 0
+                    ? "border-emerald-300/35 bg-emerald-500/25"
+                    : "border-[color-mix(in_srgb,var(--destructive)_35%,transparent)] bg-[color-mix(in_srgb,var(--destructive)_25%,transparent)]",
                 )}
               >
                 <span aria-hidden="true">{getStatusEffectEmoji(effect)}</span>

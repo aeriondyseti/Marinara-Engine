@@ -2,6 +2,12 @@
 
 This file is the release-notes source of truth for Marinara Engine. Reuse these entries when publishing GitHub Releases for tags in the `vX.Y.Z` format.
 
+## [Unreleased]
+
+### Added
+
+- Documentation search in the in-app docs viewer now highlights what you searched for: every occurrence of the query lights up in the opened guide (live while the search is active), sidebar result titles and snippet lines highlight the matched term, and opening a guide from a search result scrolls to the first highlighted match.
+
 ## [2.2.0]
 
 ### Added
@@ -54,6 +60,8 @@ This file is the release-notes source of truth for Marinara Engine. Reuse these 
 
 ### Fixed
 
+- Fixed the root recovery screen hydrating the legacy default pink before the selected app accent could mount; crash details, borders, focus rings, and recovery actions now inherit the saved chroma color, and remaining old pink application-chrome fallbacks use semantic accent tokens.
+- Added an actionable startup warning when the compiled client is missing, identifying the expected build path and the `pnpm build` command instead of silently serving only the API (#3529).
 - Fixed Illustrator defaulting to the Background prompt in new and existing Roleplay chats after the staging update; normal Illustration is restored as the default, affected stored agent configs are repaired once, and explicit per-chat Background choices remain intact (#3517).
 - Fixed the Windows uninstaller deleting current-layout user data under `packages/server/data`; uninstall now asks before application cleanup, safely preserves and restores retained data, supports the legacy root data folder, and removes the current `win` directory instead of a stale path (#3484).
 - Fixed semantic Lorebook search being unreachable for ordinary keyed entries; vector similarity now acts as the documented fallback when keyword matching misses while retaining score thresholds, maximum results, filters, and probability gates (#3511).
