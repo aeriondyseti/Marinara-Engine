@@ -23,7 +23,9 @@ import {
   coerceGameStateTextValue,
   normalizeWorldCustomFields,
   normalizeTrackerFieldLocks,
+  normalizeTrackerHiddenFields,
   parseTrackerFieldLocks,
+  parseTrackerHiddenFields,
   normalizeTextForMatch,
   formatRpgStatsForPrompt,
   localAuthProviderBaseUrl,
@@ -1696,6 +1698,59 @@ export async function chatsRoutes(app: FastifyInstance) {
     },
   );
 
+  // Get game state for a specific message + swipe (does not fall back to latest)
+  app.get<{
+    Params: { chatId: string; messageId: string };
+    Querystring: { swipeIndex?: string | number };
+  }>("/:chatId/messages/:messageId/game-state", async (req, reply) => {
+    const message = await storage.getMessage(req.params.messageId);
+    if (!message || message.chatId !== req.params.chatId) {
+      return reply.status(404).send({ error: "Message not found" });
+    }
+
+    const rawSwipeIndex = req.query.swipeIndex;
+    if (typeof rawSwipeIndex === "string" && rawSwipeIndex.trim().length === 0) {
+      return reply.status(400).send({ error: "swipeIndex must be a non-negative integer" });
+    }
+    const swipeIndex =
+      rawSwipeIndex === undefined
+        ? typeof message.activeSwipeIndex === "number"
+          ? message.activeSwipeIndex
+          : 0
+        : typeof rawSwipeIndex === "number"
+          ? rawSwipeIndex
+          : Number(rawSwipeIndex);
+    if (!Number.isInteger(swipeIndex) || swipeIndex < 0) {
+      return reply.status(400).send({ error: "swipeIndex must be a non-negative integer" });
+    }
+
+    const gameStateStore = createGameStateStorage(app.db);
+    const row = await gameStateStore.getByChatAndMessage(req.params.chatId, req.params.messageId, swipeIndex);
+    if (!row) return reply.send(null);
+
+    return {
+      id: row.id,
+      chatId: row.chatId,
+      messageId: row.messageId,
+      swipeIndex: row.swipeIndex,
+      date: row.date,
+      time: row.time,
+      location: row.location,
+      weather: row.weather,
+      temperature: row.temperature,
+      worldCustomFields: normalizeWorldCustomFields(parseSnapshotJson(row.worldCustomFields, [])),
+      presentCharacters: parseSnapshotJson(row.presentCharacters, []),
+      recentEvents: parseSnapshotJson(row.recentEvents, []),
+      playerStats: parseSnapshotJson(row.playerStats, null),
+      personaStats: parseSnapshotJson(row.personaStats, null),
+      manualOverrides: parseSnapshotJson(row.manualOverrides, null),
+      fieldLocks: parseTrackerFieldLocks(row.fieldLocks),
+      hiddenTrackerFields: parseTrackerHiddenFields(row.hiddenTrackerFields),
+      committed: (row.committed as any) === 1,
+      createdAt: row.createdAt,
+    };
+  });
+
   // Get latest game state for a chat (respects the active swipe of the last assistant message)
   app.get<{ Params: { id: string } }>("/:id/game-state", async (req, reply) => {
     const { createGameStateStorage } = await import("../services/storage/game-state.storage.js");
@@ -1714,6 +1769,7 @@ export async function chatsRoutes(app: FastifyInstance) {
       ? (JSON.parse(row.manualOverrides as string) as Record<string, string>)
       : null;
     const fieldLocks = parseTrackerFieldLocks(row.fieldLocks);
+    const hiddenTrackerFields = parseTrackerHiddenFields(row.hiddenTrackerFields);
     const worldCustomFields = normalizeWorldCustomFields(parseSnapshotJson(row.worldCustomFields, []));
 
     // ── Enrich present characters with avatar paths ──
@@ -1787,6 +1843,7 @@ export async function chatsRoutes(app: FastifyInstance) {
       personaStats,
       manualOverrides: storedManualOverrides,
       fieldLocks,
+      hiddenTrackerFields,
       createdAt: row.createdAt,
     };
   });
@@ -1816,6 +1873,7 @@ export async function chatsRoutes(app: FastifyInstance) {
       playerStats: any;
       personaStats: any[];
       fieldLocks: Record<string, boolean> | null;
+      hiddenTrackerFields: Record<string, boolean> | null;
     }> = {};
     if (body.date !== undefined) fields.date = coerceGameStateTextValue(body.date);
     if (body.time !== undefined) fields.time = coerceGameStateTextValue(body.time);
@@ -1828,6 +1886,8 @@ export async function chatsRoutes(app: FastifyInstance) {
     if (body.playerStats !== undefined) fields.playerStats = body.playerStats;
     if (body.personaStats !== undefined) fields.personaStats = body.personaStats as any[];
     if (body.fieldLocks !== undefined) fields.fieldLocks = normalizeTrackerFieldLocks(body.fieldLocks);
+    if (body.hiddenTrackerFields !== undefined)
+      fields.hiddenTrackerFields = normalizeTrackerHiddenFields(body.hiddenTrackerFields);
     // Target the same snapshot the GET endpoint returns — the one for the last
     // assistant message's active swipe — so edits persist to the row the user
     // actually sees. Falls back to updateLatest when no messages exist yet.
@@ -1892,6 +1952,7 @@ export async function chatsRoutes(app: FastifyInstance) {
           playerStats: (fields.playerStats as any) ?? null,
           personaStats: (fields.personaStats as any) ?? null,
           fieldLocks: normalizeTrackerFieldLocks(fields.fieldLocks),
+          hiddenTrackerFields: normalizeTrackerHiddenFields(fields.hiddenTrackerFields),
         },
         Object.keys(manualOverrides).length > 0 ? manualOverrides : null,
       );
@@ -3244,6 +3305,7 @@ export async function chatsRoutes(app: FastifyInstance) {
               playerStats: parseSnapshotJson(snapshot.playerStats, null),
               personaStats: parseSnapshotJson(snapshot.personaStats, null),
               fieldLocks: parseTrackerFieldLocks(snapshot.fieldLocks),
+              hiddenTrackerFields: parseTrackerHiddenFields(snapshot.hiddenTrackerFields),
               committed: (snapshot.committed as any) === 1,
             } as any,
             overrides,

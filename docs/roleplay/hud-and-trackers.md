@@ -61,7 +61,7 @@ You can force a tracker to update instead of waiting for the next message.
 
 Inside each popover there is a small refresh (circular arrow) button. Click it to re-run just that one tracker for the latest turn. The tooltips name the tracker, for example **Re-run world state tracker only** or **Re-run quest tracker only**.
 
-If your chat is set to run trackers manually instead of after every message, a refresh button also appears in the HUD row itself. Its tooltip reads **Run Trackers**. Click it to re-run all trackers at once for the current turn.
+In **Chat Settings → Agents**, **Manual Trackers** moves every enabled tracker to manual control. You can instead leave that switch off and set only selected agents to manual under **Individual tracker schedule**. A refresh button appears in the HUD row whenever at least one tracker is manual; click it to run the manual tracker set for the current turn. The refresh button inside each tracker popover still runs that individual tracker directly.
 
 The sparkle icon at the start of the HUD row opens the **Agents & Actions** menu. From there you can re-run all trackers, retry any agents that failed, and use **Clear Trackers** to wipe all tracked world state for the chat. **Clear Trackers** cannot be undone, so use it with care.
 
@@ -74,6 +74,7 @@ The controls in the panel header also let you customize tracker structure:
 - Click **+** to enter add mode. The World section gains **Add world field**, and each present-character card gains **Add custom field**. Field names remain visible in normal mode so their values are always understandable.
 - Click the trash icon to enter delete mode, then remove custom world or character fields. Removing a field also removes its saved field locks.
 - Click the lock icon to enter lock mode. Custom field values follow the same lock behavior as built-in tracker values.
+- Click the crossed-out eye icon to enter hide mode, then choose **Mood**, **Look**, **Outfit**, or **Thoughts** on a character card. Hidden fields disappear from the Tracker Panel and Roleplay HUD, are cleared, and stay locked so tracker agents do not refill them. Enter hide mode again to show a hidden field as an empty field.
 
 Custom field names define the structure and remain stable across tracker runs. Tracker agents update their values when the story changes them, while omitted agent output does not erase fields you created.
 
