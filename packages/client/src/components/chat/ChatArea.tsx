@@ -109,7 +109,6 @@ import { HomeProfessorMariChat } from "./HomeProfessorMariChat";
 import { HomeAchievements } from "./HomeAchievements";
 import { NewChatConnectionGate } from "./NewChatConnectionGate";
 import { ChatCommonOverlays, preloadChatSettingsDrawer, type ChatSettingsInitialSection } from "./ChatCommonOverlays";
-import { PendingTypingDots } from "./PendingTypingDots";
 import { CreatorNotesCssInjector, type CardCssMode, type PersonaCssRow } from "./CreatorNotesCssInjector";
 import type { ChatModeFilter } from "../../lib/card-css";
 import { ImagePromptReviewModal, type ImagePromptOverride, type ImagePromptReviewItem } from "../ui/ImagePromptReviewModal";
@@ -730,14 +729,6 @@ export function ChatArea() {
     if (!messages) return map;
     messages.forEach((message, index) => {
       map.set(messageOffset + index, message.id);
-    });
-    return map;
-  }, [messageOffset, messages]);
-  const _messageOrderIndexById = useMemo(() => {
-    const map = new Map<string, number>();
-    if (!messages) return map;
-    messages.forEach((message, index) => {
-      map.set(message.id, messageOffset + index);
     });
     return map;
   }, [messageOffset, messages]);
@@ -2414,6 +2405,20 @@ export function ChatArea() {
     return unsub;
   }, [scheduleStreamScrollToBottom]);
 
+  // The stream-buffer subscription runs before React necessarily commits the
+  // corresponding text. Observe the rendered transcript as well so long
+  // typewriter rewrites follow the actual growing DOM instead of scrolling to
+  // the previous frame's height. The normal near-bottom/user-scroll guards in
+  // scheduleStreamScrollToBottom still let readers disengage auto-follow.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!isStreaming || !el || typeof MutationObserver === "undefined") return;
+
+    const observer = new MutationObserver(() => scheduleStreamScrollToBottom());
+    observer.observe(el, { childList: true, characterData: true, subtree: true });
+    return () => observer.disconnect();
+  }, [isStreaming, scheduleStreamScrollToBottom]);
+
   // Preserve scroll position when older messages are prepended
   const pageCount = msgData?.pages.length ?? 0;
   useLayoutEffect(() => {
@@ -3122,18 +3127,6 @@ export function ChatArea() {
         />
       )}
     </>
-  );
-}
-
-/** Animated typing indicator — three bouncing dots (currently unused, kept for future) */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function TypingIndicator() {
-  return (
-    <div className="flex items-center gap-1 px-4 py-3">
-      <div className="flex items-center gap-1 rounded-xl bg-[var(--secondary)] px-4 py-2.5">
-        <PendingTypingDots dotClassName="bg-[var(--muted-foreground)]/60" />
-      </div>
-    </div>
   );
 }
 

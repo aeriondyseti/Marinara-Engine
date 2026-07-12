@@ -407,7 +407,7 @@ export interface AgentPipelineResult {
 
 /**
  * Run ALL enabled agents across the full pipeline.
- * Call `runPreGeneration` before generating, fire `runParallel` concurrently
+ * Call `preGenerate` before generating, fire `runParallel` concurrently
  * with the main generation, then call `postGenerate` after the response is
  * complete, passing the final response text.
  *

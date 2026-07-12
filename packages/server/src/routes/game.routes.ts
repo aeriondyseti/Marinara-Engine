@@ -51,7 +51,6 @@ import {
   withActiveGameMapMeta,
 } from "../services/game/map-position.service.js";
 import { resolveCombatRound, type CombatantStats } from "../services/game/combat.service.js";
-import { getElementPreset, listElementPresets } from "../services/game/element-reactions.service.js";
 import { generateCombatLoot, generateLootTable } from "../services/game/loot.service.js";
 import {
   advanceTime,
@@ -650,28 +649,6 @@ function formatIllustrationAssetDebug(assets: IllustrationCharacterAssets): stri
       return `${detail.name}=${ref}${appearance}`;
     })
     .join(", ");
-}
-
-function applyGeneratedIllustration(
-  sceneResult: Record<string, unknown>,
-  generatedTag: string,
-  segment: number | undefined,
-): void {
-  sceneResult.generatedIllustration = { tag: generatedTag, ...(segment !== undefined ? { segment } : {}) };
-  if (segment !== undefined && segment > 0) {
-    const effects = Array.isArray(sceneResult.segmentEffects)
-      ? (sceneResult.segmentEffects as Record<string, unknown>[])
-      : [];
-    sceneResult.segmentEffects = effects;
-    let target = effects.find((effect) => effect.segment === segment);
-    if (!target) {
-      target = { segment };
-      effects.push(target);
-    }
-    target.background = generatedTag;
-  } else {
-    sceneResult.background = generatedTag;
-  }
 }
 
 function generatedBackgroundSlug(value: string): string {
@@ -1595,7 +1572,6 @@ const createGameSchema = z.object({
     })
     .optional(),
   connectionId: z.string().optional(),
-  characterConnectionId: z.string().optional(),
   promptPresetId: z.string().optional(),
   chatId: z.string().optional(),
 });
@@ -5855,7 +5831,7 @@ export async function gameRoutes(app: FastifyInstance) {
   app.post("/create", async (req) => {
     logger.info("[game/create] Received request");
     const parsedCreateGameInput = createGameSchema.parse(req.body);
-    const { name, connectionId, characterConnectionId, promptPresetId, chatId, preferences, shareLabels } =
+    const { name, connectionId, promptPresetId, chatId, preferences, shareLabels } =
       parsedCreateGameInput;
     const selectedPromptPresetId = promptPresetId || parsedCreateGameInput.setupConfig.promptPresetId || null;
     const customHudWidgets = sanitizeGameHudWidgets(parsedCreateGameInput.setupConfig.customHudWidgets);
@@ -5993,7 +5969,6 @@ export async function gameRoutes(app: FastifyInstance) {
       },
       gameSystemPrompt,
       gameSpecialInstructions,
-      gameCharacterConnectionId: null,
       gameSceneConnectionId: setupConfig.sceneConnectionId || null,
       gameNpcs: [],
       enableAgents: true,
@@ -8734,35 +8709,6 @@ export async function gameRoutes(app: FastifyInstance) {
     return { result, combatants };
   });
 
-  // ── GET /game/elements/presets ──
-  app.get("/elements/presets", async () => {
-    const names = listElementPresets();
-    const presets = names.map((name) => {
-      const p = getElementPreset(name);
-      return { id: name, name: p.name, elements: p.elements };
-    });
-    return { presets };
-  });
-
-  // ── GET /game/elements/preset/:name ──
-  app.get("/elements/preset/:name", async (req) => {
-    const { name } = req.params as { name: string };
-    const preset = getElementPreset(name);
-    return {
-      id: name,
-      name: preset.name,
-      elements: preset.elements,
-      reactionCount: preset.reactions.length,
-      reactions: preset.reactions.map((r) => ({
-        trigger: r.trigger,
-        appliedWith: r.appliedWith,
-        reaction: r.reaction,
-        damageMultiplier: r.damageMultiplier,
-        description: r.description,
-      })),
-    };
-  });
-
   // ── POST /game/combat/loot ──
   app.post("/combat/loot", async (req) => {
     const schema = z.object({
@@ -9049,7 +8995,7 @@ export async function gameRoutes(app: FastifyInstance) {
 
   // ── POST /game/party-turn ──
   // Generates the party's response to the latest GM narration.
-  // Uses the character connection (or falls back to GM connection).
+  // Uses the explicit override, else the chat/GM connection (there is no character-connection tier).
   // Returns parsed PartyDialogueLine[] and the raw response text.
   const partyTurnSchema = z.object({
     chatId: z.string().min(1),
@@ -9057,7 +9003,7 @@ export async function gameRoutes(app: FastifyInstance) {
     narration: z.string().min(1).max(50000),
     /** Optional player action text that preceded the GM narration. */
     playerAction: z.string().max(5000).optional(),
-    /** Override connection (falls back to character connection → GM connection). */
+    /** Override connection (falls back to the chat/GM connection). */
     connectionId: z.string().optional(),
     debugMode: z.boolean().optional().default(false),
   });
@@ -9689,7 +9635,6 @@ export async function gameRoutes(app: FastifyInstance) {
       // scene-analysis timeout even though the analyzer already returned valid JSON.
       // Missing/generated assets are handled by the follow-up /game/generate-assets
       // request, which reports asset failures separately.
-      const generateSceneWrapAssetsInline = false;
       if (!enableGen) {
         logger.debug("[game/scene-wrap] asset-gen skipped: enableSpriteGeneration=false");
       } else if (!enableAutoGen) {
@@ -9706,44 +9651,14 @@ export async function gameRoutes(app: FastifyInstance) {
         try {
           const imgConn = await connections.getWithKey(imgConnId);
           if (imgConn) {
-            const imgModel = imgConn.model || "";
-            const imgBaseUrl = imgConn.baseUrl || "https://image.pollinations.ai";
-            const imgApiKey = imgConn.apiKey || "";
-            const imgSource = (imgConn as any).imageGenerationSource || imgModel;
-            const imgServiceHint = imgConn.imageService || imgSource;
-            const imgComfyWorkflow = imgConn.comfyuiWorkflow || undefined;
-            const imgEndpointId = imgConn.imageEndpointId || undefined;
-            const imgDefaults = resolveConnectionImageDefaults(imgConn);
-            const imageSettings = await loadImageGenerationUserSettings(app.db);
-            const styleProfiles = imageSettings.styleProfiles;
-
-            const setupCfg = meta.gameSetupConfig as Record<string, unknown> | null;
-            const genre = (setupCfg?.genre as string) || "";
-            const setting = (setupCfg?.setting as string) || "";
-            const artStyle = (setupCfg?.artStylePrompt as string) || "";
-            const styleProfileId =
-              ((setupCfg?.imageStyleProfileId as string | undefined) ??
-                (meta.imageStyleProfileId as string | undefined)) ||
-              null;
-
             const charStore = createCharactersStorage(app.db);
             const allChars = await charStore.list();
-            const charReferenceByName = new Map<string, string>();
             const charAvatarByName = new Map<string, string>();
-            const charDescriptionByName = new Map<string, string>();
             for (const ch of allChars) {
               try {
                 const parsed = JSON.parse(ch.data) as Record<string, unknown> & { name?: string };
-                const fullBodyReference = parsed.name ? readPreferredFullBodySpriteBase64(ch.id) : null;
-                if (parsed.name && fullBodyReference) {
-                  addNameLookupEntry(charReferenceByName, parsed.name, fullBodyReference.base64);
-                }
                 if (parsed.name && ch.avatarPath) {
                   addNameLookupEntry(charAvatarByName, parsed.name, ch.avatarPath);
-                }
-                const appearanceText = extractCharacterAppearanceText(parsed);
-                if (parsed.name && appearanceText) {
-                  addNameLookupEntry(charDescriptionByName, parsed.name, appearanceText);
                 }
               } catch {
                 /* skip */
@@ -9751,81 +9666,7 @@ export async function gameRoutes(app: FastifyInstance) {
             }
 
             const illustration = sceneResult.illustration as SceneIllustrationRequest | null | undefined;
-            if (illustration && sceneCtx.canGenerateIllustrations && generateSceneWrapAssetsInline) {
-              const illustrationAssets = collectIllustrationCharacterAssets({
-                illustration,
-                characterNames: input.context.characterNames ?? [],
-                trackedNpcs: (input.context.trackedNpcs ?? []) as Array<Record<string, unknown>>,
-                gameNpcs: (meta.gameNpcs as GameNpc[]) ?? [],
-                charReferenceByName,
-                charAvatarByName,
-                charDescriptionByName,
-                includeReferenceImages: meta.gameImageUseAvatarReferences !== false,
-                includeCharacterDescriptions: meta.gameImageIncludeCharacterAppearance !== false,
-                maxReferenceImages: resolveSceneIllustrationReferenceImageLimit({
-                  imgSource,
-                  imgModel,
-                  imgBaseUrl,
-                  imgService: imgServiceHint,
-                }),
-              });
-              let sentIllustrationPrompt: string | null = null;
-              const generatedTag = await generateSceneIllustration({
-                chatId: input.chatId,
-                title: illustration.title,
-                prompt: illustration.prompt,
-                reason: illustration.reason,
-                characters: illustration.characters,
-                characterDescriptions: illustrationAssets.characterDescriptions,
-                slug: illustration.slug,
-                genre,
-                setting,
-                artStyle,
-                imagePromptInstructions,
-                referenceImages: illustrationAssets.referenceImages,
-                imgSource,
-                imgModel,
-                imgBaseUrl,
-                imgApiKey,
-                imgService: imgServiceHint,
-                imgEndpointId,
-                imgComfyWorkflow,
-                imgDefaults,
-                styleProfiles,
-                styleProfileId,
-                debugLog: debugLogsEnabled ? debugLog : undefined,
-                promptOverridesStorage: createPromptOverridesStorage(app.db),
-                onCompiledPrompt: (compiled) => {
-                  sentIllustrationPrompt = compiled.prompt;
-                },
-              });
-              if (generatedTag) {
-                await addGeneratedIllustrationToGallery({
-                  app,
-                  chatId: input.chatId,
-                  tag: generatedTag,
-                  illustration,
-                  model: imgModel,
-                  prompt: sentIllustrationPrompt,
-                });
-                applyGeneratedIllustration(sceneResult, generatedTag, illustration.segment);
-                sceneResult.illustration = null;
-                try {
-                  const latestChat = await chats.getById(input.chatId);
-                  if (latestChat) {
-                    const latestMeta = parseMeta(latestChat.metadata);
-                    await chats.updateMetadata(input.chatId, {
-                      ...latestMeta,
-                      gameLastIllustrationTurn: approxTurnNumber,
-                      gameLastIllustrationSessionNumber: sessionNumber,
-                      gameLastIllustrationTag: generatedTag,
-                    });
-                  }
-                } catch {
-                  /* non-fatal */
-                }
-              }
-            } else if (illustration && sceneCtx.canGenerateIllustrations) {
+            if (illustration && sceneCtx.canGenerateIllustrations) {
               logger.debug("[game/scene-wrap] illustration generation deferred to /game/generate-assets");
             }
 
@@ -9845,99 +9686,8 @@ export async function gameRoutes(app: FastifyInstance) {
               } else {
                 logger.debug(`[game/scene-wrap] bg "${chosenBg}" not in manifest; generation will be deferred`);
               }
-
-              if (!tagExists && generateSceneWrapAssetsInline) {
-                // The scene model wanted a bg that doesn't exist — generate one
-                const slug = generatedBackgroundSlug(chosenBg);
-
-                const generatedTag = await generateBackground({
-                  chatId: input.chatId,
-                  locationSlug: slug,
-                  sceneDescription: chosenBg.replace(/:/g, " ").replace(/-/g, " "),
-                  genre,
-                  setting,
-                  currentLocation: latestSceneState?.location ?? null,
-                  currentWeather: latestSceneState?.weather ?? parsed.weather ?? input.context.currentWeather ?? null,
-                  currentTimeOfDay:
-                    latestSceneState?.time ?? parsed.timeOfDay ?? input.context.currentTimeOfDay ?? null,
-                  worldOverview: (meta.gameWorldOverview as string | undefined) ?? null,
-                  artStyle,
-                  imgSource,
-                  imgModel,
-                  imgBaseUrl,
-                  imgApiKey,
-                  imgService: imgServiceHint,
-                  imgEndpointId,
-                  imgComfyWorkflow,
-                  imgDefaults,
-                  styleProfiles,
-                  styleProfileId,
-                  debugLog: debugLogsEnabled ? debugLog : undefined,
-                  promptOverridesStorage: createPromptOverridesStorage(app.db),
-                });
-
-                if (generatedTag) {
-                  // Rewrite the scene result to use the generated tag
-                  sceneResult.background = generatedTag;
-                  // Also patch segmentEffects
-                  if (Array.isArray(sceneResult.segmentEffects)) {
-                    for (const fx of sceneResult.segmentEffects as Record<string, unknown>[]) {
-                      if (fx.background === chosenBg) {
-                        fx.background = generatedTag;
-                      }
-                    }
-                  }
-                }
-              } else if (!tagExists) {
-                logger.debug('[game/scene-wrap] bg "%s" generation deferred to /game/generate-assets', chosenBg);
-              }
             }
 
-            // Also check segmentEffects for additional bg tags
-            if (Array.isArray(sceneResult.segmentEffects) && generateSceneWrapAssetsInline) {
-              const manifest = getAssetManifest();
-              for (const fx of sceneResult.segmentEffects as Record<string, unknown>[]) {
-                const segBg = fx.background as string | null;
-                if (!segBg || segBg === "black" || segBg === "none") continue;
-                if (manifest.assets[segBg]) continue;
-                const segTagExists = Object.keys(manifest.assets).some(
-                  (k) => k.startsWith("backgrounds:") && k.toLowerCase().includes(segBg.toLowerCase()),
-                );
-                if (segTagExists) continue;
-
-                const slug = generatedBackgroundSlug(segBg);
-
-                const generatedTag = await generateBackground({
-                  chatId: input.chatId,
-                  locationSlug: slug,
-                  sceneDescription: segBg.replace(/:/g, " ").replace(/-/g, " "),
-                  genre,
-                  setting,
-                  currentLocation: latestSceneState?.location ?? null,
-                  currentWeather: latestSceneState?.weather ?? parsed.weather ?? input.context.currentWeather ?? null,
-                  currentTimeOfDay:
-                    latestSceneState?.time ?? parsed.timeOfDay ?? input.context.currentTimeOfDay ?? null,
-                  worldOverview: (meta.gameWorldOverview as string | undefined) ?? null,
-                  artStyle,
-                  imgSource,
-                  imgModel,
-                  imgBaseUrl,
-                  imgApiKey,
-                  imgService: imgServiceHint,
-                  imgEndpointId,
-                  imgComfyWorkflow,
-                  imgDefaults,
-                  styleProfiles,
-                  styleProfileId,
-                  debugLog: debugLogsEnabled ? debugLog : undefined,
-                  promptOverridesStorage: createPromptOverridesStorage(app.db),
-                });
-
-                if (generatedTag) {
-                  fx.background = generatedTag;
-                }
-              }
-            }
 
             // ── NPC portrait generation ──
             // First, try to resolve avatars from the character library (cheap, in-memory).

@@ -1,5 +1,4 @@
 import type { CSSProperties } from "react";
-import type { GameState } from "@marinara-engine/shared";
 import type { TrackerTemperatureUnit } from "../../../stores/ui.store";
 import { visibleText } from "./tracker-display";
 
@@ -328,13 +327,6 @@ export function getLocationPinColor(location: string | null | undefined) {
   ) {
     return "text-amber-300";
   }
-  if (
-    /\b(forest|wood|grove|jungle|garden|park|field|meadow|glade|clearing|plain|prairie|steppe|savanna|farm|ranch|orchard|vineyard|glen|vale|valley|thicket|copse|heath|moor|desert|tundra|waste|wild|trail|path|road)\b/.test(
-      text,
-    )
-  ) {
-    return "text-emerald-400";
-  }
   return "text-emerald-400";
 }
 
@@ -400,7 +392,6 @@ export function getWeatherIconColor(weather: string | null | undefined) {
     return "text-zinc-300";
   if (text.includes("clear") || text.includes("sunny") || text.includes("bright")) return "text-yellow-300";
   if (text.includes("hot") || text.includes("swelter")) return "text-red-400";
-  if (text.includes("cold") || text.includes("freez")) return "text-sky-300";
   return "text-sky-300";
 }
 
@@ -411,7 +402,7 @@ function inferMonthIndexFromText(text: string) {
   return -1;
 }
 
-export function getWorldAmbienceStyle(_state: GameState | null): CSSProperties {
+export function getWorldAmbienceStyle(): CSSProperties {
   return {
     background: "var(--tracker-panel-section-background, color-mix(in srgb, var(--card) 6%, transparent))",
   };

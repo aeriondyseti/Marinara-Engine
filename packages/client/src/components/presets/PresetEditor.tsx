@@ -284,8 +284,6 @@ export function PresetEditor() {
   const [localDescription, setLocalDescription] = useState("");
   const [localWrapFormat, setLocalWrapFormat] = useState<WrapFormat>("xml");
   const [localAuthor, setLocalAuthor] = useState("");
-  const [localParams, setLocalParams] = useState<Record<string, unknown>>({});
-  const [localParamsParseFailed, setLocalParamsParseFailed] = useState(false);
   const [localConversationPrompt, setLocalConversationPrompt] = useState("");
   const [localGamePrompt, setLocalGamePrompt] = useState("");
   const hydratedPresetIdRef = useRef<string | null>(null);
@@ -308,13 +306,6 @@ export function PresetEditor() {
     setLocalAuthor(p.author ?? "");
     setLocalConversationPrompt(p.conversationPrompt ?? "");
     setLocalGamePrompt(p.gamePrompt ?? "");
-    try {
-      setLocalParams(typeof p.parameters === "string" ? JSON.parse(p.parameters) : (p.parameters ?? {}));
-      setLocalParamsParseFailed(false);
-    } catch {
-      setLocalParams({});
-      setLocalParamsParseFailed(true);
-    }
   }, [data, presetDetailId]);
 
   const handleClose = useCallback(() => {
@@ -336,7 +327,6 @@ export function PresetEditor() {
       conversationPrompt: localConversationPrompt,
       gamePrompt: localGamePrompt,
     };
-    if (!localParamsParseFailed) payload.parameters = localParams;
     await updatePreset.mutateAsync(payload);
     setDirty(false);
     setShowSaved(true);
@@ -347,8 +337,6 @@ export function PresetEditor() {
     localDescription,
     localWrapFormat,
     localAuthor,
-    localParamsParseFailed,
-    localParams,
     localConversationPrompt,
     localGamePrompt,
     updatePreset,

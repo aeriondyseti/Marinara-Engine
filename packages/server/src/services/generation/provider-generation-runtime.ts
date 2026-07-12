@@ -173,7 +173,7 @@ export function resolveGenerationProviderRuntime(args: GenerationProviderRuntime
     runtime.presencePenalty = 0;
   }
 
-  const providerTopK = resolveProviderTopK(args.connection.provider, runtime.topK);
+  const providerTopK = resolveProviderTopK(runtime.topK);
   const provider =
     args.connectionId === LOCAL_SIDECAR_CONNECTION_ID
       ? getLocalSidecarProvider()

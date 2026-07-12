@@ -48,7 +48,7 @@ async function fetchAvatarImage(url: string, signal: AbortSignal): Promise<
   });
   if (!res.ok) return { status: "not_found" };
   const buf = Buffer.from(await res.arrayBuffer());
-  const image = resolveValidatedImage(buf, res.headers.get("content-type") ?? "");
+  const image = resolveValidatedImage(buf);
   if (!image) return { status: "unsupported" };
   return { status: "ok", buf, mimeType: image.mimeType };
 }

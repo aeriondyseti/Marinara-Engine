@@ -339,9 +339,6 @@ export interface CombatSkill {
   statusEffect?: string;
 }
 
-/** Element presets for the elemental reaction system */
-export type ElementPresetName = "default" | "genshin" | "hsr";
-
 /** Lightweight element info for the client */
 export interface ElementInfo {
   id: string;

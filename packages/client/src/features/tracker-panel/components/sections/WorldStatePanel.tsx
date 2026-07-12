@@ -49,7 +49,7 @@ export function WorldStatePanel({
   return (
     <div
       className="relative z-10 overflow-hidden border-b border-[var(--border)] shadow-inner transition-colors duration-200"
-      style={getWorldAmbienceStyle(state)}
+      style={getWorldAmbienceStyle()}
     >
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-[var(--foreground)]/10" />
 

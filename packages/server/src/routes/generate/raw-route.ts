@@ -186,7 +186,7 @@ export async function registerRawRoute(app: FastifyInstance) {
       effectiveMaxContext = mergeModelContextLimit(modelAccessPolicy, effectiveMaxContext, body.parameters.maxContext);
     }
 
-    const providerTopK = resolveProviderTopK(conn.provider, topK);
+    const providerTopK = resolveProviderTopK(topK);
     const resolvedEffort = normalizeReasoningEffort({
       provider: conn.provider,
       model: conn.model,

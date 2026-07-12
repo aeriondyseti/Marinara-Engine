@@ -1,31 +1,31 @@
-# Browser: Finding and Importing Characters
+# Bot Browser: Finding and Importing Characters
 
-This guide explains the **Browser** in Marinara Engine, the built-in tool for finding character cards on public sites and importing them into your library. It covers the six sources, how to search and filter, and how adult content works on each source. It also covers how to import a character or save it as a file. In the code and in older docs this feature is also called the **Bot Browser**, but the app itself always labels it **Browser**.
+This guide explains the **Bot Browser** in Marinara Engine, the built-in tool for finding character cards on public sites and importing them into your library. It covers the six sources, how to search and filter, and how adult content works on each source. It also covers how to import a character or save it as a file. Older versions of the app labeled this feature **Browser**, so some older guides may still use that shorter name.
 
-A character card is a file that holds one character's name, personality, greeting, and other details. Normally you would download a card from a website and then upload it into Marinara. The **Browser** does both steps for you in one place.
+A character card is a file that holds one character's name, personality, greeting, and other details. Normally you would download a card from a website and then upload it into Marinara. The **Bot Browser** does both steps for you in one place.
 
-## What the Browser is
+## What the Bot Browser is
 
-The **Browser** searches several public character-card sites from inside Marinara. It supports six sources: **ChubAI**, **JannyAI**, **CharacterTavern**, **Pygmalion**, **Wyvern**, and **DataCat**. You can search a source, filter the results, and preview a character's full details. Then you can import that character into your library or save it as a PNG file. You do not need an account or an API key to browse and import character cards at the default settings.
+The **Bot Browser** searches several public character-card sites from inside Marinara. It supports six sources: **ChubAI**, **JannyAI**, **CharacterTavern**, **Pygmalion**, **Wyvern**, and **DataCat**. You can search a source, filter the results, and preview a character's full details. Then you can import that character into your library or save it as a PNG file. You do not need an account or an API key to browse and import character cards at the default settings.
 
-## Opening the Browser
+## Opening the Bot Browser
 
-There are two ways to open the **Browser**.
+There are two ways to open the **Bot Browser**.
 
-1. Click the **Browser** icon in the top bar. It sits in the row of panel buttons on the right side.
-2. Or open the **Browser** panel in the right sidebar, then click the **Browse Online** button at the top of that panel.
+1. Click the **Bot Browser** icon in the top bar. It sits in the row of panel buttons on the right side.
+2. Or open the **Bot Browser** panel in the right sidebar, then click the **Browse Online** button at the top of that panel.
 
-Either way, the whole content area switches to the full **Browser** view. This view replaces the chat area. It is not a small pop-up window.
+Either way, the whole content area switches to the full **Bot Browser** view. This view replaces the chat area. It is not a small pop-up window.
 
-To leave, click the back-arrow button in the top-left of the **Browser** header. You should return to the screen you came from.
+To leave, click the back-arrow button in the top-left of the **Bot Browser** header. You should return to the screen you came from.
 
-The **Browser** stays loaded while the app is open. If you close it and open it again, your last search, filters, and selected character are still there. Reloading the whole app resets it.
+The **Bot Browser** stays loaded while the app is open. If you close it and open it again, your last search, filters, and selected character are still there. Reloading the whole app resets it.
 
 ## Choosing a source
 
 Click the source button in the header. It shows the current source name and a small arrow. A menu opens with all six sources in this order: **ChubAI**, **JannyAI**, **CharacterTavern**, **Pygmalion**, **Wyvern**, and **DataCat**.
 
-**ChubAI** is selected the first time you open the **Browser**. When you switch sources, your search text, tags, and filters are cleared. Each source remembers its own adult-content setting and login separately, so a change on one source does not affect the others.
+**ChubAI** is selected the first time you open the **Bot Browser**. When you switch sources, your search text, tags, and filters are cleared. Each source remembers its own adult-content setting and login separately, so a change on one source does not affect the others.
 
 One naming note: the menu lists **ChubAI**, but on a character's detail page the outside link reads **View on Chub**. That is the site's own name for itself. The other five sources use the same name in both places.
 
@@ -161,9 +161,9 @@ JSON and PNG are two common formats for the same character data. JSON is a plain
 
 ## Your imported characters
 
-The **Browser** panel in the right sidebar keeps a separate list of characters you imported through the **Browser**. Characters you made by hand or imported another way do not appear here. All of them still appear in the main **Characters** library.
+The **Bot Browser** panel in the right sidebar keeps a separate list of characters you imported through the **Bot Browser**. Characters you made by hand or imported another way do not appear here. All of them still appear in the main **Characters** library.
 
-- The **Browse Online** button opens the full **Browser** view.
+- The **Browse Online** button opens the full **Bot Browser** view.
 - The **Search imported...** box filters this list.
 - The sort dropdown offers **A-Z**, **Z-A**, **Newest**, and **Oldest**.
 - Right-click a row, or use its buttons, to find **Quick Start Roleplay** and **Quick Start Conversation**. These open a new chat with that character. You can also delete the character from this list here.

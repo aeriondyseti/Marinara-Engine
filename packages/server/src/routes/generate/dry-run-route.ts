@@ -1517,7 +1517,7 @@ export async function registerDryRunRoute(app: FastifyInstance) {
       frequencyPenalty = 0;
       presencePenalty = 0;
     }
-    const providerTopK = resolveProviderTopK(conn.provider, topK);
+    const providerTopK = resolveProviderTopK(topK);
 
     const provider: BaseLLMProvider =
       connId === LOCAL_SIDECAR_CONNECTION_ID

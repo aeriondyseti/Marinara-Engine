@@ -340,12 +340,8 @@ export function shouldAbortOnPassiveGenerationDisconnect(args: { impersonate?: b
   return args.impersonate === true;
 }
 
-export function resolveProviderTopK(provider: unknown, topK: number): number | undefined {
+export function resolveProviderTopK(topK: number): number | undefined {
   const normalized = Number.isFinite(topK) ? Math.max(0, Math.trunc(topK)) : 0;
-  const providerId = typeof provider === "string" ? provider.toLowerCase() : "";
-  if (providerId === "google" || providerId === "google_vertex") {
-    return normalized > 0 ? normalized : undefined;
-  }
   return normalized > 0 ? normalized : undefined;
 }
 

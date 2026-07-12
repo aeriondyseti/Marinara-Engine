@@ -87,7 +87,7 @@ async function fetchAvatarImage(url: string, signal: AbortSignal) {
   });
   if (!res.ok) return null;
   const buf = Buffer.from(await res.arrayBuffer());
-  const image = resolveValidatedImage(buf, res.headers.get("content-type") ?? "");
+  const image = resolveValidatedImage(buf);
   if (!image) throw new Error("Unsupported avatar image content");
   return { buf, mimeType: image.mimeType };
 }

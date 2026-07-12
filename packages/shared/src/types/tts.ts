@@ -9,9 +9,6 @@ export type TTSSource = z.infer<typeof ttsSourceSchema>;
 export const ttsAudioFormatSchema = z.enum(["mp3", "wav"]);
 export type TTSAudioFormat = z.infer<typeof ttsAudioFormatSchema>;
 
-export const ttsDialogueScopeSchema = z.enum(["all", "character"]);
-export type TTSDialogueScope = z.infer<typeof ttsDialogueScopeSchema>;
-
 export const ttsVoiceModeSchema = z.enum(["single", "per-character"]);
 export type TTSVoiceMode = z.infer<typeof ttsVoiceModeSchema>;
 
@@ -130,8 +127,6 @@ const ttsConfigBaseSchema = z.object({
   progressivePlayback: z.boolean().default(false),
   dialogueOnly: z.boolean().default(false),
   audioFormat: ttsAudioFormatSchema.default("mp3"),
-  dialogueScope: ttsDialogueScopeSchema.default("all"),
-  dialogueCharacterName: z.string().default(""),
   /** Global gate for Conversation-mode calls. Individual chats opt in separately. */
   callAudioEnabled: z.boolean().default(false),
   /** Deprecated: call transcription now uses the active conversation connection. */

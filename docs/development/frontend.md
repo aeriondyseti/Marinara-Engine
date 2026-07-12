@@ -314,7 +314,6 @@ The current modal types include (this list is illustrative, not exhaustive):
 | `agent-write-approval`     | `AgentWriteApprovalModal`     | Agent write consent and review             |
 | `docs-viewer`              | `DocsViewerModal`             | In-app documentation browser               |
 | `st-bulk-import`           | `STBulkImportModal`           | Bulk import from SillyTavern data          |
-| `edit-agent`               | `EditAgentModal`              | Edit agent configuration                   |
 | `about-me-viewer`          | `AboutMeViewerModal`          | View a Conversation-mode About Me          |
 | `scene-prompt-preferences` | `ScenePromptPreferencesModal` | Scene prompt preference settings           |
 
@@ -445,7 +444,7 @@ Entity type definitions live in `packages/shared/src/types/`. A sample of the ke
 | File              | Purpose                                                                                                                                    |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `macro-engine.ts` | `resolveMacros(template, context)`: replaces macros such as `{{date}}`, `{{char}}`, `{{random}}`, `{{roll:2d6}}`, and `{{getvar::name}}`     |
-| `xml-wrapper.ts`  | `wrapInXml()`, `stripXmlTags()`, and `nameToXmlTag()`                                                                                       |
+| `xml-wrapper.ts`  | `nameToXmlTag()`: converts a display name to an XML tag slug ("World Info (Before)" becomes "world_info_before")                           |
 
 ## API endpoints
 

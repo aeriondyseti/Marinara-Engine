@@ -29,7 +29,7 @@ const BotBrowserPanel = lazy(() =>
 
 const PANEL_CONFIG: Record<string, { title: string; icon: ReactNode; gradient?: string; gradientClass?: string }> = {
   "bot-browser": {
-    title: "Browser",
+    title: "Bot Browser",
     icon: <Bot size="0.875rem" />,
     gradient: "from-lime-400 via-green-500 to-cyan-500",
   },

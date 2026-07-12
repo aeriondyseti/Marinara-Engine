@@ -298,10 +298,6 @@ function formatPeekTrackerContextBlock(args: {
   });
 }
 
-function resolveLorebookGenerationTriggers(mode: unknown): string[] {
-  const modeTrigger = mode === "game" ? "game" : typeof mode === "string" && mode.trim() ? mode.trim() : "roleplay";
-  return Array.from(new Set([modeTrigger, "chat"]));
-}
 
 function resolveChatCharacterIds(raw: unknown): string[] {
   if (Array.isArray(raw)) return raw.filter((id): id is string => typeof id === "string" && id.trim().length > 0);
@@ -2261,7 +2257,7 @@ export async function chatsRoutes(app: FastifyInstance) {
             idleDuration: promptIdleDuration,
           });
 
-          // ── Strip <speaker> tags from chat history to save tokens (roleplay only) ──
+          // ── Strip <speaker> tags from chat history to save tokens (non-conversation modes; game already returned above, so effectively roleplay plus legacy visual_novel chats) ──
           const isGroupChat = characterIds.length > 1;
           if (isGroupChat && chatMode !== "conversation") {
             const speakerCloseRegex = /<\/speaker>/g;

@@ -255,7 +255,7 @@ export async function appendConversationCustomAssetAdvertisements(args: {
     for (const img of images) {
       if (img.customKind === "emoji" && img.customName && img.filePath) {
         args.conversationCustomEmojiUrlByName.set(
-          String(img.customName),
+          buildConversationCustomEmojiKey("character", info.charId, String(img.customName)),
           buildCharacterGalleryEmojiUrl(info.charId, getStoredFilename(String(img.filePath))),
         );
       }

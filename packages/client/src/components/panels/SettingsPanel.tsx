@@ -5887,6 +5887,7 @@ function ExtensionsSettings({ showIntro = true }: { showIntro?: boolean } = {}) 
     fallbackName: string,
   ) => {
     let imported = 0;
+    let importedEnabled = 0;
     let failed = 0;
     let skipped = 0;
     const failureMessages: string[] = [];
@@ -5903,6 +5904,7 @@ function ExtensionsSettings({ showIntro = true }: { showIntro?: boolean } = {}) 
           installedAt,
         });
         imported++;
+        if (normalized.enabled) importedEnabled++;
       } catch (err) {
         failed++;
         failureMessages.push(describeExtensionImportError(err, normalized.name));
@@ -5911,6 +5913,12 @@ function ExtensionsSettings({ showIntro = true }: { showIntro?: boolean } = {}) 
     }
     if (imported === 0 && failed === 0 && skipped === 0) throw new Error("No valid extensions found in file");
     const skipNote = skipped > 0 ? ` (${skipped} skipped — no importable entry)` : "";
+    // "Review before enabling" would be misleading when a manifest imported
+    // with enabled:true — those extensions are already running.
+    const reviewNote =
+      importedEnabled > 0
+        ? ` ${importedEnabled === imported ? "They are" : `${importedEnabled} of them are`} already enabled — review in the Extension Library.`
+        : " Review before enabling.";
     if (failed > 0) {
       const more = failureMessages.length > 1 ? ` (+${failureMessages.length - 1} more)` : "";
       toast.error(
@@ -5922,7 +5930,7 @@ function ExtensionsSettings({ showIntro = true }: { showIntro?: boolean } = {}) 
     } else if (skipped > 0) {
       toast.warning(
         imported > 0
-          ? `Imported ${imported} extension${imported === 1 ? "" : "s"}${skipNote}. Review before enabling.`
+          ? `Imported ${imported} extension${imported === 1 ? "" : "s"}${skipNote}.${reviewNote}`
           : `Skipped ${skipped} extension entr${skipped === 1 ? "y" : "ies"}.`,
         {
           description: failureMessages[0],
@@ -5930,7 +5938,7 @@ function ExtensionsSettings({ showIntro = true }: { showIntro?: boolean } = {}) 
         },
       );
     } else {
-      toast.success(`Imported ${imported} extension${imported === 1 ? "" : "s"}${skipNote}. Review before enabling.`);
+      toast.success(`Imported ${imported} extension${imported === 1 ? "" : "s"}${skipNote}.${reviewNote}`);
     }
   };
 
@@ -7300,7 +7308,6 @@ function AdvancedSettings() {
         channel: selectedUpdateChannelId,
         currentVersion: updateCheck.data?.currentVersion ?? health.data?.version ?? APP_VERSION,
         currentCommit: updateCheck.data?.currentCommit ?? health.data?.commit ?? null,
-        currentBuild: updateCheck.data?.currentBuild ?? health.data?.build ?? null,
         targetRef: updateCheck.data?.targetRef,
         targetCommit: updateCheck.data?.targetCommit,
       }),

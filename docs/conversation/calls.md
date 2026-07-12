@@ -147,7 +147,7 @@ The control bar at the bottom of the stage has icon buttons:
 - **Turn camera on** and **Turn camera off**: enabled only in **Provider-native audio/video** mode with **Camera and screen input** on.
 - **Share screen** and **Stop sharing screen**: same rule as the camera.
 - **Character volume**: opens a popover with a mute button and a 0 to 100 volume slider. The default is 100 percent, and your choice is saved in the browser.
-- **Soundboard**: appears when soundboard sounds exist. It opens a list of sounds with an **Upload** control.
+- **Soundboard**: opens a list of sounds with an **Upload** control.
 - **End call**: the red hang-up button.
 
 If you stay muted for a while, a reminder appears: "You are muted! Remember to unmute yourself first if you want to talk."
@@ -158,7 +158,7 @@ If you leave the Conversation while a call is active, the call shrinks into a sm
 
 The soundboard is a small library of sounds you can play during any call. Four built-in sounds ship by default: **Soft Chime**, **Tap**, **Sparkle**, and **Pop**. You cannot delete the built-in sounds.
 
-You can upload your own sound with the **Upload** button. Accepted formats are mp3, wav, ogg, webm, and m4a, up to 8 MB each. Your uploads have a delete control. Characters can also play a sound through the soundboard command when it is enabled.
+You can upload your own sound with the **Upload** button. Accepted formats are mp3, wav, ogg, webm, and m4a, up to 8 MB each. Your uploads have a delete control. Characters can also play a sound through the soundboard command.
 
 ## Character Video Presence and video call clips
 

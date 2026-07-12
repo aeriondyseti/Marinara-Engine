@@ -547,8 +547,6 @@ export function TTSConfigCard() {
     progressivePlayback,
     dialogueOnly,
     audioFormat,
-    dialogueScope: "all",
-    dialogueCharacterName: "",
     callAudioEnabled,
     callSttConnectionId: "",
     callSttModel: "",
@@ -1491,7 +1489,7 @@ export function TTSConfigCard() {
               checked={dialogueOnly}
               onChange={(v) => {
                 setDialogueOnly(v);
-                mark({ dialogueOnly: v, dialogueScope: "all", dialogueCharacterName: "" });
+                mark({ dialogueOnly: v });
               }}
             />
           </div>

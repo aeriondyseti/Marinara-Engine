@@ -78,13 +78,15 @@ Your notes save on their own a moment after you stop typing. A small label shows
 
 The **NPCs** tab of the Adventure Journal tracks how each NPC feels about you. Every listed NPC shows a portrait, a name, and a reputation label.
 
-The reputation label changes as you act in the story. It is one of these five, from best to worst:
+The reputation label changes as you act in the story. It is one of these seven, from best to worst:
 
 | Label | Meaning |
 |---|---|
+| **Devoted** | Deeply loyal to you |
 | **Allied** | Strong ally |
 | **Friendly** | Positive |
 | **Neutral** | No strong feeling |
+| **Unfriendly** | Negative |
 | **Hostile** | Turned against you |
 | **Enemy** | Actively opposed |
 

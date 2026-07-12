@@ -4,7 +4,6 @@
 import { lazy, Suspense } from "react";
 import type { AvatarCropValue } from "../../lib/utils";
 import { useUIStore } from "../../stores/ui.store";
-import type { AgentData } from "../modals/EditAgentModal";
 import type { LorebookCategory, LorebookScope, ScenePromptPreferences } from "@marinara-engine/shared";
 
 const CreateCharacterModal = lazy(() =>
@@ -24,9 +23,6 @@ const CreatePresetModal = lazy(() =>
 );
 const ImportPresetModal = lazy(() =>
   import("../modals/ImportPresetModal").then((module) => ({ default: module.ImportPresetModal })),
-);
-const EditAgentModal = lazy(() =>
-  import("../modals/EditAgentModal").then((module) => ({ default: module.EditAgentModal })),
 );
 const STBulkImportModal = lazy(() =>
   import("../modals/STBulkImportModal").then((module) => ({ default: module.STBulkImportModal })),
@@ -96,9 +92,6 @@ export function ModalRenderer() {
       break;
     case "import-preset":
       content = <ImportPresetModal open onClose={closeModal} />;
-      break;
-    case "edit-agent":
-      content = <EditAgentModal open onClose={closeModal} agent={(modal?.props?.agent as AgentData | null) ?? null} />;
       break;
     case "import-persona":
       content = <ImportPersonaModal open onClose={closeModal} />;

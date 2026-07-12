@@ -132,7 +132,6 @@ export const characterCardV2Schema = z.object({
   data: characterDataSchema,
 });
 
-/** AI-write of a Convo "about me" from card/persona fields (Conversation mode). */
 /** Default sources when a character has none configured: only the personality field. */
 export const DEFAULT_ABOUT_ME_SOURCES: z.infer<typeof aboutMeSourceConfigSchema> = { personality: true };
 /** Default number of recent messages to include when the chat-context source is on. */
@@ -145,6 +144,7 @@ export function resolveAboutMeSources(raw: unknown): z.infer<typeof aboutMeSourc
   return parsed.success ? parsed.data : { ...DEFAULT_ABOUT_ME_SOURCES };
 }
 
+/** AI-write of a Convo "about me" from card/persona fields (Conversation mode). */
 export const generateAboutMeSchema = z.object({
   connectionId: z.string().min(1),
   kind: z.enum(["character", "persona"]).default("character"),

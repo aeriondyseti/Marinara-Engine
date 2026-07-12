@@ -621,7 +621,6 @@ export function LorebooksPanel() {
           key={lb.id}
           lorebook={lb}
           characterName={combinedNames}
-          personaName={undefined}
           onClick={() => {
             if (suppressLorebookClickRef.current) return;
             if (selectionMode) toggleSelection(lb.id);
@@ -1119,7 +1118,6 @@ export function LorebooksPanel() {
 function LorebookRow({
   lorebook,
   characterName,
-  personaName,
   onClick,
   onDelete,
   onDuplicate,
@@ -1135,7 +1133,6 @@ function LorebookRow({
 }: {
   lorebook: Lorebook;
   characterName?: string;
-  personaName?: string;
   onClick: () => void;
   onDelete: () => void;
   onDuplicate: () => void;
@@ -1233,10 +1230,10 @@ function LorebookRow({
           )}
         </div>
         <div className="truncate text-[0.6875rem] text-[var(--muted-foreground)]">
-          {characterName || personaName ? (
+          {characterName ? (
             <span className="inline-flex items-center gap-1">
               <UserRound size="0.625rem" className="shrink-0" />
-              {characterName ?? personaName}
+              {characterName}
               {lorebook.description ? ` · ${lorebook.description}` : ""}
             </span>
           ) : (

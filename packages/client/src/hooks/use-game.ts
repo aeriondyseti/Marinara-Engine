@@ -178,7 +178,6 @@ export function useCreateGame() {
       preferences?: string;
       shareLabels?: GameInitialSetupLabels;
       connectionId?: string;
-      characterConnectionId?: string;
       promptPresetId?: string;
       chatId?: string;
     }) => api.post<CreateGameResponse>("/game/create", data),
@@ -851,15 +850,6 @@ export function useUpdateWeather() {
   });
 }
 
-export function useRollEncounter() {
-  return useMutation({
-    mutationFn: (data: { chatId: string; action: string; location?: string }) =>
-      api.post<{ encounter: { triggered: boolean; type: string | null; hint: string }; enemyCount: number }>(
-        "/game/encounter/roll",
-        data,
-      ),
-  });
-}
 
 export function useUpdateReputation() {
   const qc = useQueryClient();
@@ -875,16 +865,6 @@ export function useUpdateReputation() {
   });
 }
 
-export function useJournalEntry() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (data: { chatId: string; type: string; data: Record<string, unknown> }) =>
-      api.post<{ journal: unknown }>("/game/journal/entry", data),
-    onSuccess: (_, variables) => {
-      qc.invalidateQueries({ queryKey: [...gameKeys.all, "journal", variables.chatId] });
-    },
-  });
-}
 
 export function useGameJournal(chatId: string | null) {
   return useQuery({

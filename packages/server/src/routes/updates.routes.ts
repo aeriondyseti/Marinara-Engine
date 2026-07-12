@@ -489,7 +489,6 @@ type ApplyUpdateBody = {
   confirm?: boolean;
   channel?: UpdateChannel;
   currentVersion?: string;
-  currentBuild?: string | null;
   currentCommit?: string | null;
   targetRef?: string;
   targetCommit?: string;

@@ -40,9 +40,7 @@ import {
   useGenerateMap,
   useAdvanceTime,
   useUpdateWeather,
-  useRollEncounter,
   useUpdateReputation,
-  useJournalEntry,
   useTransitionGameState,
   useRecruitPartyMember,
   useRemovePartyMember,
@@ -2359,6 +2357,7 @@ function GameSurfaceComponent({
   const messagesPerPage = useUIStore((s) => s.messagesPerPage);
   const quoteFormat = useUIStore((s) => s.quoteFormat);
   const musicPlayerSource = useUIStore((s) => s.musicPlayerSource);
+  const generationPhase = useChatStore((s) => s.generationPhase);
   const gameSnapshot = useGameStateStore((s) => (s.current?.chatId === activeChatId ? s.current : null));
   const chatCharacterIds = useMemo(
     () => getChatCharacterIds(chat.characterIds).filter((id) => id !== PROFESSOR_MARI_ID),
@@ -3525,9 +3524,7 @@ function GameSurfaceComponent({
   // New game mechanics hooks
   const _advanceTime = useAdvanceTime();
   const updateWeather = useUpdateWeather();
-  const _rollEncounter = useRollEncounter();
   const _updateReputation = useUpdateReputation();
-  const _journalEntry = useJournalEntry();
   const transitionGameState = useTransitionGameState();
   const sceneAnalysis = useSceneAnalysis();
   const sidecarConfig = useSidecarStore((s) => s.config);
@@ -9073,7 +9070,6 @@ function GameSurfaceComponent({
     setPendingInventorySegmentUpdates([]);
     appliedSegmentsRef.current = new Set();
     appliedInventorySegmentsRef.current = new Set();
-    appliedInventorySegmentsRef.current = new Set();
 
     const tags = parseGmTags(latestAssistantMsg.content);
     const assets = scopedAssetMap;
@@ -9550,13 +9546,14 @@ function GameSurfaceComponent({
                         <div className="flex items-center gap-3 text-sm text-[var(--muted-foreground)] dark:text-white/60">
                           <div className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--muted)]/40 border-t-[var(--foreground)]/70 dark:border-white/20 dark:border-t-white/70" />
                           <span>
-                            {hasEverHadPlayableContent && !sceneProcessed
-                              ? "Preparing the scene..."
-                              : hasEverHadPlayableContent && pendingAssetGeneration && !assetGenerationFailed
-                                ? "Generating images..."
-                                : hasEverHadPlayableContent && isStreaming
-                                  ? "The GM is narrating..."
-                                  : "The adventure begins..."}
+                            {generationPhase ??
+                              (hasEverHadPlayableContent && !sceneProcessed
+                                ? "Preparing the scene..."
+                                : hasEverHadPlayableContent && pendingAssetGeneration && !assetGenerationFailed
+                                  ? "Generating images..."
+                                  : hasEverHadPlayableContent && isStreaming
+                                    ? "The GM is narrating..."
+                                    : "The adventure begins...")}
                           </span>
                         </div>
                       )}
@@ -11000,7 +10997,7 @@ function GameSurfaceComponent({
                             onOpenInventory={() => setInventoryOpen(true)}
                             onCustomInstruction={handleCombatCustomInstruction}
                             onSpriteSuggestionChange={setCombatSpriteSuggestion}
-                            _isStreaming={isStreaming}
+                            isStreaming={isStreaming}
                             narration="Battle starts."
                             combatDialogue={combatDialogueLines}
                             combatDialogueCues={combatDialogueCues}
@@ -11400,9 +11397,6 @@ function GameSurfaceComponent({
             </div>
           </div>
         </DirectionEngine>
-
-        {/* Right: Party rail spans full game height */}
-        {/* REMOVED: Old sidebar replaced by compact GamePartyBar in map area */}
       </GameTransitionManager>
 
       {/* Character sheet modal */}

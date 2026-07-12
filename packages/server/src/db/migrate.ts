@@ -1217,6 +1217,9 @@ const COLUMN_MIGRATIONS: ColumnMigration[] = [
 /**
  * Applies idempotent SQLite schema repairs on startup so upgraded installs can
  * use the current Drizzle schema before any routes or seeders touch the DB.
+ *
+ * Only runs for the legacy SQLite backend — app.ts gates this call behind
+ * `!isFileStorageBackend()`, so it never runs on the default file-native store.
  */
 export async function runMigrations(db: DB) {
   // 1. Create all tables if they don't exist

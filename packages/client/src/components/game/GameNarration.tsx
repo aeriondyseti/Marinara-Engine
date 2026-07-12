@@ -70,12 +70,7 @@ import { createMessageMacroResolver, findCharacterByName } from "../../lib/chat-
 import { animateTextHtml } from "./AnimatedText";
 import { ttsService } from "../../lib/tts-service";
 import { getOrCreateCachedTTSAudioBlob } from "../../lib/tts-audio-cache";
-import {
-  resolveTTSNarratorVoice,
-  resolveTTSVoiceForSpeaker,
-  splitTTSChunks,
-  ttsConfigMatchesSpeaker,
-} from "../../lib/tts-dialogue";
+import { resolveTTSNarratorVoice, resolveTTSVoiceForSpeaker, splitTTSChunks } from "../../lib/tts-dialogue";
 import {
   formatTextQuotes,
   normalizeTextForMatch,
@@ -620,8 +615,10 @@ function buildVoiceConfigSignature(config?: TTSConfig | null): string {
     config.elevenLabsStability,
     config.elevenLabsLanguageCode,
     config.dialogueOnly ? "dialogue" : "all-text",
-    config.dialogueScope,
-    config.dialogueCharacterName,
+    // Fixed placeholders for the removed dialogueScope/dialogueCharacterName
+    // fields ("all"/"") so existing voice-line cache keys stay valid.
+    "all",
+    "",
   ].join("|");
 }
 
@@ -801,7 +798,6 @@ function getGameSegmentVoiceRequest(
   if (segment.type !== "dialogue" && segment.type !== "narration") return null;
 
   if (segment.type === "dialogue") {
-    if (!ttsConfigMatchesSpeaker(config, segment.speaker)) return null;
     const chunks = splitTTSChunks(segment.content);
     if (chunks.length === 0) return null;
     const tone = resolveGameSegmentTtsEmotion(segment);

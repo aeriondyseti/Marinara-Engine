@@ -347,7 +347,7 @@ export function TopBar() {
         aria-label="Panel navigation"
         className="mari-topbar-panel-nav mari-rgb-icon-scope flex shrink-0 items-center justify-end gap-0.5 rounded-xl p-1 max-sm:gap-0 max-sm:p-0.5"
       >
-        {/* Browser */}
+        {/* Bot Browser */}
         <button
           onClick={() => handleRightPanelClick("bot-browser")}
           data-tour="panel-bot-browser"
@@ -361,7 +361,7 @@ export function TopBar() {
                   isTopbarHovered("browser") && cn(TOPBAR_FORCE_HOVER_CLASS, "text-lime-300"),
                 ),
           )}
-          title="Browser"
+          title="Bot Browser"
         >
           <Bot size={15} className={TOPBAR_ACCENT_ICON_CLASS} />
           {isBotBrowserActive && (

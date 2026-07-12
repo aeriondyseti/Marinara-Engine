@@ -258,7 +258,7 @@ export async function botBrowserPygmalionRoutes(app: FastifyInstance) {
       });
       if (!res.ok) return reply.status(404).send({ error: "Avatar not found" });
       const buf = Buffer.from(await res.arrayBuffer());
-      const image = resolveValidatedImage(buf, res.headers.get("content-type") ?? "");
+      const image = resolveValidatedImage(buf);
       if (!image) {
         logger.warn(
           "[bot-browser] Pygmalion avatar returned unsupported content type: %s",

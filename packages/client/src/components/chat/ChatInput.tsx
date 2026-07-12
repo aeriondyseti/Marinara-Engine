@@ -1371,7 +1371,6 @@ export const ChatInput = memo(function ChatInput({
     if (hasInput && feedback) setFeedback(null);
   }, [hasInput, feedback]);
 
-  const _isRP = mode === "roleplay";
 
   const handleEmojiSelect = useCallback(
     (emoji: string) => {

@@ -132,9 +132,9 @@ Chat summaries need a working text connection to write them.
 - If your chat requires agent write approval, an AI summary waits for your review before it takes effect.
 - A summary that keeps failing (for example, a bad API key) is retried on a delay. Fix the connection, then use **Backfill**.
 
-## Character Browser problems
+## Bot Browser problems
 
-The **Browser** lets you search public character sites and import characters. Open it from the **Browser** icon in the top bar.
+The **Bot Browser** lets you search public character sites and import characters. Open it from the **Bot Browser** icon in the top bar.
 
 - If JannyAI search or a character page fails with a Cloudflare block, Marinara shows a message. It asks you to visit the JannyAI site once in the same browser to clear the challenge, then retry.
 - If your CharacterTavern or Pygmalion login stops working after you restart the server, that is expected. Those logins live only in server memory and clear on restart. Open the login window and paste your cookie or token again.
